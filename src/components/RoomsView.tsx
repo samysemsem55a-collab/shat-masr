@@ -402,43 +402,71 @@ export const RoomsView: React.FC<RoomsViewProps> = ({
         </div>
 
         <div className="space-y-2.5">
-          {filteredRooms.map((room) => {
+          {filteredRooms.map((room, roomIdx) => {
             const isEgypt1 = room.id === 'room_egypt';
             const isEgypt2 = room.id === 'room_egypt2';
+            const altPaletteIdx = roomIdx % 2 === 0;
             const iconGradient = isEgypt1
-              ? 'from-rose-500 via-amber-500 to-orange-500 ring-rose-200 shadow-rose-200/70'
+              ? 'from-rose-500 via-pink-500 to-amber-500 ring-rose-200 shadow-rose-300/60'
               : isEgypt2
-              ? 'from-cyan-500 via-blue-600 to-indigo-600 ring-cyan-200 shadow-cyan-200/70'
-              : `${room.iconBg || 'from-emerald-500 via-teal-500 to-cyan-600'} ring-teal-200 shadow-teal-200/70`;
+              ? 'from-sky-500 via-blue-600 to-indigo-600 ring-sky-200 shadow-sky-300/60'
+              : room.isPrivate
+              ? 'from-violet-600 via-purple-600 to-fuchsia-600 ring-violet-200 shadow-violet-300/60'
+              : altPaletteIdx
+              ? 'from-emerald-500 via-teal-500 to-cyan-600 ring-emerald-200 shadow-emerald-300/60'
+              : 'from-indigo-500 via-blue-600 to-violet-600 ring-indigo-200 shadow-indigo-300/60';
+
+            const cardTheme = isEgypt1
+              ? 'bg-gradient-to-br from-rose-50/95 via-amber-50/45 to-orange-50/80 border-2 border-rose-200/90 hover:border-rose-400 shadow-rose-100/70'
+              : isEgypt2
+              ? 'bg-gradient-to-br from-sky-50/95 via-indigo-50/40 to-blue-50/80 border-2 border-sky-200/90 hover:border-sky-400 shadow-sky-100/70'
+              : room.isPrivate
+              ? 'bg-gradient-to-br from-violet-50/90 via-white to-fuchsia-50/80 border-2 border-violet-200/90 hover:border-violet-400 shadow-violet-100/70'
+              : altPaletteIdx
+              ? 'bg-gradient-to-br from-emerald-50/90 via-white to-teal-50/80 border-2 border-emerald-200/90 hover:border-emerald-400 shadow-emerald-100/70'
+              : 'bg-gradient-to-br from-indigo-50/90 via-white to-blue-50/80 border-2 border-indigo-200/90 hover:border-indigo-400 shadow-indigo-100/70';
+
             const topAccent = isEgypt1
-              ? 'from-rose-500 via-amber-500 to-orange-500'
+              ? 'from-rose-500 via-pink-500 to-amber-500'
               : isEgypt2
-              ? 'from-cyan-500 via-blue-600 to-indigo-600'
+              ? 'from-sky-500 via-blue-600 to-indigo-600'
+              : room.isPrivate
+              ? 'from-violet-600 via-purple-600 to-fuchsia-600'
               : room.accentGradient || 'from-emerald-500 to-cyan-600';
+
             const btnGradient = isEgypt1
-              ? 'from-rose-500 to-amber-500 hover:from-rose-600 hover:to-amber-600'
+              ? 'from-rose-500 to-amber-500 hover:from-rose-600 hover:to-amber-600 shadow-rose-300/50'
               : isEgypt2
-              ? 'from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500'
-              : 'from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500';
+              ? 'from-sky-600 to-indigo-600 hover:from-sky-500 hover:to-indigo-500 shadow-sky-300/50'
+              : room.isPrivate
+              ? 'from-violet-600 to-fuchsia-600 hover:from-violet-500 hover:to-fuchsia-500 shadow-violet-300/50'
+              : 'from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 shadow-emerald-300/50';
+
+            const presenceChip = isEgypt1
+              ? 'bg-white/90 border-rose-200 text-rose-700'
+              : isEgypt2
+              ? 'bg-white/90 border-sky-200 text-sky-700'
+              : 'bg-white/90 border-emerald-200 text-emerald-700';
 
             return (
             <div
               key={room.id}
               onClick={() => onSelectRoom(room)}
-              className="group relative cursor-pointer overflow-hidden rounded-2xl bg-white border border-slate-200 hover:border-indigo-400 p-3.5 transition-all duration-150 shadow-sm hover:shadow-md active:scale-[0.99]"
+              className={`group relative cursor-pointer overflow-hidden rounded-2xl ${cardTheme} p-3.5 transition-all duration-150 shadow-sm hover:shadow-md active:scale-[0.99]`}
             >
-              <div className={`absolute top-0 left-0 right-0 h-1 bg-gradient-to-r ${topAccent}`} />
+              <div className={`absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r ${topAccent}`} />
 
-              <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center justify-between gap-3 pt-0.5">
                 {/* Left Action & Real-Time Presence Counter */}
                 <div className="flex flex-col items-start gap-2 shrink-0">
-                  <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-bold">
+                  <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-xl border text-xs font-bold shadow-xs ${presenceChip}`}>
                     <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
                     <Users className="w-3.5 h-3.5" />
-                    <span>{Math.max(1, room.activeUsers || 1)} متواجد الآن</span>
+                    <span className="tabular-nums">{Math.max(1, room.activeUsers || 1)} متواجد الآن</span>
                   </div>
 
                   <button
+                    type="button"
                     onClick={(e) => {
                       e.stopPropagation();
                       onSelectRoom(room);
@@ -461,22 +489,39 @@ export const RoomsView: React.FC<RoomsViewProps> = ({
                     </div>
                   )}
 
-                  <h2 className="text-sm font-black text-slate-900 group-hover:text-indigo-600 transition-colors truncate">
+                  <h2 className="text-sm font-black text-slate-900 group-hover:text-indigo-700 transition-colors truncate">
                     {room.title}
                   </h2>
 
-                  <p className="text-xs text-slate-600 truncate">
+                  <p className="text-xs text-slate-700 truncate font-medium">
                     {room.description}
                   </p>
 
-                  <p className="text-[11px] text-slate-400 truncate">
+                  <p className="text-[11px] text-slate-500 truncate">
                     {room.subtext}
                   </p>
                 </div>
 
-                {/* Right Side: Vibrant Gradient Circular Room Icon */}
-                <div className={`w-12 h-12 sm:w-14 sm:h-14 rounded-full bg-gradient-to-br ${iconGradient} border-2 border-white ring-2 shadow-md flex items-center justify-center text-2xl sm:text-3xl shrink-0 group-hover:scale-110 transition-transform overflow-hidden`}>
-                  {room.icon}
+                {/* Right Side: Vibrant Colored Room Icon Emblem */}
+                <div className="relative shrink-0">
+                  <div className={`w-12 h-12 sm:w-14 sm:h-14 rounded-2xl bg-gradient-to-br ${iconGradient} border-2 border-white ring-2 shadow-md flex items-center justify-center text-white shrink-0 group-hover:scale-105 transition-transform`}>
+                    {room.isPrivate ? (
+                      <Lock className="w-6 h-6 text-white drop-shadow-xs" />
+                    ) : room.type === 'voice' || room.roomType === 'voice' || room.isVoiceActive ? (
+                      <Mic className="w-6 h-6 text-white drop-shadow-xs" />
+                    ) : isEgypt1 ? (
+                      <MessageSquare className="w-6 h-6 text-white drop-shadow-xs" />
+                    ) : isEgypt2 ? (
+                      <Flame className="w-6 h-6 text-white drop-shadow-xs" />
+                    ) : (
+                      <span className="text-2xl sm:text-3xl">{room.icon}</span>
+                    )}
+                  </div>
+                  {(isEgypt1 || isEgypt2) && (
+                    <span className="absolute -bottom-1 -left-1 w-5 h-5 rounded-full bg-white border border-slate-200 shadow-xs flex items-center justify-center text-[11px] leading-none">
+                      {room.icon}
+                    </span>
+                  )}
                 </div>
               </div>
             </div>
@@ -531,18 +576,30 @@ export const RoomsView: React.FC<RoomsViewProps> = ({
 
         {/* Suggested Voice Rooms Grid */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-          {filteredSuggestedRooms.map((suggested) => (
+          {filteredSuggestedRooms.map((suggested) => {
+            const voiceCardTint =
+              suggested.interestCategory === 'sports'
+                ? 'bg-gradient-to-br from-emerald-50/90 via-white to-teal-50/80 border-2 border-emerald-200/90 hover:border-emerald-400'
+                : suggested.interestCategory === 'art'
+                ? 'bg-gradient-to-br from-purple-50/90 via-white to-pink-50/80 border-2 border-purple-200/90 hover:border-purple-400'
+                : suggested.interestCategory === 'culture'
+                ? 'bg-gradient-to-br from-amber-50/90 via-white to-orange-50/80 border-2 border-amber-200/90 hover:border-amber-400'
+                : suggested.interestCategory === 'tech'
+                ? 'bg-gradient-to-br from-cyan-50/90 via-white to-blue-50/80 border-2 border-cyan-200/90 hover:border-cyan-400'
+                : 'bg-gradient-to-br from-rose-50/90 via-white to-purple-50/80 border-2 border-rose-200/90 hover:border-rose-400';
+
+            return (
             <div
               key={suggested.id}
               onClick={() => handleJoinSuggestedVoiceRoom(suggested)}
-              className="group relative cursor-pointer overflow-hidden rounded-2xl bg-white border border-slate-200 hover:border-indigo-400 p-3.5 transition-all duration-150 shadow-sm hover:shadow-md active:scale-[0.99] flex flex-col justify-between"
+              className={`group relative cursor-pointer overflow-hidden rounded-2xl ${voiceCardTint} p-3.5 transition-all duration-150 shadow-sm hover:shadow-md active:scale-[0.99] flex flex-col justify-between`}
             >
-              <div className={`absolute top-0 left-0 right-0 h-1 bg-gradient-to-r ${suggested.accentGradient}`} />
+              <div className={`absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r ${suggested.accentGradient}`} />
 
-              <div className="space-y-2">
+              <div className="space-y-2 pt-0.5">
                 {/* Top Badge */}
                 <div className="flex items-center justify-between gap-1.5">
-                  <div className="flex items-center gap-1 px-2 py-0.5 rounded-lg bg-pink-50 border border-pink-200 text-pink-700 text-[10px] font-black">
+                  <div className="flex items-center gap-1 px-2 py-0.5 rounded-lg bg-white/90 border border-pink-200 text-pink-700 text-[10px] font-black">
                     <span className="w-1.5 h-1.5 rounded-full bg-pink-500 animate-pulse"></span>
                     <Mic className="w-3 h-3 text-pink-600" />
                     <span>صوت حي 🎙️</span>
@@ -561,7 +618,7 @@ export const RoomsView: React.FC<RoomsViewProps> = ({
                   </div>
 
                   <div className="flex-1 min-w-0">
-                    <h3 className="text-xs sm:text-sm font-black text-slate-900 group-hover:text-indigo-600 transition-colors truncate">
+                    <h3 className="text-xs sm:text-sm font-black text-slate-900 group-hover:text-indigo-700 transition-colors truncate">
                       {suggested.title}
                     </h3>
                     <p className="text-[11px] text-slate-600 line-clamp-2 mt-0.5 leading-relaxed">
@@ -575,7 +632,7 @@ export const RoomsView: React.FC<RoomsViewProps> = ({
                   {suggested.topics.map((t, idx) => (
                     <span
                       key={idx}
-                      className="px-1.5 py-0.5 rounded-md bg-slate-100 border border-slate-200 text-slate-600 text-[9.5px] font-medium"
+                      className="px-1.5 py-0.5 rounded-md bg-white/80 border border-slate-200 text-slate-700 text-[9.5px] font-medium"
                     >
                       #{t}
                     </span>
@@ -584,9 +641,9 @@ export const RoomsView: React.FC<RoomsViewProps> = ({
               </div>
 
               {/* Bottom Card Action */}
-              <div className="flex items-center justify-between pt-2.5 mt-2 border-t border-slate-100">
-                <div className="flex items-center gap-2 text-[10px] text-slate-500 font-bold">
-                  <span className="flex items-center gap-1 text-emerald-600">
+              <div className="flex items-center justify-between pt-2.5 mt-2 border-t border-slate-200/70">
+                <div className="flex items-center gap-2 text-[10px] text-slate-600 font-bold">
+                  <span className="flex items-center gap-1 text-emerald-700">
                     <Users className="w-3 h-3" />
                     <span>{suggested.activeSpeakers} على المايك</span>
                   </span>
@@ -600,7 +657,7 @@ export const RoomsView: React.FC<RoomsViewProps> = ({
                     e.stopPropagation();
                     handleJoinSuggestedVoiceRoom(suggested);
                   }}
-                  className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-black text-xs flex items-center gap-1 shadow-sm transition-all active:scale-95"
+                  className={`px-3 py-1.5 rounded-xl bg-gradient-to-r ${suggested.accentGradient} text-white font-black text-xs flex items-center gap-1 shadow-sm transition-all active:scale-95`}
                 >
                   <span>انضمام للمجلس 🎙️</span>
                   <ArrowLeft className="w-3 h-3" />
@@ -608,7 +665,8 @@ export const RoomsView: React.FC<RoomsViewProps> = ({
               </div>
 
             </div>
-          ))}
+            );
+          })}
         </div>
 
       </div>

@@ -108,3 +108,37 @@
     opacity: 0;
   }
 }
+
+/* Subtle, elegant attention pulse for new user & gift messages */
+@keyframes subtleNewUserPulse {
+  0%, 100% {
+    box-shadow: 0 2px 10px rgba(16, 185, 129, 0.14), 0 0 0 0 rgba(16, 185, 129, 0.32);
+  }
+  50% {
+    box-shadow: 0 4px 16px rgba(16, 185, 129, 0.24), 0 0 0 5px rgba(16, 185, 129, 0);
+  }
+}
+
+@keyframes subtleGiftPulse {
+  0%, 100% {
+    box-shadow: 0 4px 16px rgba(245, 158, 11, 0.2), 0 0 0 0 rgba(245, 158, 11, 0.4);
+  }
+  50% {
+    box-shadow: 0 8px 24px rgba(245, 158, 11, 0.34), 0 0 0 7px rgba(245, 158, 11, 0);
+  }
+}
+
+.animate-subtle-new-user-pulse {
+  animation: subtleNewUserPulse 2.8s ease-in-out infinite;
+}
+
+.animate-subtle-gift-pulse {
+  animation: subtleGiftPulse 2.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-subtle-new-user-pulse,
+  .animate-subtle-gift-pulse {
+    animation: none;
+  }
+}

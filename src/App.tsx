@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Toaster, toast } from 'sonner';
 import { Header } from './components/Header';
 import { BottomNav, NavTab } from './components/BottomNav';
@@ -23,7 +23,7 @@ import { PrivateRoomPromptModal } from './components/PrivateRoomPromptModal';
 import { PhoneAuthModal } from './components/PhoneAuthModal';
 import { WelcomeAuthModal } from './components/WelcomeAuthModal';
 
-import { User, Room, Message, GiftItem, VipTier, SpeakerSeat, RadioStation, FriendRequest, DailyMission } from './types/chat';
+import { User, Room, Message, GiftItem, VipTier, SpeakerSeat, RadioStation, FriendRequest, DailyMission, UnreadSenderSummary } from './types/chat';
 import { CURRENT_USER, INITIAL_ROOMS, RADIO_STATIONS, getOrCreateUser, isUserAdminOrOwner } from './data/seedData';
 import { sounds } from './utils/soundEffects';
 import { realtimeSocket } from './services/realtimeSocket';
@@ -63,6 +63,66 @@ export default function App() {
 
   const [targetChatUser, setTargetChatUser] = useState<User | null>(null);
   const [isInsidePrivateChat, setIsInsidePrivateChat] = useState<boolean>(false);
+
+  // Per-sender unread incoming message tracking (persisted per user)
+  const [unreadSendersMap, setUnreadSendersMap] = useState<Record<string, UnreadSenderSummary>>(() => {
+    try {
+      const saved = localStorage.getItem(`shat_masr_unread_senders_${currentUser.id}`);
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return {};
+  });
+  const processedUnreadDmIdsRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(`shat_masr_unread_senders_${currentUser.id}`);
+      setUnreadSendersMap(saved ? JSON.parse(saved) : {});
+    } catch {
+      setUnreadSendersMap({});
+    }
+  }, [currentUser.id]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(`shat_masr_unread_senders_${currentUser.id}`, JSON.stringify(unreadSendersMap));
+    } catch {}
+  }, [unreadSendersMap, currentUser.id]);
+
+  const clearUnreadForSender = useCallback((senderId: string) => {
+    if (!senderId) return;
+    setUnreadSendersMap((prev) => {
+      if (!prev[senderId]) return prev;
+      const next = { ...prev };
+      delete next[senderId];
+      return next;
+    });
+  }, []);
+
+  const clearAllUnreadMessages = useCallback(() => {
+    setUnreadSendersMap({});
+  }, []);
+
+  const unreadMessagesBySender = useMemo(
+    () =>
+      Object.values(unreadSendersMap)
+        .filter((item) => item.count > 0)
+        .sort((a, b) => b.lastTimestamp - a.lastTimestamp),
+    [unreadSendersMap]
+  );
+
+  const totalUnreadMessagesCount = useMemo(
+    () => unreadMessagesBySender.reduce((sum, item) => sum + item.count, 0),
+    [unreadMessagesBySender]
+  );
+
+  const unreadCountsBySenderId = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const item of unreadMessagesBySender) {
+      counts[item.senderId] = item.count;
+    }
+    return counts;
+  }, [unreadMessagesBySender]);
 
   const showAppNotice = (text: string, tone: 'info' | 'warn' | 'error' = 'info') => {
     if (tone === 'error') {
@@ -399,6 +459,41 @@ export default function App() {
         (!!currentUser.sessionId && rawMsg.recipientId === currentUser.sessionId);
 
       if (rawMsg.senderId !== currentUser.id && isForMe) {
+        const isViewingThisSender =
+          currentTab === 'chat' && isInsidePrivateChat && targetChatUser?.id === rawMsg.senderId;
+
+        // Track per-sender unread incoming message count (deduplicated across WebSocket + BroadcastChannel)
+        const dmDedupKey = rawMsg.id || `${rawMsg.senderId}_${rawMsg.timestamp || Date.now()}_${rawMsg.content || ''}`;
+        if (!isViewingThisSender && !processedUnreadDmIdsRef.current.has(dmDedupKey)) {
+          processedUnreadDmIdsRef.current.add(dmDedupKey);
+          if (processedUnreadDmIdsRef.current.size > 500) {
+            const firstKey = processedUnreadDmIdsRef.current.values().next().value;
+            if (firstKey) processedUnreadDmIdsRef.current.delete(firstKey);
+          }
+
+          const msgPreview =
+            rawMsg.type === 'gift' && rawMsg.gift
+              ? `🎁 هدية: ${rawMsg.gift.name}`
+              : rawMsg.type === 'voice'
+              ? '🎙️ رسالة صوتية'
+              : rawMsg.content || rawMsg.text || 'رسالة جديدة';
+
+          setUnreadSendersMap((prev) => {
+            const existing = prev[rawMsg.senderId];
+            return {
+              ...prev,
+              [rawMsg.senderId]: {
+                senderId: rawMsg.senderId,
+                senderName: rawMsg.senderName || existing?.senderName || 'مستخدم',
+                senderAvatar: rawMsg.senderAvatar || existing?.senderAvatar || '',
+                count: (existing?.count || 0) + 1,
+                lastMessage: msgPreview,
+                lastTimestamp: rawMsg.timestamp || Date.now()
+              }
+            };
+          });
+        }
+
         // Persist incoming DM locally so visitors/members see it immediately when opening PrivateChatView
         try {
           const convId = getConvId(currentUser.id, rawMsg.senderId);
@@ -472,7 +567,7 @@ export default function App() {
               onClick: () => handleOpenIncomingChat(toastPayload)
             }
           });
-        } else if (dmNotifsEnabled && (currentTab !== 'chat' || targetChatUser?.id !== rawMsg.senderId)) {
+        } else if (dmNotifsEnabled && !isViewingThisSender) {
           sounds.playMessageReceived();
           toast(`💬 رسالة خاصة من ${toastPayload.senderName}`, {
             id: `dm_${rawMsg.id}`,
@@ -506,9 +601,10 @@ export default function App() {
       unsubDm();
       bus?.close();
     };
-  }, [currentUser.id, currentUser.sessionId, currentUser.notificationPrefs?.directMessages, currentUser.notificationPrefs?.gifts, currentTab, targetChatUser?.id]);
+  }, [currentUser.id, currentUser.sessionId, currentUser.notificationPrefs?.directMessages, currentUser.notificationPrefs?.gifts, currentTab, isInsidePrivateChat, targetChatUser?.id]);
 
   const handleOpenIncomingChat = (toastItem: { senderId: string; senderName: string; senderAvatar: string }) => {
+    clearUnreadForSender(toastItem.senderId);
     const existing = globalOnlineUsers.find(u => u.id === toastItem.senderId);
     const peer: User = existing || {
       id: toastItem.senderId,
@@ -1043,6 +1139,7 @@ export default function App() {
 
   // Open Direct Chat With User
   const handleOpenPrivateChatWith = (user: User) => {
+    clearUnreadForSender(user.id);
     setSelectedProfileUser(null);
     setIsOnlineUsersOpen(false);
     setTargetChatUser(user);
@@ -1236,6 +1333,16 @@ export default function App() {
           isRadioPlaying={isRadioPlaying}
           onAvatarChanged={handleAvatarChanged}
           onLogout={handleLogout}
+          unreadMessagesBySender={unreadMessagesBySender}
+          totalUnreadMessagesCount={totalUnreadMessagesCount}
+          onOpenSenderChat={handleOpenIncomingChat}
+          onClearAllUnreadMessages={clearAllUnreadMessages}
+          onOpenMessagesTab={() => {
+            setIsInsidePrivateChat(false);
+            setTargetChatUser(null);
+            setCurrentTab('chat');
+            setActiveRoom(null);
+          }}
         />
       )}
 
@@ -1324,6 +1431,8 @@ export default function App() {
                   syncUserProfileToFirebase({ ...currentUser, ...updated });
                 }}
                 onPromptRegister={() => setIsWelcomeAuthOpen(true)}
+                unreadBySender={unreadCountsBySenderId}
+                onMarkSenderRead={clearUnreadForSender}
               />
             )}
 
@@ -1359,7 +1468,7 @@ export default function App() {
             }
             setCurrentTab(tab);
           }}
-          unreadChatsCount={pendingFriendRequests.length}
+          unreadChatsCount={totalUnreadMessagesCount + pendingFriendRequests.length}
         />
       )}
 

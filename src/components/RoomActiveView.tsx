@@ -182,15 +182,25 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
     }
   };
 
-  // Realtime Typing Indicator State
+  // Realtime Typing Indicator State (strictly for other users in the room)
   const [typingUsers, setTypingUsers] = useState<{ id: string; name: string }[]>([]);
   const typingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastTypingEmitRef = useRef<number>(0);
 
   useEffect(() => {
+    setTypingUsers([]);
     const unsub = subscribeToRoomTyping(room.id, currentUser.id, (users) => {
-      setTypingUsers(users);
+      setTypingUsers((users || []).filter((u) => u.id && u.id !== currentUser.id));
     });
-    return () => unsub();
+    return () => {
+      unsub();
+      if (typingTimerRef.current) {
+        clearTimeout(typingTimerRef.current);
+        typingTimerRef.current = null;
+      }
+      lastTypingEmitRef.current = 0;
+      setRoomTyping(room.id, currentUser, false);
+    };
   }, [room.id, currentUser.id]);
 
   const handleInputChange = (val: string) => {
@@ -203,14 +213,23 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
       }
     }
 
-    // Trigger typing state
+    if (currentUser.isBanned || currentUser.isMuted) return;
+
+    // Trigger typing state (throttled true emits + 3s stop-typing debounce)
     if (val.trim().length > 0) {
-      setRoomTyping(room.id, currentUser, true);
+      const now = Date.now();
+      if (now - lastTypingEmitRef.current >= 1500) {
+        lastTypingEmitRef.current = now;
+        setRoomTyping(room.id, currentUser, true);
+      }
       if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
       typingTimerRef.current = setTimeout(() => {
+        lastTypingEmitRef.current = 0;
         setRoomTyping(room.id, currentUser, false);
-      }, 3500);
+      }, 3000);
     } else {
+      if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+      lastTypingEmitRef.current = 0;
       setRoomTyping(room.id, currentUser, false);
     }
   };
@@ -467,17 +486,37 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
     });
   }, [uniqueMessages, messageFilter]);
 
-  // Auto scroll to bottom & sound notification on new incoming messages + mark incoming private messages as read
+  // Auto scroll to bottom & sound + vibration notification on new incoming messages + mark incoming private messages as read
   const prevMessagesCountRef = useRef(uniqueMessages.length);
   useEffect(() => {
     if (uniqueMessages.length > prevMessagesCountRef.current) {
       const latestMsg = uniqueMessages[uniqueMessages.length - 1];
-      if (latestMsg && latestMsg.senderId !== currentUser.id) {
+      const isFreshMessage =
+        prevMessagesCountRef.current > 0 ||
+        (typeof latestMsg?.timestamp === 'number' && Date.now() - latestMsg.timestamp < 15000);
+
+      if (latestMsg && latestMsg.senderId !== currentUser.id && isFreshMessage) {
+        setTypingUsers((prev) =>
+          prev.some((u) => u.id === latestMsg.senderId)
+            ? prev.filter((u) => u.id !== latestMsg.senderId)
+            : prev
+        );
         sounds.playMessageReceived();
-        if (latestMsg.type === 'private' || latestMsg.isPrivate) {
-          if (typeof navigator !== 'undefined' && navigator.vibrate) {
-            try { navigator.vibrate([120, 60, 120]); } catch {}
-          }
+        const isIncomingPrivate = latestMsg.type === 'private' || Boolean(latestMsg.isPrivate);
+        const isIncomingGift =
+          latestMsg.type === 'gift' ||
+          Boolean(latestMsg.gift) ||
+          (typeof latestMsg.content === 'string' &&
+            (latestMsg.content.includes('🎁') || latestMsg.content.includes('هدية')));
+
+        if (
+          (isIncomingPrivate || isIncomingGift) &&
+          typeof navigator !== 'undefined' &&
+          typeof navigator.vibrate === 'function'
+        ) {
+          try {
+            navigator.vibrate(isIncomingGift ? [100, 50, 100] : [80, 40, 80]);
+          } catch {}
         }
       }
     }
@@ -551,16 +590,17 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
       localStorage.removeItem(draftStorageKey);
     }
     updateReplyingTo(null);
+    if (typingTimerRef.current) {
+      clearTimeout(typingTimerRef.current);
+      typingTimerRef.current = null;
+    }
+    lastTypingEmitRef.current = 0;
     setRoomTyping(room.id, currentUser, false);
     setIsEmojiPickerOpen(false);
   };
 
   const handleInsertEmoji = (emoji: string) => {
-    const updated = inputText + emoji;
-    setInputText(updated);
-    if (typeof window !== 'undefined') {
-      localStorage.setItem(draftStorageKey, updated);
-    }
+    handleInputChange(inputText + emoji);
     inputRef.current?.focus();
   };
 
@@ -1543,7 +1583,7 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
                 transition={{ duration: 0.3, type: 'spring' }}
                 className="flex justify-center my-3 px-1"
               >
-                <div className="relative overflow-hidden rounded-3xl bg-gradient-to-r from-amber-50 via-white to-rose-50 border-2 border-amber-300 p-3 sm:p-4 max-w-[94%] sm:max-w-md w-full shadow-lg">
+                <div className="relative overflow-hidden rounded-3xl bg-gradient-to-r from-amber-50 via-white to-rose-50 border-2 border-amber-300 p-3 sm:p-4 max-w-[94%] sm:max-w-md w-full shadow-lg animate-subtle-gift-pulse">
                   <div className="relative z-10 flex items-center gap-3">
                     <div className="relative shrink-0">
                       <motion.span
@@ -1635,6 +1675,23 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
                   msg.senderRole === 'super_admin'))
           );
 
+          const isNewUserSender = Boolean(
+            msg.senderId !== 'system_bot' &&
+              (msg.senderRole === 'guest' ||
+                msg.senderId?.startsWith('guest_') ||
+                msg.senderId?.startsWith('visitor_') ||
+                msg.senderVipBadge?.includes('زائر') ||
+                msg.senderVipBadge?.includes('جديد') ||
+                msg.badges?.some((b) => b.includes('جديد') || b.includes('زائر')))
+          );
+
+          const hasGiftContent = Boolean(
+            msg.gift ||
+              msg.type === 'gift' ||
+              (typeof msg.content === 'string' &&
+                (msg.content.includes('🎁') || msg.content.includes('هدية')))
+          );
+
           return (
             <motion.div
               key={uniqueKey}
@@ -1647,7 +1704,11 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
               <div 
                 onClick={() => openProfileFromMsg(msg)}
                 className={`w-7 h-7 sm:w-8 sm:h-8 rounded-full overflow-hidden bg-indigo-50 border flex items-center justify-center font-bold text-xs text-indigo-700 shrink-0 mt-0.5 cursor-pointer hover:scale-105 active:scale-95 transition-transform shadow-xs ${
-                  isVipSender ? 'border-2 border-amber-400 ring-1 ring-amber-300/60' : 'border-slate-200'
+                  isVipSender
+                    ? 'border-2 border-amber-400 ring-1 ring-amber-300/60'
+                    : isNewUserSender
+                    ? 'border-2 border-emerald-400 ring-1 ring-emerald-300/60'
+                    : 'border-slate-200'
                 }`}
                 title="عرض الملف الشخصي"
               >
@@ -1669,6 +1730,12 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
                   >
                     {msg.senderName}
                   </span>
+                  {isNewUserSender && (
+                    <span className="px-1.5 py-0.5 rounded bg-emerald-100 border border-emerald-200 text-emerald-800 text-[9px] font-black flex items-center gap-0.5">
+                      <Sparkles className="w-2.5 h-2.5 text-emerald-600" />
+                      <span>عضو جديد</span>
+                    </span>
+                  )}
                   {msg.senderVipBadge && (
                     <span className="px-1.5 py-0.5 rounded bg-amber-100 border border-amber-200 text-amber-800 text-[9px] flex items-center gap-0.5">
                       <Crown className="w-2.5 h-2.5 text-amber-500" />
@@ -1766,12 +1833,20 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
                       ? 'ring-2 ring-amber-400 scale-[1.02] shadow-[0_0_20px_rgba(245,158,11,0.45)]' 
                       : ''
                   } ${
-                    isVipSender
+                    hasGiftContent
+                      ? 'animate-subtle-gift-pulse border-2 border-amber-300'
+                      : isNewUserSender
+                      ? 'animate-subtle-new-user-pulse border border-emerald-300/90'
+                      : isVipSender
                       ? 'border-2 border-amber-400 shadow-[0_0_16px_rgba(245,158,11,0.55)] ring-1 ring-amber-300/70'
                       : ''
                   } ${
                     isMe 
                       ? 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-tr-none shadow-indigo-500/20' 
+                      : hasGiftContent
+                      ? 'bg-gradient-to-br from-amber-50/90 via-white to-rose-50/70 text-slate-900 rounded-tl-none'
+                      : isNewUserSender
+                      ? 'bg-gradient-to-br from-emerald-50/75 via-white to-teal-50/50 text-slate-900 rounded-tl-none'
                       : isVipSender
                       ? 'bg-white text-slate-900 rounded-tl-none'
                       : 'bg-white/95 border border-slate-200 text-slate-900 rounded-tl-none'
@@ -1917,6 +1992,33 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
         })}
         <div ref={messagesEndRef} />
         </div>
+
+        {/* 6.5. Realtime Typing Indicator ("جاري الكتابة...") directly beneath the messages feed */}
+        <AnimatePresence>
+          {typingUsers.length > 0 && (
+            <motion.div
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 6 }}
+              transition={{ duration: 0.18 }}
+              aria-live="polite"
+              className="relative z-20 bg-white/95 backdrop-blur-md border-t border-indigo-200/80 px-3 py-1.5 flex items-center justify-start gap-2 text-indigo-700 shadow-[0_-2px_10px_rgba(79,70,229,0.06)] shrink-0"
+            >
+              <div className="flex items-center gap-1 px-2 py-1 rounded-full bg-indigo-50 border border-indigo-200/90 shadow-2xs">
+                <span className="w-1.5 h-1.5 rounded-full bg-indigo-600 animate-bounce" style={{ animationDelay: '0ms' }} />
+                <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-bounce" style={{ animationDelay: '150ms' }} />
+                <span className="w-1.5 h-1.5 rounded-full bg-purple-500 animate-bounce" style={{ animationDelay: '300ms' }} />
+              </div>
+              <span className="font-bold text-[11px] sm:text-xs text-slate-700 truncate">
+                {typingUsers.length === 1
+                  ? `${typingUsers[0].name} جاري الكتابة...`
+                  : typingUsers.length === 2
+                  ? `${typingUsers[0].name} و ${typingUsers[1].name} جاري الكتابة...`
+                  : `${typingUsers[0].name} و ${typingUsers.length - 1} آخرين جاري الكتابة...`}
+              </span>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
 
       {/* 7. Replying To Banner Preview */}
@@ -1979,20 +2081,6 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
           ))}
         </div>
       </div>
-
-      {/* 8.7. Realtime Typing Indicator ("جاري الكتابة..." beneath chat feed via realtimeSocket & RTDB) */}
-      {typingUsers.length > 0 && (
-        <div className="bg-indigo-50/95 border-t border-indigo-200 px-3 py-1 flex items-center gap-2 text-xs text-indigo-700 shrink-0 z-20">
-          <div className="flex items-center gap-0.5">
-            <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-bounce" style={{ animationDelay: '0ms' }}></span>
-            <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-bounce" style={{ animationDelay: '150ms' }}></span>
-            <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-bounce" style={{ animationDelay: '300ms' }}></span>
-          </div>
-          <span className="font-bold text-[11px]">
-            {typingUsers.map(u => u.name).join(' و ')} جاري الكتابة...
-          </span>
-        </div>
-      )}
 
       {/* 8.8. 1-Click Instant Ready Response Bar (Modern Light Theme) */}
       <div className="bg-slate-50/95 border-t border-slate-200 px-2 py-1 flex items-center gap-1.5 overflow-x-auto scrollbar-none shrink-0 z-20">

@@ -5,19 +5,21 @@ import {
   Users, 
   Crown, 
   Radio,
-  MessagesSquare,
+  MessageCircle,
   UserPlus,
   Camera,
-  Check,
+  CheckCheck,
+  Clock,
   ShieldCheck,
   LogOut,
   MoreVertical
 } from 'lucide-react';
-import { User } from '../types/chat';
+import { User, UnreadSenderSummary } from '../types/chat';
 import { isUserAdminOrOwner } from '../data/seedData';
 import { realtimeSocket } from '../services/realtimeSocket';
 import { PWAInstallButton } from './PWAInstallButton';
 import { toast } from 'sonner';
+import appBrandIcon from '../assets/images/shat_masr_icon_1794650535035.jpg';
 
 interface HeaderProps {
   currentUser: User;
@@ -34,6 +36,11 @@ interface HeaderProps {
   isRadioPlaying: boolean;
   onAvatarChanged?: (newAvatarUrl: string) => void;
   onLogout?: () => void;
+  unreadMessagesBySender?: UnreadSenderSummary[];
+  totalUnreadMessagesCount?: number;
+  onOpenSenderChat?: (sender: { senderId: string; senderName: string; senderAvatar: string }) => void;
+  onClearAllUnreadMessages?: () => void;
+  onOpenMessagesTab?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -50,11 +57,18 @@ export const Header: React.FC<HeaderProps> = ({
   isRadioPlaying,
   onAvatarChanged,
   onOpenAdmin,
-  onLogout
+  onLogout,
+  unreadMessagesBySender = [],
+  totalUnreadMessagesCount = 0,
+  onOpenSenderChat,
+  onClearAllUnreadMessages,
+  onOpenMessagesTab
 }) => {
   const [isMoreMenuOpen, setIsMoreMenuOpen] = useState(false);
+  const [isMessagesMenuOpen, setIsMessagesMenuOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const moreMenuRef = useRef<HTMLDivElement>(null);
+  const messagesMenuRef = useRef<HTMLDivElement>(null);
   const [isSocketConnected, setIsSocketConnected] = useState<boolean>(() => realtimeSocket.isConnected());
 
   // Subscribe to real-time socket connection state
@@ -65,17 +79,20 @@ export const Header: React.FC<HeaderProps> = ({
     return () => unsub();
   }, []);
 
-  // Close dropdown when clicking outside
+  // Close dropdowns when clicking outside
   useEffect(() => {
-    if (!isMoreMenuOpen) return;
+    if (!isMoreMenuOpen && !isMessagesMenuOpen) return;
     const handleOutsideClick = (event: MouseEvent) => {
-      if (moreMenuRef.current && !moreMenuRef.current.contains(event.target as Node)) {
+      if (isMoreMenuOpen && moreMenuRef.current && !moreMenuRef.current.contains(event.target as Node)) {
         setIsMoreMenuOpen(false);
+      }
+      if (isMessagesMenuOpen && messagesMenuRef.current && !messagesMenuRef.current.contains(event.target as Node)) {
+        setIsMessagesMenuOpen(false);
       }
     };
     document.addEventListener('mousedown', handleOutsideClick);
     return () => document.removeEventListener('mousedown', handleOutsideClick);
-  }, [isMoreMenuOpen]);
+  }, [isMoreMenuOpen, isMessagesMenuOpen]);
 
   const handleShare = async () => {
     if (typeof navigator !== 'undefined' && navigator.share) {
@@ -227,10 +244,12 @@ export const Header: React.FC<HeaderProps> = ({
             </div>
 
             {/* Brand Logo & Name (Desktop lg+) */}
-            <div className="hidden lg:flex items-center gap-1.5 shrink-0 bg-indigo-50/70 border border-indigo-100 rounded-xl px-2.5 h-9">
-              <div className="w-5 h-5 rounded-lg bg-gradient-to-tr from-amber-500 via-rose-500 to-indigo-600 flex items-center justify-center shadow-sm shrink-0">
-                <MessagesSquare className="w-3 h-3 text-white" />
-              </div>
+            <div className="hidden lg:flex items-center gap-2 shrink-0 bg-indigo-50/70 border border-indigo-100 rounded-xl px-2.5 h-9">
+              <img
+                src={appBrandIcon}
+                alt="شات مصر"
+                className="w-6 h-6 rounded-lg object-cover shadow-sm shrink-0 border border-indigo-200"
+              />
               <span className="text-xs sm:text-sm font-black text-slate-900 whitespace-nowrap">
                 شات مصر
               </span>
@@ -277,6 +296,128 @@ export const Header: React.FC<HeaderProps> = ({
 
           {/* Left Side (in RTL): Symmetrical Action Icons Toolbar */}
           <div className="flex items-center gap-1.5 shrink-0">
+
+            {/* Incoming Messages Notification Icon + Per-Sender Counter Dropdown */}
+            <div className="relative shrink-0" ref={messagesMenuRef}>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsMoreMenuOpen(false);
+                  setIsMessagesMenuOpen((prev) => !prev);
+                }}
+                title="إشعارات الرسائل الواردة"
+                className={`relative w-9 h-9 rounded-xl border flex items-center justify-center transition-all shrink-0 active:scale-95 cursor-pointer ${
+                  totalUnreadMessagesCount > 0
+                    ? 'bg-sky-50 hover:bg-sky-100 border-sky-300 text-sky-600 shadow-xs'
+                    : 'bg-slate-100 hover:bg-slate-200 border-slate-200 text-slate-700'
+                }`}
+              >
+                <MessageCircle className="w-4 h-4" />
+                {totalUnreadMessagesCount > 0 && (
+                  <span className="absolute -top-1 -right-1 min-w-[17px] h-[17px] px-1 rounded-full bg-rose-600 text-white text-[9px] font-black flex items-center justify-center shadow border border-white tabular-nums">
+                    {totalUnreadMessagesCount > 99 ? '99+' : totalUnreadMessagesCount}
+                  </span>
+                )}
+              </button>
+
+              {isMessagesMenuOpen && (
+                <div className="absolute left-0 mt-1.5 w-72 sm:w-80 max-w-[calc(100vw-1rem)] rounded-2xl bg-white border border-slate-200 shadow-2xl overflow-hidden z-50 text-right animate-in fade-in zoom-in-95">
+                  <div className="px-3.5 py-2.5 bg-gradient-to-l from-indigo-50 via-sky-50 to-white border-b border-slate-200 flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <MessageCircle className="w-4 h-4 text-indigo-600 shrink-0" />
+                      <span className="text-xs font-black text-slate-900 truncate">إشعارات الرسائل الواردة</span>
+                      {totalUnreadMessagesCount > 0 && (
+                        <span className="px-1.5 py-0.5 rounded-full bg-rose-600 text-white text-[10px] font-black tabular-nums shrink-0">
+                          {totalUnreadMessagesCount}
+                        </span>
+                      )}
+                    </div>
+                    {totalUnreadMessagesCount > 0 && onClearAllUnreadMessages && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onClearAllUnreadMessages();
+                        }}
+                        className="text-[10px] font-bold text-indigo-600 hover:text-indigo-700 flex items-center gap-1 shrink-0 cursor-pointer"
+                      >
+                        <CheckCheck className="w-3 h-3" />
+                        <span>قراءة الكل</span>
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="max-h-72 overflow-y-auto divide-y divide-slate-100">
+                    {unreadMessagesBySender.length === 0 ? (
+                      <div className="p-6 text-center space-y-2">
+                        <div className="w-10 h-10 rounded-full bg-slate-100 text-slate-400 flex items-center justify-center mx-auto">
+                          <MessageCircle className="w-5 h-5" />
+                        </div>
+                        <p className="text-xs font-bold text-slate-600">لا توجد رسائل واردة جديدة حالياً</p>
+                      </div>
+                    ) : (
+                      unreadMessagesBySender.map((sender) => (
+                        <button
+                          key={sender.senderId}
+                          type="button"
+                          onClick={() => {
+                            setIsMessagesMenuOpen(false);
+                            onOpenSenderChat?.(sender);
+                          }}
+                          className="w-full px-3 py-2.5 hover:bg-indigo-50/70 transition flex items-center justify-between gap-2.5 text-right cursor-pointer"
+                        >
+                          <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                            <div className="w-9 h-9 rounded-full overflow-hidden border border-indigo-200 bg-indigo-50 flex items-center justify-center font-black text-xs text-indigo-700 shrink-0">
+                              {sender.senderAvatar ? (
+                                <img
+                                  src={sender.senderAvatar}
+                                  alt={sender.senderName}
+                                  className="w-full h-full object-cover"
+                                  referrerPolicy="no-referrer"
+                                />
+                              ) : (
+                                <span>{sender.senderName.charAt(0)}</span>
+                              )}
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center justify-between gap-1">
+                                <span className="text-xs font-black text-slate-900 truncate">{sender.senderName}</span>
+                                <span className="text-[9.5px] text-slate-400 flex items-center gap-0.5 shrink-0">
+                                  <Clock className="w-2.5 h-2.5" />
+                                  {new Date(sender.lastTimestamp).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })}
+                                </span>
+                              </div>
+                              <p className="text-[11px] text-slate-600 truncate mt-0.5">{sender.lastMessage}</p>
+                            </div>
+                          </div>
+
+                          <span
+                            title={`عدد الرسائل من ${sender.senderName}`}
+                            className="min-w-[22px] h-[22px] px-1.5 rounded-full bg-gradient-to-r from-rose-500 to-pink-600 text-white text-[10px] font-black flex items-center justify-center shadow-xs shrink-0 tabular-nums"
+                          >
+                            {sender.count}
+                          </span>
+                        </button>
+                      ))
+                    )}
+                  </div>
+
+                  {onOpenMessagesTab && (
+                    <div className="p-2 bg-slate-50 border-t border-slate-100">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsMessagesMenuOpen(false);
+                          onOpenMessagesTab();
+                        }}
+                        className="w-full py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-black transition cursor-pointer"
+                      >
+                        فتح كل المحادثات الخاصة
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
             
             {/* Friend Requests Button */}
             <button 
@@ -329,11 +470,11 @@ export const Header: React.FC<HeaderProps> = ({
               <Radio className="w-4 h-4 text-purple-600" />
             </button>
 
-            {/* Share Button */}
+            {/* Share Button (Desktop/Tablet sm+, inside More menu on small mobile) */}
             <button 
               type="button"
               onClick={handleShare}
-              className="w-9 h-9 flex items-center justify-center rounded-xl bg-slate-100 hover:bg-slate-200 border border-slate-200 text-slate-700 transition-colors shrink-0 active:scale-95 cursor-pointer"
+              className="hidden sm:flex w-9 h-9 items-center justify-center rounded-xl bg-slate-100 hover:bg-slate-200 border border-slate-200 text-slate-700 transition-colors shrink-0 active:scale-95 cursor-pointer"
               title="مشاركة رابط المنصة"
             >
               <Share2 className="w-4 h-4" />
@@ -343,7 +484,10 @@ export const Header: React.FC<HeaderProps> = ({
             <div className="relative shrink-0" ref={moreMenuRef}>
               <button
                 type="button"
-                onClick={() => setIsMoreMenuOpen((prev) => !prev)}
+                onClick={() => {
+                  setIsMessagesMenuOpen(false);
+                  setIsMoreMenuOpen((prev) => !prev);
+                }}
                 className="w-9 h-9 flex items-center justify-center rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 transition-all active:scale-95 shrink-0 cursor-pointer"
                 title="خيارات إضافية"
               >

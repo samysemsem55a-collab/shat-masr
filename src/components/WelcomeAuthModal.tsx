@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { User } from '../types/chat';
 import { signInWithGoogle, syncUserProfileToFirebase } from '../services/firebase';
 import { Sparkles, User as UserIcon, ShieldCheck } from 'lucide-react';
+import appBrandIcon from '../assets/images/shat_masr_icon_1794650535035.jpg';
 
 interface WelcomeAuthModalProps {
   isOpen: boolean;
@@ -104,8 +105,13 @@ export const WelcomeAuthModal: React.FC<WelcomeAuthModalProps> = ({
 
         {/* Branding header */}
         <div className="text-center mb-6">
-          <div className="w-16 h-16 mx-auto mb-3 bg-gradient-to-tr from-amber-500 to-orange-500 rounded-3xl p-1 shadow-lg shadow-amber-500/25 flex items-center justify-center text-3xl text-white">
-            👑
+          <div className="w-16 h-16 mx-auto mb-3 rounded-2xl overflow-hidden shadow-lg shadow-indigo-500/25 border-2 border-indigo-200 bg-indigo-900 flex items-center justify-center">
+            <img
+              src={appBrandIcon}
+              alt="أيقونة شات مصر"
+              className="w-full h-full object-cover"
+              referrerPolicy="no-referrer"
+            />
           </div>
           <h2 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight">
             شات مصر

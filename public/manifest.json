@@ -1,14 +1,14 @@
 {
   "id": "/",
-  "name": "شات مصر وكل العرب",
-  "short_name": "شات العرب",
-  "description": "شات مصر وكل العرب - دردشة كتابية ومجالس صوتية ومسابقات",
+  "name": "شات مصر",
+  "short_name": "شات مصر",
+  "description": "شات مصر - أرقى شات مصري وعربي للدردشة الكتابية والصوتية والمجالس التفاعلية",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
   "orientation": "portrait",
-  "background_color": "#051410",
-  "theme_color": "#061814",
+  "background_color": "#f6f8fc",
+  "theme_color": "#4f46e5",
   "icons": [
     {
       "src": "/pwa-192x192.png",

@@ -275,3 +275,12 @@ export interface LeaderboardEntry {
   coinsEarned: number;
   rank: number;
 }
+
+export interface UnreadSenderSummary {
+  senderId: string;
+  senderName: string;
+  senderAvatar: string;
+  count: number;
+  lastMessage: string;
+  lastTimestamp: number;
+}

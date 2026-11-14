@@ -2863,7 +2863,7 @@ export function subscribeToRoomTyping(
   currentUserId: string,
   onTypingUsers: (users: { id: string; name: string }[]) => void
 ): () => void {
-  const typingMap = new Map<string, { id: string; name: string; timestamp: number }>();
+  const typingMap = new Map<string, { id: string; name: string; timestamp: number; source: 'rtdb' | 'realtime' }>();
 
   const emitTyping = () => {
     const now = Date.now();
@@ -2884,14 +2884,27 @@ export function subscribeToRoomTyping(
       const typingRef = ref(rtdb, `typing/${roomId}`);
       unsubRtdb = onValue(typingRef, (snapshot) => {
         const val = snapshot.val();
+        const activeRtdbIds = new Set<string>();
         if (val) {
           const active = Object.values(val) as { id: string; name: string; timestamp: number }[];
           active.forEach(u => {
             if (u && u.id && u.id !== currentUserId) {
-              typingMap.set(u.id, { id: u.id, name: u.name, timestamp: u.timestamp || Date.now() });
+              activeRtdbIds.add(u.id);
+              typingMap.set(u.id, {
+                id: u.id,
+                name: u.name,
+                timestamp: u.timestamp || Date.now(),
+                source: 'rtdb'
+              });
             }
           });
         }
+        // Clear any RTDB-sourced entries that have stopped typing
+        typingMap.forEach((entry, id) => {
+          if (entry.source === 'rtdb' && !activeRtdbIds.has(id)) {
+            typingMap.delete(id);
+          }
+        });
         emitTyping();
       });
     } catch {}
@@ -2901,7 +2914,7 @@ export function subscribeToRoomTyping(
   const unsubSocketTyping = realtimeSocket.subscribeToRoomTyping(roomId, (uid, uName, isTyping) => {
     if (uid && uid !== currentUserId) {
       if (isTyping) {
-        typingMap.set(uid, { id: uid, name: uName || 'مستخدم', timestamp: Date.now() });
+        typingMap.set(uid, { id: uid, name: uName || 'مستخدم', timestamp: Date.now(), source: 'realtime' });
       } else {
         typingMap.delete(uid);
       }
@@ -2914,7 +2927,7 @@ export function subscribeToRoomTyping(
       const u = e.data.user;
       if (u && u.id !== currentUserId) {
         if (e.data.isTyping) {
-          typingMap.set(u.id, { id: u.id, name: u.name, timestamp: Date.now() });
+          typingMap.set(u.id, { id: u.id, name: u.name, timestamp: Date.now(), source: 'realtime' });
         } else {
           typingMap.delete(u.id);
         }

@@ -56,6 +56,8 @@ interface PrivateChatViewProps {
   onUpdateUser?: (user: User) => void;
   onChatActiveChange?: (isActive: boolean) => void;
   onPromptRegister?: () => void;
+  unreadBySender?: Record<string, number>;
+  onMarkSenderRead?: (senderId: string) => void;
 }
 
 interface ChatContact {
@@ -78,7 +80,9 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
   onOpenWallet,
   onUpdateUser,
   onChatActiveChange,
-  onPromptRegister
+  onPromptRegister,
+  unreadBySender = {},
+  onMarkSenderRead
 }) => {
   // Navigation tabs when in list view
   const [activeTab, setActiveTab] = useState<'chats' | 'friends' | 'online'>('chats');
@@ -215,14 +219,18 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
     return () => unsub();
   }, [activeContact?.id, currentUser.id]);
 
-  // Mark incoming messages as read in Firestore + RTDB + WebSocket when opening/viewing conversation
+  // Mark incoming messages as read in Firestore + RTDB + WebSocket + app unread counter when opening/viewing conversation
   useEffect(() => {
-    if (!activeContact?.id || !currentUser?.id || messages.length === 0) return;
+    if (!activeContact?.id || !currentUser?.id) return;
+    if ((unreadBySender[activeContact.id] || 0) > 0) {
+      onMarkSenderRead?.(activeContact.id);
+    }
+    if (messages.length === 0) return;
     const hasUnread = messages.some(m => m.senderId !== currentUser.id && m.status !== 'read');
     if (hasUnread) {
       markDirectMessagesAsRead(currentUser.id, activeContact.id, messages);
     }
-  }, [activeContact?.id, currentUser?.id, messages]);
+  }, [activeContact?.id, currentUser?.id, messages, unreadBySender, onMarkSenderRead]);
 
   const [inputText, setInputText] = useState('');
   const [playingVoiceId, setPlayingVoiceId] = useState<string | null>(null);
@@ -464,6 +472,7 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
 
   const handleSelectFriendForChat = (friend: Friend) => {
     const fId = friend.friendId || friend.id;
+    onMarkSenderRead?.(fId);
     setActiveContact({
       id: fId,
       name: friend.name,
@@ -478,6 +487,7 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
   };
 
   const handleSelectOnlineUserForChat = (user: User) => {
+    onMarkSenderRead?.(user.id);
     setActiveContact({
       id: user.id,
       name: user.name,
@@ -585,10 +595,12 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
               ) : (
                 recentChats.map((chat) => {
                   const peerOnline = globalOnlineUsers.some(u => u.id === chat.peerId);
+                  const unreadCount = unreadBySender[chat.peerId] || 0;
                   return (
                     <div
                       key={chat.chatId}
                       onClick={() => {
+                        onMarkSenderRead?.(chat.peerId);
                         setActiveContact({
                           id: chat.peerId,
                           name: chat.peerName || 'مستخدم',
@@ -601,10 +613,14 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                           unreadCount: 0
                         });
                       }}
-                      className="p-3 rounded-2xl bg-white border border-slate-200/90 hover:border-indigo-400 cursor-pointer flex items-center justify-between transition-all hover:shadow-md shadow-xs"
+                      className={`p-3 rounded-2xl border cursor-pointer flex items-center justify-between transition-all hover:shadow-md shadow-xs ${
+                        unreadCount > 0
+                          ? 'bg-indigo-50/40 border-indigo-300 hover:border-indigo-400'
+                          : 'bg-white border-slate-200/90 hover:border-indigo-400'
+                      }`}
                     >
-                      <div className="flex items-center gap-3">
-                        <div className="relative">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="relative shrink-0">
                           <div className="w-12 h-12 rounded-full overflow-hidden border border-slate-200 bg-indigo-50 flex items-center justify-center font-bold text-xs text-indigo-700">
                             {chat.peerAvatar ? (
                               <img 
@@ -622,24 +638,31 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                           )}
                         </div>
 
-                        <div>
+                        <div className="min-w-0">
                           <div className="flex items-center gap-1.5">
-                            <h4 className="text-sm font-black text-slate-900">{chat.peerName || 'مستخدم'}</h4>
-                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-50 border border-indigo-200 text-indigo-700 font-bold">
+                            <h4 className="text-sm font-black text-slate-900 truncate">{chat.peerName || 'مستخدم'}</h4>
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-50 border border-indigo-200 text-indigo-700 font-bold shrink-0">
                               محادثة مباشرة
                             </span>
                           </div>
-                          <p className="text-xs text-slate-600 truncate max-w-[200px] sm:max-w-xs mt-0.5">
+                          <p className={`text-xs truncate max-w-[190px] sm:max-w-xs mt-0.5 ${unreadCount > 0 ? 'text-slate-900 font-bold' : 'text-slate-600'}`}>
                             {chat.lastMessage || 'بدء المحادثة...'}
                           </p>
                         </div>
                       </div>
 
-                      <div className="text-left text-xs space-y-1">
+                      <div className="text-left text-xs space-y-1 flex flex-col items-end shrink-0">
                         <span className="text-[10px] text-slate-500 block">
                           {chat.lastTimestamp ? new Date(chat.lastTimestamp).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' }) : ''}
                         </span>
-                        <span className="text-[10px] text-indigo-600 font-bold">فتح الدردشة ←</span>
+                        <div className="flex items-center gap-1.5">
+                          {unreadCount > 0 && (
+                            <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-rose-600 text-white text-[10px] font-black shadow-xs tabular-nums">
+                              {unreadCount}
+                            </span>
+                          )}
+                          <span className="text-[10px] text-indigo-600 font-bold">فتح الدردشة ←</span>
+                        </div>
                       </div>
                     </div>
                   );

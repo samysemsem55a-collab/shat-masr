@@ -281,8 +281,16 @@ wss.on('connection', (ws: WebSocket) => {
           if (roomId && userId) {
             const occMap = roomOccupants.get(roomId);
             if (occMap && occMap.has(userId)) {
+              const departingUser = occMap.get(userId);
               occMap.delete(userId);
               const list = Array.from(occMap.values());
+              broadcastToRoom(roomId, {
+                type: 'ROOM_TYPING_UPDATE',
+                roomId,
+                userId,
+                userName: departingUser?.name || '',
+                isTyping: false
+              }, ws);
               broadcastToRoom(roomId, {
                 type: 'PRESENCE_UPDATE',
                 roomId,
@@ -347,6 +355,17 @@ wss.on('connection', (ws: WebSocket) => {
 
           roomMsgs.push(completeMsg);
           if (roomMsgs.length > 200) roomMsgs.shift(); // keep last 200
+
+          // Clear sender's active typing indicator immediately when message is sent
+          if (completeMsg.senderId) {
+            broadcastToRoom(roomId, {
+              type: 'ROOM_TYPING_UPDATE',
+              roomId,
+              userId: completeMsg.senderId,
+              userName: completeMsg.senderName || '',
+              isTyping: false
+            }, ws);
+          }
 
           // Broadcast to everyone in that room (including sender for confirmation)
           broadcastToRoom(roomId, {
@@ -703,8 +722,16 @@ wss.on('connection', (ws: WebSocket) => {
       if (roomId && userId) {
         const occMap = roomOccupants.get(roomId);
         if (occMap && occMap.has(userId)) {
+          const departingUser = occMap.get(userId);
           occMap.delete(userId);
           const list = Array.from(occMap.values());
+          broadcastToRoom(roomId, {
+            type: 'ROOM_TYPING_UPDATE',
+            roomId,
+            userId,
+            userName: departingUser?.name || '',
+            isTyping: false
+          }, ws);
           broadcastToRoom(roomId, {
             type: 'PRESENCE_UPDATE',
             roomId,
