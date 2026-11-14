@@ -1,0 +1,83 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    match /users/{userId} {
+      allow read, write: if true;
+
+      match /friends/{friendId} {
+        allow read, write: if true;
+      }
+
+      match /friend_requests/{reqId} {
+        allow read, write: if true;
+      }
+
+      match /recent_chats/{chatId} {
+        allow read, write: if true;
+      }
+
+      match /user_messages/{msgId} {
+        allow read, write: if true;
+      }
+
+      match /transactions/{txId} {
+        allow read, write: if true;
+      }
+
+      match /{document=**} {
+        allow read, write: if true;
+      }
+    }
+
+    // Real-time Global Online Users Presence
+    match /online_users/{userId} {
+      allow read, write: if true;
+    }
+
+    match /rooms/{roomId}/messages/{messageId} {
+      allow read, write: if true;
+    }
+
+    // Direct Messages security: Read and write conversations and their messages
+    match /direct_chats/{chatId} {
+      allow read, write: if true;
+
+      match /messages/{messageId} {
+        allow read, write: if true;
+      }
+
+      match /{document=**} {
+        allow read, write: if true;
+      }
+    }
+
+    match /payment_requests/{orderId} {
+      allow read, write: if true;
+    }
+
+    match /vip_requests/{orderId} {
+      allow read, write: if true;
+    }
+
+    match /friendRequests/{requestId} {
+      allow read, write: if true;
+    }
+
+    match /friends/{friendshipId} {
+      allow read, write: if true;
+    }
+
+    match /transactions/{transactionId} {
+      allow read, write: if true;
+    }
+
+    match /coin_transfers/{transferId} {
+      allow read, write: if true;
+    }
+  }
+}
+

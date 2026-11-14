@@ -1,0 +1,32 @@
+{
+  "id": "/",
+  "name": "شات مصر وكل العرب",
+  "short_name": "شات العرب",
+  "description": "شات مصر وكل العرب - دردشة كتابية ومجالس صوتية ومسابقات",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#051410",
+  "theme_color": "#061814",
+  "icons": [
+    {
+      "src": "/pwa-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/pwa-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/pwa-maskable-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

@@ -1,0 +1,569 @@
+import { Message, User, FriendRequest } from '../types/chat';
+
+type MessageCallback = (msg: Message) => void;
+type HistoryCallback = (messages: Message[]) => void;
+type PresenceCallback = (count: number, users: User[]) => void;
+type GlobalPresenceCallback = (users: User[]) => void;
+type ProfileCallback = (user: Partial<User>) => void;
+type AdminEventCallback = (targetUserId: string, updates: Partial<User>) => void;
+type FriendReqCallback = (req: FriendRequest) => void;
+export type PrivateTypingCallback = (isTyping: boolean, senderName: string) => void;
+export type RoomTypingCallback = (userId: string, userName: string, isTyping: boolean) => void;
+type DirectMessageCallback = (msg: Message, convId: string) => void;
+type ReactionCallback = (data: {
+  messageId: string;
+  reactions: Record<string, number>;
+  userReactions: Record<string, string>;
+  reactionUsers: Record<string, string[]>;
+}) => void;
+type ReadReceiptCallback = (messageIds: string[], readerId: string) => void;
+
+class RealtimeSocketManager {
+  private socket: WebSocket | null = null;
+  private reconnectTimer: any = null;
+  private isConnecting = false;
+  private currentRoomId: string | null = null;
+  private currentUser: User | null = null;
+
+  // Listeners
+  private messageListeners: Map<string, Set<MessageCallback>> = new Map();
+  private historyListeners: Map<string, Set<HistoryCallback>> = new Map();
+  private presenceListeners: Map<string, Set<PresenceCallback>> = new Map();
+  private globalPresenceListeners: Set<GlobalPresenceCallback> = new Set();
+  private profileListeners: Map<string, Set<ProfileCallback>> = new Map();
+  private adminEventListeners: Set<AdminEventCallback> = new Set();
+  private friendReqListeners: Set<FriendReqCallback> = new Set();
+  private directMessageListeners: Map<string, Set<DirectMessageCallback>> = new Map();
+  private globalDirectMessageListeners: Set<DirectMessageCallback> = new Set();
+  private privateTypingListeners: Map<string, Set<PrivateTypingCallback>> = new Map();
+  private roomTypingListeners: Map<string, Set<RoomTypingCallback>> = new Map();
+  private reactionListeners: Map<string, Set<ReactionCallback>> = new Map();
+  private roomReadListeners: Map<string, Set<ReadReceiptCallback>> = new Map();
+  private directReadListeners: Map<string, Set<ReadReceiptCallback>> = new Map();
+  private statusListeners: Set<(connected: boolean) => void> = new Set();
+  private isConnectedState = false;
+
+  isConnected(): boolean {
+    return this.isConnectedState && this.socket !== null && this.socket.readyState === WebSocket.OPEN;
+  }
+
+  subscribeToConnectionStatus(callback: (connected: boolean) => void): () => void {
+    callback(this.isConnected());
+    this.statusListeners.add(callback);
+    return () => {
+      this.statusListeners.delete(callback);
+    };
+  }
+
+  private notifyStatusListeners(status: boolean) {
+    this.statusListeners.forEach((cb) => {
+      try {
+        cb(status);
+      } catch (err) {
+        console.warn('[RealtimeSocket] Status listener error:', err);
+      }
+    });
+  }
+
+  connect(user?: User) {
+    const prevUser = this.currentUser;
+    if (user) this.currentUser = user;
+    if (typeof window === 'undefined') return;
+    if (this.socket && this.socket.readyState === WebSocket.OPEN) {
+      if (
+        user &&
+        (!prevUser ||
+          prevUser.id !== user.id ||
+          prevUser.name !== user.name ||
+          prevUser.sessionId !== user.sessionId)
+      ) {
+        this.send('USER_REGISTER', { user });
+      }
+      return;
+    }
+    if (this.socket && this.socket.readyState === WebSocket.CONNECTING) {
+      return;
+    }
+
+    this.isConnecting = true;
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const host = window.location.host;
+    const wsUrl = `${protocol}//${host}/ws`;
+
+    console.log('[RealtimeSocket] Connecting to', wsUrl);
+
+    try {
+      this.socket = new WebSocket(wsUrl);
+
+      this.socket.onopen = () => {
+        console.log('[RealtimeSocket] Connected to real-time server 🚀');
+        this.isConnecting = false;
+        this.isConnectedState = true;
+        this.notifyStatusListeners(true);
+
+        // Register user
+        if (this.currentUser) {
+          this.send('USER_REGISTER', { user: this.currentUser });
+        }
+
+        // Rejoin room if was in one
+        if (this.currentRoomId && this.currentUser) {
+          this.send('JOIN_ROOM', { roomId: this.currentRoomId, user: this.currentUser });
+        }
+      };
+
+      this.socket.onmessage = (event) => {
+        try {
+          const action = JSON.parse(event.data);
+          this.handleIncoming(action);
+        } catch (e) {
+          console.warn('[RealtimeSocket] Parse error:', e);
+        }
+      };
+
+      this.socket.onclose = () => {
+        console.log('[RealtimeSocket] Connection closed. Reconnecting in 2s...');
+        this.socket = null;
+        this.isConnecting = false;
+        this.isConnectedState = false;
+        this.notifyStatusListeners(false);
+        clearTimeout(this.reconnectTimer);
+        this.reconnectTimer = setTimeout(() => {
+          this.connect();
+        }, 2000);
+      };
+
+      this.socket.onerror = (err) => {
+        console.warn('[RealtimeSocket] Socket notice:', err);
+        this.isConnectedState = false;
+        this.notifyStatusListeners(false);
+      };
+    } catch (e) {
+      console.warn('[RealtimeSocket] Failed to create socket:', e);
+      this.isConnecting = false;
+      this.isConnectedState = false;
+      this.notifyStatusListeners(false);
+    }
+  }
+
+  private send(type: string, payload: any) {
+    if (this.socket && this.socket.readyState === WebSocket.OPEN) {
+      this.socket.send(JSON.stringify({ type, payload }));
+    } else {
+      // Auto connect if not connected
+      this.connect();
+    }
+  }
+
+  private handleIncoming(action: { type: string; [key: string]: any }) {
+    const { type } = action;
+
+    switch (type) {
+      case 'ROOM_HISTORY': {
+        const { roomId, messages } = action;
+        const listeners = this.historyListeners.get(roomId);
+        if (listeners) {
+          listeners.forEach(cb => cb(messages));
+        }
+        break;
+      }
+
+      case 'NEW_MESSAGE': {
+        const { roomId, message } = action;
+        const listeners = this.messageListeners.get(roomId);
+        if (listeners) {
+          listeners.forEach(cb => cb(message));
+        }
+        break;
+      }
+
+      case 'PRESENCE_UPDATE': {
+        const { roomId, count, users } = action;
+        const listeners = this.presenceListeners.get(roomId);
+        if (listeners) {
+          listeners.forEach(cb => cb(count, users));
+        }
+        break;
+      }
+
+      case 'GLOBAL_PRESENCE_UPDATE': {
+        const { users } = action;
+        this.globalPresenceListeners.forEach(cb => cb(users));
+        break;
+      }
+
+      case 'USER_PROFILE_UPDATED': {
+        const { userId, user } = action;
+        const listeners = this.profileListeners.get(userId);
+        if (listeners) {
+          listeners.forEach(cb => cb(user));
+        }
+        break;
+      }
+
+      case 'AVATAR_CHANGED': {
+        const { userId, avatar } = action;
+        const listeners = this.profileListeners.get(userId);
+        if (listeners) {
+          listeners.forEach(cb => cb({ avatar }));
+        }
+        break;
+      }
+
+      case 'ADMIN_EVENT': {
+        const { targetUserId, updates } = action;
+        this.adminEventListeners.forEach(cb => cb(targetUserId, updates));
+        // Also fire profile listener for target user
+        const profListeners = this.profileListeners.get(targetUserId);
+        if (profListeners) {
+          profListeners.forEach(cb => cb(updates));
+        }
+        break;
+      }
+
+      case 'NEW_DIRECT_MESSAGE': {
+        const { convId, message } = action;
+        if (convId && message) {
+          const listeners = this.directMessageListeners.get(convId);
+          if (listeners) {
+            listeners.forEach(cb => cb(message, convId));
+          }
+          this.globalDirectMessageListeners.forEach(cb => cb(message, convId));
+        }
+        break;
+      }
+
+      case 'DIRECT_CHATS_UPDATED': {
+        const { convId, message } = action;
+        if (convId && message) {
+          this.globalDirectMessageListeners.forEach(cb => cb(message, convId));
+        }
+        break;
+      }
+
+      case 'NEW_FRIEND_REQUEST': {
+        const { request } = action;
+        this.friendReqListeners.forEach(cb => cb(request));
+        break;
+      }
+
+      case 'PRIVATE_TYPING_UPDATE': {
+        const { senderId, senderName, isTyping } = action;
+        const listeners = this.privateTypingListeners.get(senderId);
+        if (listeners) {
+          listeners.forEach(cb => cb(!!isTyping, senderName || ''));
+        }
+        break;
+      }
+
+      case 'ROOM_TYPING_UPDATE': {
+        const { roomId, userId, userName, isTyping } = action;
+        const listeners = this.roomTypingListeners.get(roomId);
+        if (listeners) {
+          listeners.forEach(cb => cb(userId, userName || '', !!isTyping));
+        }
+        break;
+      }
+
+      case 'MESSAGE_REACTION_UPDATED': {
+        const { roomId, messageId, reactions, userReactions, reactionUsers } = action;
+        const listeners = this.reactionListeners.get(roomId);
+        if (listeners) {
+          listeners.forEach(cb =>
+            cb({
+              messageId,
+              reactions: reactions || {},
+              userReactions: userReactions || {},
+              reactionUsers: reactionUsers || {}
+            })
+          );
+        }
+        break;
+      }
+
+      case 'ROOM_MESSAGES_READ_UPDATE': {
+        const { roomId, readerId, messageIds } = action;
+        const listeners = this.roomReadListeners.get(roomId);
+        if (listeners && Array.isArray(messageIds)) {
+          listeners.forEach(cb => cb(messageIds, readerId || ''));
+        }
+        break;
+      }
+
+      case 'DIRECT_MESSAGE_READ_UPDATE': {
+        const { convId, readerId, messageIds } = action;
+        const listeners = this.directReadListeners.get(convId);
+        if (listeners && Array.isArray(messageIds)) {
+          listeners.forEach(cb => cb(messageIds, readerId || ''));
+        }
+        break;
+      }
+
+      default:
+        break;
+    }
+  }
+
+  // API Methods
+  registerUser(user: User) {
+    this.currentUser = user;
+    this.send('USER_REGISTER', { user });
+  }
+
+  joinRoom(roomId: string, user: User) {
+    this.currentRoomId = roomId;
+    this.currentUser = user;
+    this.send('JOIN_ROOM', { roomId, user });
+  }
+
+  leaveRoom(roomId: string, userId: string) {
+    if (this.currentRoomId === roomId) {
+      this.currentRoomId = null;
+    }
+    this.send('LEAVE_ROOM', { roomId, userId });
+  }
+
+  sendMessage(roomId: string, message: Partial<Message>) {
+    this.send('SEND_MESSAGE', { roomId, message });
+  }
+
+  updateProfile(user: Partial<User> & { id: string }) {
+    this.send('UPDATE_PROFILE', { user });
+  }
+
+  updateAvatar(userId: string, avatar: string) {
+    this.send('UPDATE_AVATAR', { userId, avatar });
+  }
+
+  sendAdminAction(targetUserId: string, updates: Partial<User>) {
+    this.send('ADMIN_ACTION', { targetUserId, updates });
+  }
+
+  sendDirectMessage(convId: string, recipientId: string, message: Partial<Message>, recipientSessionId?: string) {
+    this.send('DIRECT_MESSAGE', { convId, recipientId, recipientSessionId, message });
+  }
+
+  sendMessageReaction(
+    roomId: string,
+    messageId: string,
+    reactions: Record<string, number>,
+    userReactions: Record<string, string>,
+    reactionUsers: Record<string, string[]>
+  ) {
+    this.send('MESSAGE_REACTION', { roomId, messageId, reactions, userReactions, reactionUsers });
+  }
+
+  sendRoomMessagesRead(roomId: string, readerId: string, messageIds: string[]) {
+    if (!messageIds.length) return;
+    this.send('ROOM_MESSAGES_READ', { roomId, readerId, messageIds });
+  }
+
+  sendDirectMessagesRead(convId: string, readerId: string, senderId: string, messageIds: string[]) {
+    if (!messageIds.length) return;
+    this.send('DIRECT_MESSAGE_READ', { convId, readerId, senderId, messageIds });
+  }
+
+  sendRoomTyping(roomId: string, userId: string, userName: string, isTyping: boolean) {
+    this.send('ROOM_TYPING', { roomId, userId, userName, isTyping });
+  }
+
+  creditInstaPayCoins(userId: string, coinsToAdd: number, order: any) {
+    this.send('INSTAPAY_CREDIT_COINS', { userId, coinsToAdd, order });
+  }
+
+  creditPaymobCoins(userId: string, coinsToAdd: number, order: any) {
+    this.creditInstaPayCoins(userId, coinsToAdd, order);
+  }
+
+  sendFriendRequest(request: FriendRequest) {
+    this.send('FRIEND_REQUEST', { request });
+  }
+
+  sendUserReport(report: {
+    reporterId: string;
+    reporterName: string;
+    reportedUserId: string;
+    reportedUserName: string;
+    reason: string;
+    details?: string;
+    timestamp: number;
+  }) {
+    this.send('USER_REPORT', { report });
+  }
+
+  // Subscription helpers
+  subscribeToRoom(
+    roomId: string,
+    onMessage: MessageCallback,
+    onHistory?: HistoryCallback
+  ): () => void {
+    if (!this.messageListeners.has(roomId)) {
+      this.messageListeners.set(roomId, new Set());
+    }
+    this.messageListeners.get(roomId)!.add(onMessage);
+
+    if (onHistory) {
+      if (!this.historyListeners.has(roomId)) {
+        this.historyListeners.set(roomId, new Set());
+      }
+      this.historyListeners.get(roomId)!.add(onHistory);
+    }
+
+    return () => {
+      this.messageListeners.get(roomId)?.delete(onMessage);
+      if (onHistory) {
+        this.historyListeners.get(roomId)?.delete(onHistory);
+      }
+    };
+  }
+
+  subscribeToPresence(roomId: string, callback: PresenceCallback): () => void {
+    if (!this.presenceListeners.has(roomId)) {
+      this.presenceListeners.set(roomId, new Set());
+    }
+    this.presenceListeners.get(roomId)!.add(callback);
+
+    return () => {
+      this.presenceListeners.get(roomId)?.delete(callback);
+    };
+  }
+
+  subscribeToGlobalPresence(callback: GlobalPresenceCallback): () => void {
+    this.globalPresenceListeners.add(callback);
+    return () => {
+      this.globalPresenceListeners.delete(callback);
+    };
+  }
+
+  subscribeToUserProfile(userId: string, callback: ProfileCallback): () => void {
+    if (!this.profileListeners.has(userId)) {
+      this.profileListeners.set(userId, new Set());
+    }
+    this.profileListeners.get(userId)!.add(callback);
+
+    return () => {
+      this.profileListeners.get(userId)?.delete(callback);
+    };
+  }
+
+  subscribeToAdminEvents(callback: AdminEventCallback): () => void {
+    this.adminEventListeners.add(callback);
+    return () => {
+      this.adminEventListeners.delete(callback);
+    };
+  }
+
+  subscribeToDirectMessages(
+    convId: string,
+    callback: DirectMessageCallback
+  ): () => void {
+    if (!this.directMessageListeners.has(convId)) {
+      this.directMessageListeners.set(convId, new Set());
+    }
+    this.directMessageListeners.get(convId)!.add(callback);
+    return () => {
+      this.directMessageListeners.get(convId)?.delete(callback);
+    };
+  }
+
+  subscribeToGlobalDirectMessages(callback: DirectMessageCallback): () => void {
+    this.globalDirectMessageListeners.add(callback);
+    return () => {
+      this.globalDirectMessageListeners.delete(callback);
+    };
+  }
+
+  subscribeToFriendRequests(callback: FriendReqCallback): () => void {
+    this.friendReqListeners.add(callback);
+    return () => {
+      this.friendReqListeners.delete(callback);
+    };
+  }
+
+  // Private Chat Realtime Typing Indicator via WebSocket
+  sendPrivateTyping(senderId: string, senderName: string, targetUserId: string, isTyping: boolean) {
+    this.send('PRIVATE_TYPING', { senderId, senderName, targetUserId, isTyping });
+
+    // Local BroadcastChannel fallback for multi-tab testing
+    if (typeof window !== 'undefined') {
+      try {
+        const bus = new BroadcastChannel('arab_egypt_chat_bus');
+        bus.postMessage({
+          type: 'PRIVATE_TYPING_BROADCAST',
+          senderId,
+          senderName,
+          targetUserId,
+          isTyping
+        });
+        bus.close();
+      } catch {}
+    }
+  }
+
+  subscribeToPrivateTyping(targetUserId: string, callback: PrivateTypingCallback): () => void {
+    if (!this.privateTypingListeners.has(targetUserId)) {
+      this.privateTypingListeners.set(targetUserId, new Set());
+    }
+    this.privateTypingListeners.get(targetUserId)!.add(callback);
+
+    // Cross-tab broadcast listener
+    let bus: BroadcastChannel | null = null;
+    if (typeof window !== 'undefined') {
+      try {
+        bus = new BroadcastChannel('arab_egypt_chat_bus');
+        bus.onmessage = (e) => {
+          if (e.data?.type === 'PRIVATE_TYPING_BROADCAST' && e.data.senderId === targetUserId) {
+            callback(!!e.data.isTyping, e.data.senderName || '');
+          }
+        };
+      } catch {}
+    }
+
+    return () => {
+      this.privateTypingListeners.get(targetUserId)?.delete(callback);
+      if (bus) bus.close();
+    };
+  }
+
+  subscribeToRoomTyping(roomId: string, callback: RoomTypingCallback): () => void {
+    if (!this.roomTypingListeners.has(roomId)) {
+      this.roomTypingListeners.set(roomId, new Set());
+    }
+    this.roomTypingListeners.get(roomId)!.add(callback);
+    return () => {
+      this.roomTypingListeners.get(roomId)?.delete(callback);
+    };
+  }
+
+  subscribeToMessageReactions(roomId: string, callback: ReactionCallback): () => void {
+    if (!this.reactionListeners.has(roomId)) {
+      this.reactionListeners.set(roomId, new Set());
+    }
+    this.reactionListeners.get(roomId)!.add(callback);
+    return () => {
+      this.reactionListeners.get(roomId)?.delete(callback);
+    };
+  }
+
+  subscribeToRoomMessagesRead(roomId: string, callback: ReadReceiptCallback): () => void {
+    if (!this.roomReadListeners.has(roomId)) {
+      this.roomReadListeners.set(roomId, new Set());
+    }
+    this.roomReadListeners.get(roomId)!.add(callback);
+    return () => {
+      this.roomReadListeners.get(roomId)?.delete(callback);
+    };
+  }
+
+  subscribeToDirectMessagesRead(convId: string, callback: ReadReceiptCallback): () => void {
+    if (!this.directReadListeners.has(convId)) {
+      this.directReadListeners.set(convId, new Set());
+    }
+    this.directReadListeners.get(convId)!.add(callback);
+    return () => {
+      this.directReadListeners.get(convId)?.delete(callback);
+    };
+  }
+}
+
+export const realtimeSocket = new RealtimeSocketManager();

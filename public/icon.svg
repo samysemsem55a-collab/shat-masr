@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#061814" />
+      <stop offset="100%" stop-color="#020806" />
+    </linearGradient>
+    <linearGradient id="primary" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#10b981" />
+      <stop offset="100%" stop-color="#059669" />
+    </linearGradient>
+    <linearGradient id="gold" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#fbbf24" />
+      <stop offset="100%" stop-color="#d97706" />
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="128" fill="url(#bg)" />
+  <circle cx="256" cy="256" r="190" stroke="url(#gold)" stroke-width="8" fill="none" opacity="0.6" />
+  <!-- Chat Bubble with Crown and Mic -->
+  <path d="M140 180 C140 130, 372 130, 372 180 C372 260, 240 280, 210 330 C200 345, 175 320, 170 300 C150 290, 140 230, 140 180 Z" fill="url(#primary)" />
+  <!-- Crescent Moon & Star -->
+  <path d="M290 180 A 30 30 0 1 1 310 235 A 40 40 0 1 0 290 180 Z" fill="url(#gold)" />
+  <circle cx="330" cy="190" r="8" fill="#fbbf24" />
+  <!-- Mic symbol -->
+  <rect x="236" y="195" width="40" height="70" rx="20" fill="#ffffff" />
+  <path d="M220 235 C220 275, 292 275, 292 235" stroke="#ffffff" stroke-width="12" stroke-linecap="round" fill="none" />
+  <path d="M256 275 L256 305 M230 305 L282 305" stroke="#ffffff" stroke-width="12" stroke-linecap="round" />
+</svg>
