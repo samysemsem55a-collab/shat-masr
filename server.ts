@@ -1,5 +1,6 @@
 import express from 'express';
 import type { Request, Response } from 'express';
+import fs from 'fs';
 import http from 'http';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -72,8 +73,19 @@ interface UserProfile {
   sessionId?: string;
 }
 
+interface PinnedRoomMessage {
+  id: string;
+  senderId?: string;
+  senderName: string;
+  content: string;
+  pinnedBy?: string;
+  pinnedAt: number;
+}
+
 // Stores
 const messagesByRoom: Map<string, ChatMessage[]> = new Map();
+const pinnedMessageByRoom: Map<string, PinnedRoomMessage | null> = new Map();
+const roomBackgroundByRoom: Map<string, string> = new Map();
 const directMessagesByConv: Map<string, any[]> = new Map();
 const roomOccupants: Map<string, Map<string, RoomOccupant>> = new Map();
 const usersStore: Map<string, UserProfile> = new Map();
@@ -87,6 +99,69 @@ DEFAULT_ROOMS.forEach(roomId => {
   messagesByRoom.set(roomId, []);
   roomOccupants.set(roomId, new Map());
 });
+
+// Persist custom room background themes across restarts
+const ROOM_BACKGROUNDS_FILE = path.resolve(__dirname, '.room-backgrounds.json');
+try {
+  if (fs.existsSync(ROOM_BACKGROUNDS_FILE)) {
+    const rawBg = fs.readFileSync(ROOM_BACKGROUNDS_FILE, 'utf-8');
+    const parsedBg = JSON.parse(rawBg);
+    if (parsedBg && typeof parsedBg === 'object') {
+      Object.entries(parsedBg).forEach(([rId, theme]) => {
+        if (typeof theme === 'string' && theme && theme !== 'default') {
+          roomBackgroundByRoom.set(rId, theme);
+        }
+      });
+    }
+  }
+} catch {}
+
+function persistRoomBackgrounds() {
+  try {
+    fs.writeFileSync(
+      ROOM_BACKGROUNDS_FILE,
+      JSON.stringify(Object.fromEntries(roomBackgroundByRoom), null, 2),
+      'utf-8'
+    );
+  } catch {}
+}
+
+// Authoritative Monotonic Cumulative Visitors Counter (never decreases)
+const VISITORS_STATS_FILE = path.resolve(__dirname, '.cumulative-visitors.json');
+const BASE_VISITORS_COUNT = 15480;
+let cumulativeVisitorsCount = BASE_VISITORS_COUNT;
+const recordedVisitTokens: Set<string> = new Set();
+
+try {
+  if (fs.existsSync(VISITORS_STATS_FILE)) {
+    const raw = fs.readFileSync(VISITORS_STATS_FILE, 'utf-8');
+    const parsed = JSON.parse(raw);
+    if (typeof parsed?.count === 'number' && !isNaN(parsed.count)) {
+      cumulativeVisitorsCount = Math.max(BASE_VISITORS_COUNT, parsed.count);
+    }
+  }
+} catch {}
+
+function persistCumulativeVisitorsCount() {
+  try {
+    fs.writeFileSync(
+      VISITORS_STATS_FILE,
+      JSON.stringify({ count: cumulativeVisitorsCount, updatedAt: Date.now() }),
+      'utf-8'
+    );
+  } catch {}
+}
+
+function raiseCumulativeVisitorsMonotonic(candidateCount: number, incrementBy: number = 0): boolean {
+  const safeCandidate = Number.isFinite(candidateCount) ? Math.floor(candidateCount) : BASE_VISITORS_COUNT;
+  const next = Math.max(cumulativeVisitorsCount, safeCandidate, BASE_VISITORS_COUNT) + Math.max(0, incrementBy);
+  if (next > cumulativeVisitorsCount) {
+    cumulativeVisitorsCount = next;
+    persistCumulativeVisitorsCount();
+    return true;
+  }
+  return false;
+}
 
 // WebSocket Server (explicit /ws upgrade handling so it never interferes with other routes)
 const wss = new WebSocketServer({ noServer: true });
@@ -178,6 +253,14 @@ function getGlobalOnlineUsers(): RoomOccupant[] {
 
 wss.on('connection', (ws: WebSocket) => {
   console.log('[WebSocket] Client connected. Total clients:', wss.clients.size);
+  ws.send(JSON.stringify({
+    type: 'CUMULATIVE_VISITORS_UPDATE',
+    count: cumulativeVisitorsCount
+  }));
+  ws.send(JSON.stringify({
+    type: 'ALL_ROOM_BACKGROUNDS',
+    backgrounds: Object.fromEntries(roomBackgroundByRoom)
+  }));
 
   ws.on('message', (raw) => {
     try {
@@ -255,6 +338,22 @@ wss.on('connection', (ws: WebSocket) => {
             type: 'ROOM_HISTORY',
             roomId,
             messages: history
+          }));
+
+          // Send active pinned message for this room if any
+          const currentPinned = pinnedMessageByRoom.get(roomId) || null;
+          ws.send(JSON.stringify({
+            type: 'ROOM_PINNED_MESSAGE',
+            roomId,
+            pinnedMessage: currentPinned
+          }));
+
+          // Send custom room background theme if set
+          const currentBg = roomBackgroundByRoom.get(roomId) || 'default';
+          ws.send(JSON.stringify({
+            type: 'ROOM_BACKGROUND_UPDATED',
+            roomId,
+            backgroundTheme: currentBg
           }));
 
           // Broadcast updated presence to all clients in room
@@ -434,6 +533,55 @@ wss.on('connection', (ws: WebSocket) => {
               isTyping: !!isTyping
             }, ws);
           }
+          break;
+        }
+
+        case 'SET_PINNED_MESSAGE': {
+          const { roomId, pinnedMessage } = payload;
+          if (!roomId) return;
+          if (pinnedMessage && pinnedMessage.content) {
+            const normalizedPin: PinnedRoomMessage = {
+              id: pinnedMessage.id || `pin_${Date.now()}`,
+              senderId: pinnedMessage.senderId,
+              senderName: pinnedMessage.senderName || 'المشرف',
+              content: String(pinnedMessage.content),
+              pinnedBy: pinnedMessage.pinnedBy || 'المشرف',
+              pinnedAt: pinnedMessage.pinnedAt || Date.now()
+            };
+            pinnedMessageByRoom.set(roomId, normalizedPin);
+            broadcastToRoom(roomId, {
+              type: 'ROOM_PINNED_MESSAGE',
+              roomId,
+              pinnedMessage: normalizedPin
+            });
+          } else {
+            pinnedMessageByRoom.delete(roomId);
+            broadcastToRoom(roomId, {
+              type: 'ROOM_PINNED_MESSAGE',
+              roomId,
+              pinnedMessage: null
+            });
+          }
+          break;
+        }
+
+        case 'UPDATE_ROOM_BACKGROUND': {
+          const { roomId, backgroundTheme } = payload || {};
+          if (!roomId) return;
+          const normalized = typeof backgroundTheme === 'string' && backgroundTheme.trim() && backgroundTheme !== 'default'
+            ? backgroundTheme.trim()
+            : 'default';
+          if (normalized === 'default') {
+            roomBackgroundByRoom.delete(roomId);
+          } else {
+            roomBackgroundByRoom.set(roomId, normalized);
+          }
+          persistRoomBackgrounds();
+          broadcastToAll({
+            type: 'ROOM_BACKGROUND_UPDATED',
+            roomId,
+            backgroundTheme: normalized
+          });
           break;
         }
 
@@ -707,6 +855,45 @@ wss.on('connection', (ws: WebSocket) => {
           break;
         }
 
+        case 'REGISTER_VISIT': {
+          const visitKey = String(payload?.visitToken || payload?.deviceId || '').trim();
+          const clientHighest = Number(payload?.clientHighestCount) || BASE_VISITORS_COUNT;
+          let shouldIncrement = false;
+          if (visitKey && !recordedVisitTokens.has(visitKey)) {
+            recordedVisitTokens.add(visitKey);
+            if (recordedVisitTokens.size > 5000) {
+              const first = recordedVisitTokens.values().next().value;
+              if (first) recordedVisitTokens.delete(first);
+            }
+            shouldIncrement = true;
+          }
+          const changed = raiseCumulativeVisitorsMonotonic(clientHighest, shouldIncrement ? 1 : 0);
+          if (changed) {
+            broadcastToAll({
+              type: 'CUMULATIVE_VISITORS_UPDATE',
+              count: cumulativeVisitorsCount
+            });
+          } else {
+            ws.send(JSON.stringify({
+              type: 'CUMULATIVE_VISITORS_UPDATE',
+              count: cumulativeVisitorsCount
+            }));
+          }
+          break;
+        }
+
+        case 'SYNC_VISITORS_COUNT': {
+          const incoming = Number(payload?.count) || BASE_VISITORS_COUNT;
+          const changed = raiseCumulativeVisitorsMonotonic(incoming, 0);
+          if (changed) {
+            broadcastToAll({
+              type: 'CUMULATIVE_VISITORS_UPDATE',
+              count: cumulativeVisitorsCount
+            });
+          }
+          break;
+        }
+
         default:
           break;
       }
@@ -782,6 +969,28 @@ app.get('/api/presence/:roomId', (req: Request, res: Response) => {
 
 app.get('/api/presence', (_req: Request, res: Response) => {
   res.json({ users: getGlobalOnlineUsers() });
+});
+
+app.get('/api/stats/visitors', (_req: Request, res: Response) => {
+  res.json({ count: cumulativeVisitorsCount });
+});
+
+app.post('/api/stats/visitors/visit', (req: Request, res: Response) => {
+  const visitKey = String(req.body?.visitToken || req.body?.deviceId || '').trim();
+  const clientHighest = Number(req.body?.clientHighestCount) || BASE_VISITORS_COUNT;
+  let shouldIncrement = false;
+  if (visitKey && !recordedVisitTokens.has(visitKey)) {
+    recordedVisitTokens.add(visitKey);
+    shouldIncrement = true;
+  }
+  const changed = raiseCumulativeVisitorsMonotonic(clientHighest, shouldIncrement ? 1 : 0);
+  if (changed) {
+    broadcastToAll({
+      type: 'CUMULATIVE_VISITORS_UPDATE',
+      count: cumulativeVisitorsCount
+    });
+  }
+  res.json({ count: cumulativeVisitorsCount });
 });
 
 // Start server with Vite middleware in development

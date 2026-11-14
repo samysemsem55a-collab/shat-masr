@@ -137,8 +137,11 @@ export interface Room {
   pinnedAnnouncement?: string;
   pinnedMessage?: {
     id: string;
+    senderId?: string;
     senderName: string;
     content: string;
+    pinnedBy?: string;
+    pinnedAt?: number;
   };
   bannedUserIds?: string[];
   mutedUserIds?: string[];

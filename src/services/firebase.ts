@@ -1,6 +1,8 @@
 import { initializeApp, getApps, getApp, FirebaseApp } from 'firebase/app';
 import { 
   getFirestore, 
+  initializeFirestore,
+  enableNetwork,
   collection, 
   doc, 
   setDoc, 
@@ -20,7 +22,8 @@ import {
   where,
   arrayUnion
 } from 'firebase/firestore';
-import { realtimeSocket } from './realtimeSocket';
+import { realtimeSocket, PinnedRoomMessage } from './realtimeSocket';
+export type { PinnedRoomMessage };
 import { 
   getDatabase, 
   ref, 
@@ -31,6 +34,7 @@ import {
   update,
   get,
   remove,
+  runTransaction,
   Database,
   query as rtdbQuery,
   limitToLast
@@ -72,7 +76,18 @@ let currentAuthUid: string | null = null;
 try {
   app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
   const dbId = (firebaseConfigJson as any).firestoreDatabaseId;
-  db = dbId ? getFirestore(app, dbId) : getFirestore(app);
+  try {
+    db = initializeFirestore(
+      app,
+      {
+        experimentalForceLongPolling: true,
+        ignoreUndefinedProperties: true
+      },
+      dbId || undefined
+    );
+  } catch {
+    db = dbId ? getFirestore(app, dbId) : getFirestore(app);
+  }
   
   try {
     rtdb = getDatabase(app, firebaseConfig.databaseURL);
@@ -111,9 +126,18 @@ if (typeof window !== 'undefined') {
 
 export { db, rtdb, auth, isFirebaseAvailable, currentAuthUid };
 
+if (typeof window !== 'undefined' && db) {
+  window.addEventListener('online', () => {
+    if (db) {
+      enableNetwork(db).catch(() => {});
+    }
+  });
+}
+
 // Validate connection per SKILL instructions
 export async function testConnection() {
   if (!db) return;
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
   try {
     await getDocFromServer(doc(db, 'test', 'connection'));
   } catch (error) {
@@ -3274,5 +3298,331 @@ export async function checkAndMarkFirstPublicRoomEntry(
   return true;
 }
 
+/**
+ * Atomic, strictly monotonic cumulative visitors counter (never decreases).
+ * Combines Firebase RTDB runTransaction + onValue with authoritative WebSocket & localStorage sync.
+ */
+export function syncCumulativeVisitorsRealtime(
+  visitToken: string,
+  shouldIncrementThisSession: boolean,
+  localBaseline: number,
+  onCountUpdate: (highestCount: number) => void
+): () => void {
+  const BASE = 15480;
+  let currentMax = Math.max(BASE, localBaseline || BASE);
+
+  const reportHighest = (candidate: number) => {
+    if (typeof candidate !== 'number' || isNaN(candidate)) return;
+    const next = Math.max(currentMax, Math.floor(candidate), BASE);
+    if (next > currentMax) {
+      currentMax = next;
+    }
+    try {
+      localStorage.setItem('shat_masr_cumulative_visitors', String(currentMax));
+    } catch {}
+    onCountUpdate(currentMax);
+  };
+
+  // 1. Subscribe to WebSocket authoritative counter & register visit
+  const unsubSocket = realtimeSocket.subscribeToCumulativeVisitors((wsCount) => {
+    reportHighest(wsCount);
+  });
+  if (shouldIncrementThisSession) {
+    realtimeSocket.registerVisit(visitToken, currentMax);
+  } else {
+    realtimeSocket.syncCumulativeVisitorsCount(currentMax);
+  }
+
+  // 2. REST API authoritative sync (ensures instant hydration before/even without WS)
+  if (typeof fetch === 'function') {
+    const endpoint = shouldIncrementThisSession ? '/api/stats/visitors/visit' : '/api/stats/visitors';
+    const init: RequestInit = shouldIncrementThisSession
+      ? {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ visitToken, clientHighestCount: currentMax })
+        }
+      : { method: 'GET' };
+
+    fetch(endpoint, init)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data && typeof data.count === 'number') {
+          reportHighest(data.count);
+        }
+      })
+      .catch(() => {});
+  }
+
+  // 3. Firebase RTDB atomic runTransaction + real-time onValue listener
+  let unsubRtdb: (() => void) | null = null;
+  if (rtdb) {
+    try {
+      const visitorsRef = ref(rtdb, 'platform_stats/cumulative_visitors');
+      unsubRtdb = onValue(visitorsRef, (snapshot) => {
+        const remoteVal = snapshot.val();
+        if (typeof remoteVal === 'number' && !isNaN(remoteVal)) {
+          reportHighest(remoteVal);
+          realtimeSocket.syncCumulativeVisitorsCount(Math.max(currentMax, remoteVal));
+        }
+      });
+
+      runTransaction(visitorsRef, (existingVal) => {
+        const existingNum =
+          typeof existingVal === 'number' && !isNaN(existingVal) ? existingVal : BASE;
+        const floor = Math.max(existingNum, currentMax, BASE);
+        return shouldIncrementThisSession ? floor + 1 : floor;
+      })
+        .then((result) => {
+          const committedVal = result?.snapshot?.val();
+          if (typeof committedVal === 'number' && !isNaN(committedVal)) {
+            reportHighest(committedVal);
+            realtimeSocket.syncCumulativeVisitorsCount(committedVal);
+          }
+        })
+        .catch(() => {});
+    } catch {}
+  }
+
+  return () => {
+    unsubSocket();
+    if (unsubRtdb) unsubRtdb();
+  };
+}
+
+// ==========================================
+// 20. ROOM PINNED MESSAGE (WebSocket + RTDB + BroadcastChannel)
+// ==========================================
+export async function setRoomPinnedMessage(
+  roomId: string,
+  pinnedMessage: PinnedRoomMessage | null
+): Promise<void> {
+  if (!roomId) return;
+  const localKey = `room_pinned_${roomId}`;
+
+  const normalized: PinnedRoomMessage | null =
+    pinnedMessage && pinnedMessage.content
+      ? {
+          id: pinnedMessage.id || `pin_${Date.now()}`,
+          senderId: pinnedMessage.senderId,
+          senderName: pinnedMessage.senderName || 'المشرف',
+          content: pinnedMessage.content,
+          pinnedBy: pinnedMessage.pinnedBy || 'المشرف',
+          pinnedAt: pinnedMessage.pinnedAt || Date.now()
+        }
+      : null;
+
+  try {
+    if (normalized) {
+      localStorage.setItem(localKey, JSON.stringify(normalized));
+    } else {
+      localStorage.removeItem(localKey);
+    }
+  } catch {}
+
+  realtimeSocket.setRoomPinnedMessage(roomId, normalized);
+
+  liveChatBus?.postMessage({
+    type: 'ROOM_PINNED_MESSAGE_UPDATE',
+    roomId,
+    pinnedMessage: normalized
+  });
+
+  if (rtdb) {
+    try {
+      const pinRef = ref(rtdb, `rooms_pinned/${roomId}`);
+      if (normalized) {
+        await set(pinRef, normalized);
+      } else {
+        await remove(pinRef);
+      }
+    } catch {}
+  }
+}
+
+export function subscribeToRoomPinnedMessage(
+  roomId: string,
+  onUpdate: (pinnedMessage: PinnedRoomMessage | null) => void
+): () => void {
+  if (!roomId) return () => {};
+  const localKey = `room_pinned_${roomId}`;
+  let hasRemoteAuthoritativeUpdate = false;
+
+  const saveLocal = (pin: PinnedRoomMessage | null) => {
+    try {
+      if (pin) {
+        localStorage.setItem(localKey, JSON.stringify(pin));
+      } else {
+        localStorage.removeItem(localKey);
+      }
+    } catch {}
+  };
+
+  // Initial local cache hydration before remote listeners emit
+  try {
+    const cached = localStorage.getItem(localKey);
+    if (cached && !hasRemoteAuthoritativeUpdate) {
+      const parsed = JSON.parse(cached);
+      if (parsed && parsed.content) {
+        onUpdate(parsed);
+      }
+    }
+  } catch {}
+
+  const unsubSocket = realtimeSocket.subscribeToRoomPinnedMessage(roomId, (pin) => {
+    hasRemoteAuthoritativeUpdate = true;
+    saveLocal(pin);
+    onUpdate(pin);
+  });
+
+  let unsubRtdb: (() => void) | null = null;
+  if (rtdb) {
+    try {
+      const pinRef = ref(rtdb, `rooms_pinned/${roomId}`);
+      unsubRtdb = onValue(pinRef, (snapshot) => {
+        const val = snapshot.val();
+        if (val && typeof val === 'object' && val.content) {
+          hasRemoteAuthoritativeUpdate = true;
+          const pin = val as PinnedRoomMessage;
+          saveLocal(pin);
+          onUpdate(pin);
+        } else if (hasRemoteAuthoritativeUpdate) {
+          // Only clear if RTDB explicitly updates to empty after initial load
+          saveLocal(null);
+          onUpdate(null);
+        }
+      });
+    } catch {}
+  }
+
+  const handleBroadcast = (e: MessageEvent) => {
+    if (e.data?.type === 'ROOM_PINNED_MESSAGE_UPDATE' && e.data.roomId === roomId) {
+      hasRemoteAuthoritativeUpdate = true;
+      const pin = (e.data.pinnedMessage as PinnedRoomMessage | null) || null;
+      saveLocal(pin);
+      onUpdate(pin);
+    }
+  };
+  liveChatBus?.addEventListener('message', handleBroadcast);
+
+  return () => {
+    unsubSocket();
+    if (unsubRtdb) unsubRtdb();
+    liveChatBus?.removeEventListener('message', handleBroadcast);
+  };
+}
+
+// ==========================================
+// 21. ROOM BACKGROUND THEME (WebSocket + RTDB + BroadcastChannel + localStorage)
+// ==========================================
+export async function setRoomBackgroundTheme(
+  roomId: string,
+  backgroundTheme: string
+): Promise<void> {
+  if (!roomId) return;
+  const localKey = `room_bg_theme_${roomId}`;
+  const normalized =
+    typeof backgroundTheme === 'string' && backgroundTheme.trim() && backgroundTheme !== 'default'
+      ? backgroundTheme.trim()
+      : 'default';
+
+  try {
+    if (normalized === 'default') {
+      localStorage.removeItem(localKey);
+    } else {
+      localStorage.setItem(localKey, normalized);
+    }
+  } catch {}
+
+  realtimeSocket.updateRoomBackground(roomId, normalized);
+
+  liveChatBus?.postMessage({
+    type: 'ROOM_BACKGROUND_UPDATE',
+    roomId,
+    backgroundTheme: normalized
+  });
+
+  if (rtdb) {
+    try {
+      const bgRef = ref(rtdb, `rooms_background/${roomId}`);
+      if (normalized === 'default') {
+        await remove(bgRef);
+      } else {
+        await set(bgRef, {
+          backgroundTheme: normalized,
+          updatedAt: Date.now()
+        });
+      }
+    } catch {}
+  }
+}
+
+export function subscribeToRoomBackgroundTheme(
+  roomId: string,
+  onUpdate: (backgroundTheme: string) => void
+): () => void {
+  if (!roomId) return () => {};
+  const localKey = `room_bg_theme_${roomId}`;
+  let hasRemoteAuthoritativeUpdate = false;
+
+  const saveLocal = (theme: string) => {
+    try {
+      if (!theme || theme === 'default') {
+        localStorage.removeItem(localKey);
+      } else {
+        localStorage.setItem(localKey, theme);
+      }
+    } catch {}
+  };
+
+  try {
+    const cached = localStorage.getItem(localKey);
+    if (cached && !hasRemoteAuthoritativeUpdate) {
+      onUpdate(cached);
+    }
+  } catch {}
+
+  const unsubSocket = realtimeSocket.subscribeToRoomBackground(roomId, (theme) => {
+    hasRemoteAuthoritativeUpdate = true;
+    const normalized = theme || 'default';
+    saveLocal(normalized);
+    onUpdate(normalized);
+  });
+
+  let unsubRtdb: (() => void) | null = null;
+  if (rtdb) {
+    try {
+      const bgRef = ref(rtdb, `rooms_background/${roomId}`);
+      unsubRtdb = onValue(bgRef, (snapshot) => {
+        const val = snapshot.val();
+        if (val && typeof val === 'object' && typeof val.backgroundTheme === 'string') {
+          hasRemoteAuthoritativeUpdate = true;
+          const theme = val.backgroundTheme || 'default';
+          saveLocal(theme);
+          onUpdate(theme);
+        } else if (hasRemoteAuthoritativeUpdate) {
+          saveLocal('default');
+          onUpdate('default');
+        }
+      });
+    } catch {}
+  }
+
+  const handleBroadcast = (e: MessageEvent) => {
+    if (e.data?.type === 'ROOM_BACKGROUND_UPDATE' && e.data.roomId === roomId) {
+      hasRemoteAuthoritativeUpdate = true;
+      const theme = typeof e.data.backgroundTheme === 'string' ? e.data.backgroundTheme : 'default';
+      saveLocal(theme);
+      onUpdate(theme);
+    }
+  };
+  liveChatBus?.addEventListener('message', handleBroadcast);
+
+  return () => {
+    unsubSocket();
+    if (unsubRtdb) unsubRtdb();
+    liveChatBus?.removeEventListener('message', handleBroadcast);
+  };
+}
 
 

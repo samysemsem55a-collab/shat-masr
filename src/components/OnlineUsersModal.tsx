@@ -83,27 +83,39 @@ export const OnlineUsersModal: React.FC<OnlineUsersModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-slate-900/45 backdrop-blur-sm p-0 sm:p-4 animate-in fade-in">
-      <div className="w-full sm:max-w-md bg-white border border-slate-200 rounded-t-3xl sm:rounded-3xl overflow-hidden shadow-2xl flex flex-col max-h-[85vh] text-slate-900">
+    <div
+      dir="rtl"
+      onClick={onClose}
+      className="fixed inset-0 z-50 flex justify-start bg-slate-900/45 backdrop-blur-sm animate-in fade-in"
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="h-full w-[88vw] max-w-[380px] bg-white border-l border-slate-200 shadow-2xl flex flex-col text-slate-900 animate-drawer-in-right"
+      >
         
-        {/* Header */}
-        <div className="p-3.5 bg-gradient-to-r from-indigo-50 via-white to-purple-50 border-b border-slate-200 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-xl bg-emerald-100 text-emerald-600 flex items-center justify-center">
+        {/* Side Drawer Header */}
+        <div className="p-3.5 pt-[calc(env(safe-area-inset-top,0px)+0.875rem)] bg-gradient-to-l from-teal-600 via-emerald-600 to-cyan-700 text-white border-b border-emerald-500/40 flex items-center justify-between shrink-0">
+          <div className="flex items-center gap-2 min-w-0">
+            <div className="w-8 h-8 rounded-xl bg-white/20 border border-white/30 text-white flex items-center justify-center shrink-0">
               <Users className="w-4 h-4" />
             </div>
-            <div>
-              <h3 className="text-sm font-black text-slate-900 flex items-center gap-1.5">
-                {roomTitle ? `المتصلون (${roomTitle})` : 'المتصلون الآن في شات مصر والعرب'}
-                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+            <div className="min-w-0">
+              <h3 className="text-sm font-black text-white flex items-center gap-1.5 truncate">
+                <span className="truncate">{roomTitle ? `المتصلون (${roomTitle})` : 'المتصلون الآن'}</span>
+                <span className="w-2 h-2 rounded-full bg-emerald-300 animate-pulse shrink-0"></span>
               </h3>
-              <p className="text-[11px] text-slate-500">
+              <p className="text-[10.5px] text-emerald-100 truncate">
                 {filteredUsers.length} متصلين • مرتبين حسب نقاط التقييم ⭐
               </p>
             </div>
           </div>
 
-          <button onClick={onClose} className="p-1.5 rounded-full text-slate-500 hover:text-slate-900 bg-slate-100">
+          <button
+            type="button"
+            onClick={onClose}
+            className="p-1.5 rounded-full text-white/90 hover:text-white bg-white/15 hover:bg-white/25 transition shrink-0"
+            title="إغلاق القائمة الجانبية"
+          >
             <X className="w-4 h-4" />
           </button>
         </div>

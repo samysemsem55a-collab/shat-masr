@@ -28,7 +28,7 @@ import {
   Square
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
-import { User, Message, Friend, GiftItem } from '../types/chat';
+import { User, Message, Friend, GiftItem, UnreadSenderSummary } from '../types/chat';
 import { sounds } from '../utils/soundEffects';
 import { 
   subscribeToDirectMessages, 
@@ -57,7 +57,11 @@ interface PrivateChatViewProps {
   onChatActiveChange?: (isActive: boolean) => void;
   onPromptRegister?: () => void;
   unreadBySender?: Record<string, number>;
+  unreadMessagesBySender?: UnreadSenderSummary[];
   onMarkSenderRead?: (senderId: string) => void;
+  onClearAllUnreadMessages?: () => void;
+  isDrawer?: boolean;
+  onCloseDrawer?: () => void;
 }
 
 interface ChatContact {
@@ -82,7 +86,11 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
   onChatActiveChange,
   onPromptRegister,
   unreadBySender = {},
-  onMarkSenderRead
+  unreadMessagesBySender = [],
+  onMarkSenderRead,
+  onClearAllUnreadMessages,
+  isDrawer = false,
+  onCloseDrawer
 }) => {
   // Navigation tabs when in list view
   const [activeTab, setActiveTab] = useState<'chats' | 'friends' | 'online'>('chats');
@@ -502,23 +510,114 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
   };
 
   return (
-    <div className="px-2 sm:px-3 max-w-4xl mx-auto h-[calc(100dvh-54px-50px)] sm:h-[calc(100dvh-56px-52px)] flex flex-col">
+    <div className={isDrawer ? "h-full w-full flex flex-col bg-white overflow-hidden" : "px-2 sm:px-3 max-w-4xl mx-auto h-[calc(100dvh-54px-50px)] sm:h-[calc(100dvh-56px-52px)] flex flex-col"}>
 
       {/* If No Contact Selected: Show Inbox & Friends Navigation (Modern Light Theme) */}
       {!activeContact ? (
-        <div className="space-y-3 flex-1 flex flex-col overflow-hidden pt-2">
+        <div className={isDrawer ? "flex-1 flex flex-col overflow-hidden" : "space-y-3 flex-1 flex flex-col overflow-hidden pt-2"}>
           
           {/* Header */}
-          <div className="flex items-center justify-between gap-2 flex-wrap shrink-0">
-            <h1 className="text-base sm:text-xl font-black text-slate-900 flex items-center gap-2 min-w-0 truncate">
-              <MessageCircle className="w-5 h-5 text-indigo-600 shrink-0" />
-              <span className="truncate">الرسائل الخاصة والأصدقاء</span>
-            </h1>
-            <span className="text-[10.5px] sm:text-[11px] text-emerald-700 font-bold bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-full flex items-center gap-1 shrink-0 whitespace-nowrap">
-              <Lock className="w-3 h-3 text-emerald-600 shrink-0" />
-              <span>مشفرة وآمنة</span>
-            </span>
-          </div>
+          {isDrawer ? (
+            <div className="p-3.5 pt-[calc(env(safe-area-inset-top,0px)+0.875rem)] bg-gradient-to-l from-indigo-600 via-violet-600 to-purple-700 text-white border-b border-indigo-500/40 flex items-center justify-between gap-2 shrink-0">
+              <div className="flex items-center gap-2 min-w-0">
+                <div className="w-8 h-8 rounded-xl bg-white/20 border border-white/30 text-white flex items-center justify-center shrink-0">
+                  <MessageCircle className="w-4 h-4" />
+                </div>
+                <div className="min-w-0">
+                  <h2 className="text-sm font-black text-white truncate">الرسائل الخاصة والأصدقاء</h2>
+                  <p className="text-[10px] text-indigo-100 flex items-center gap-1 truncate">
+                    <Lock className="w-2.5 h-2.5 shrink-0" />
+                    <span>مشفرة وآمنة بين الطرفين</span>
+                  </p>
+                </div>
+              </div>
+              {onCloseDrawer && (
+                <button
+                  type="button"
+                  onClick={onCloseDrawer}
+                  className="p-1.5 rounded-full text-white/90 hover:text-white bg-white/15 hover:bg-white/25 transition shrink-0"
+                  title="إغلاق القائمة الجانبية"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+          ) : (
+            <div className="flex items-center justify-between gap-2 flex-wrap shrink-0">
+              <h1 className="text-base sm:text-xl font-black text-slate-900 flex items-center gap-2 min-w-0 truncate">
+                <MessageCircle className="w-5 h-5 text-indigo-600 shrink-0" />
+                <span className="truncate">الرسائل الخاصة والأصدقاء</span>
+              </h1>
+              <span className="text-[10.5px] sm:text-[11px] text-emerald-700 font-bold bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-full flex items-center gap-1 shrink-0 whitespace-nowrap">
+                <Lock className="w-3 h-3 text-emerald-600 shrink-0" />
+                <span>مشفرة وآمنة</span>
+              </span>
+            </div>
+          )}
+
+          <div className={isDrawer ? "flex-1 flex flex-col overflow-hidden p-2.5 space-y-2.5" : "flex-1 flex flex-col overflow-hidden space-y-3"}>
+          {/* Incoming Unread Messages Per-Sender Highlight Strip */}
+          {unreadMessagesBySender.length > 0 && (
+            <div className="rounded-xl bg-indigo-50/90 border border-indigo-200 p-2 space-y-1.5 shrink-0">
+              <div className="flex items-center justify-between gap-2 px-1">
+                <span className="text-[11px] font-black text-indigo-800 flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse"></span>
+                  <span>رسائل واردة جديدة ({unreadMessagesBySender.reduce((s, item) => s + item.count, 0)})</span>
+                </span>
+                {onClearAllUnreadMessages && (
+                  <button
+                    type="button"
+                    onClick={onClearAllUnreadMessages}
+                    className="text-[10px] font-bold text-indigo-600 hover:text-indigo-800 flex items-center gap-0.5 cursor-pointer"
+                  >
+                    <CheckCheck className="w-3 h-3" />
+                    <span>قراءة الكل</span>
+                  </button>
+                )}
+              </div>
+              <div className="max-h-32 overflow-y-auto space-y-1">
+                {unreadMessagesBySender.map((sender) => (
+                  <button
+                    key={sender.senderId}
+                    type="button"
+                    onClick={() => {
+                      onMarkSenderRead?.(sender.senderId);
+                      const peerOnline = globalOnlineUsers.some(u => u.id === sender.senderId);
+                      setActiveContact({
+                        id: sender.senderId,
+                        name: sender.senderName,
+                        countryFlag: '🇪🇬',
+                        avatar: sender.senderAvatar,
+                        role: 'عضو',
+                        status: peerOnline ? 'online' : 'offline',
+                        lastMessage: sender.lastMessage,
+                        lastMessageTime: new Date(sender.lastTimestamp).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' }),
+                        unreadCount: 0
+                      });
+                    }}
+                    className="w-full px-2.5 py-1.5 rounded-lg bg-white hover:bg-indigo-100/70 border border-indigo-100 flex items-center justify-between gap-2 text-right transition cursor-pointer"
+                  >
+                    <div className="flex items-center gap-2 min-w-0 flex-1">
+                      <div className="w-7 h-7 rounded-full overflow-hidden border border-indigo-200 bg-indigo-50 flex items-center justify-center text-[10px] font-black text-indigo-700 shrink-0">
+                        {sender.senderAvatar ? (
+                          <img src={sender.senderAvatar} alt={sender.senderName} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                        ) : (
+                          <span>{sender.senderName.charAt(0)}</span>
+                        )}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="text-[11px] font-black text-slate-900 truncate">{sender.senderName}</div>
+                        <div className="text-[10px] text-slate-500 truncate">{sender.lastMessage}</div>
+                      </div>
+                    </div>
+                    <span className="min-w-[20px] h-5 px-1.5 rounded-full bg-rose-600 text-white text-[10px] font-black flex items-center justify-center shrink-0 tabular-nums">
+                      {sender.count}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Sub-Tabs: Recent Chats / Friends List / Online Users */}
           <div className="grid grid-cols-3 p-1 bg-slate-100 border border-slate-200 rounded-2xl text-[11px] sm:text-xs font-bold shrink-0 shadow-xs gap-1">
@@ -740,12 +839,16 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
             </div>
           )}
 
+          </div>
         </div>
       ) : (
         /* If Contact Selected: Show Active 1-on-1 Chat (PERMANENT LOCKED WHITE GOLD DOODLE THEME) */
         <div 
           style={getWallpaperStyleById('wp_white_gold_doodle')}
-          className="fixed inset-0 z-50 sm:relative sm:inset-auto sm:h-full flex flex-col bg-[#fafaf9] border-0 sm:border border-slate-200/80 rounded-none sm:rounded-3xl overflow-hidden shadow-2xl"
+          className={isDrawer
+            ? "h-full w-full flex flex-col bg-[#fafaf9] overflow-hidden"
+            : "fixed inset-0 z-50 sm:relative sm:inset-auto sm:h-full flex flex-col bg-[#fafaf9] border-0 sm:border border-slate-200/80 rounded-none sm:rounded-3xl overflow-hidden shadow-2xl"
+          }
         >
           {/* 1. Modern Light Glass Header */}
           <div className="relative z-10 px-2.5 sm:px-3 py-2 pt-[calc(env(safe-area-inset-top,0px)+0.5rem)] sm:py-2.5 bg-white/95 backdrop-blur-md border-b border-amber-200/70 shadow-xs flex items-center justify-between gap-2 shrink-0">
@@ -848,6 +951,17 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                     <Video className="w-3.5 h-3.5" />
                   </button>
                 </>
+              )}
+
+              {isDrawer && onCloseDrawer && (
+                <button
+                  type="button"
+                  onClick={onCloseDrawer}
+                  className="w-8 h-8 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 hover:text-slate-900 border border-slate-200/80 flex items-center justify-center transition active:scale-95 shrink-0"
+                  title="إغلاق القائمة الجانبية"
+                >
+                  <X className="w-4 h-4" />
+                </button>
               )}
             </div>
           </div>

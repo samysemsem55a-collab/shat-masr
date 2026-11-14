@@ -240,89 +240,89 @@ export const RoomsView: React.FC<RoomsViewProps> = ({
   return (
     <div className="pb-24 pt-3 px-2.5 sm:px-4 max-w-4xl mx-auto space-y-3.5">
       
-      {/* 1. Real-time Live Counters */}
-      <div className="grid grid-cols-2 gap-2.5 sm:gap-3">
+      {/* 1. Real-time Live Counters (Radiant, Light & Attractive Covers) */}
+      <div className="grid grid-cols-2 gap-2">
         
-        {/* Box 1: Online Connected Users */}
+        {/* Box 1: Online Connected Users (Luminous Mint-Turquoise Cover) */}
         <div 
           onClick={onOpenOnlineUsers}
-          className="p-3 sm:p-3.5 rounded-2xl bg-gradient-to-br from-emerald-50 via-white to-teal-50/70 border border-emerald-200 shadow-sm flex items-center justify-between cursor-pointer hover:border-emerald-400 hover:shadow-md active:scale-[0.98] transition-all group"
+          className="relative overflow-hidden px-2.5 py-1.5 rounded-xl bg-gradient-to-br from-teal-100 via-emerald-100 to-cyan-200 border border-teal-300/90 text-teal-950 shadow-sm shadow-teal-500/15 flex items-center justify-between cursor-pointer hover:brightness-[0.98] active:scale-[0.98] transition-all group"
           title="اضغط لعرض قائمة المتصلين الآن"
         >
-          <div className="space-y-0.5 text-right">
-            <div className="flex items-center gap-1.5 text-[11px] font-black text-emerald-700">
-              <span className="relative flex h-2 w-2">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+          <div className="pointer-events-none absolute -top-6 -left-6 w-16 h-16 rounded-full bg-teal-300/40 blur-xl" />
+          <div className="relative z-10 space-y-0 text-right min-w-0">
+            <div className="flex items-center gap-1 text-[9.5px] font-black text-teal-800">
+              <span className="relative flex h-1.5 w-1.5 shrink-0">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-500 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-600"></span>
               </span>
-              <span>المتصلين الآن</span>
+              <span className="truncate">المتصلين الآن</span>
             </div>
-            <div className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight flex items-baseline gap-1">
-              <span className="text-emerald-600">
-                {totalActiveUsersCount}
-              </span>
-              <span className="text-[10px] font-bold text-slate-500">عضو نشط</span>
+            <div className="text-sm sm:text-base font-black text-teal-950 tracking-tight flex items-baseline gap-1 tabular-nums leading-snug">
+              <span>{totalActiveUsersCount}</span>
+              <span className="text-[9px] font-bold text-teal-800/85">عضو</span>
             </div>
           </div>
 
-          <div className="w-10 h-10 rounded-xl bg-emerald-100 border border-emerald-200 flex items-center justify-center text-emerald-600 shadow-sm group-hover:scale-110 transition-transform shrink-0">
-            <Users className="w-5 h-5" />
+          <div className="relative z-10 w-6 h-6 rounded-lg bg-gradient-to-br from-emerald-500 to-teal-600 border border-white/60 flex items-center justify-center text-white shadow-xs group-hover:scale-105 transition-transform shrink-0">
+            <Users className="w-3 h-3" />
           </div>
         </div>
 
-        {/* Box 2: Total Active Visitors */}
+        {/* Box 2: Total Cumulative Visitors (Warm Sunset Peach-Coral-Gold Cover) */}
         <div 
-          className="p-3 sm:p-3.5 rounded-2xl bg-gradient-to-br from-amber-50 via-white to-orange-50/70 border border-amber-200 shadow-sm flex items-center justify-between transition-all group"
-          title="إجمالي زوار المنصة النشطين حالياً"
+          className="relative overflow-hidden px-2.5 py-1.5 rounded-xl bg-gradient-to-br from-amber-100 via-rose-100 to-orange-100 border border-amber-300/90 text-amber-950 shadow-sm shadow-rose-500/15 flex items-center justify-between transition-all group"
+          title="عداد الزوار التراكمي في الوقت الفعلي"
         >
-          <div className="space-y-0.5 text-right">
-            <div className="flex items-center gap-1.5 text-[11px] font-black text-amber-700">
-              <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span>
-              <span>إجمالي الزوار</span>
+          <div className="pointer-events-none absolute -top-6 -left-6 w-16 h-16 rounded-full bg-rose-300/35 blur-xl" />
+          <div className="relative z-10 space-y-0 text-right min-w-0">
+            <div className="flex items-center gap-1 text-[9.5px] font-black text-rose-800">
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse shrink-0"></span>
+              <span className="truncate">إجمالي الزوار</span>
             </div>
-            <div className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight flex items-baseline gap-1">
-              <span className="text-amber-600">
-                {(cumulativeVisitorsCount || 15480).toLocaleString()}
-              </span>
-              <span className="text-[10px] font-bold text-slate-500">زائر</span>
+            <div className="text-sm sm:text-base font-black text-amber-950 tracking-tight flex items-baseline gap-1 tabular-nums leading-snug">
+              <span>{(cumulativeVisitorsCount || 15480).toLocaleString()}</span>
+              <span className="text-[9px] font-bold text-rose-800/85">زائر</span>
             </div>
           </div>
 
-          <div className="w-10 h-10 rounded-xl bg-amber-100 border border-amber-200 flex items-center justify-center text-amber-600 shadow-sm group-hover:scale-110 transition-transform shrink-0">
-            <Eye className="w-5 h-5" />
+          <div className="relative z-10 w-6 h-6 rounded-lg bg-gradient-to-br from-amber-500 to-rose-500 border border-white/60 flex items-center justify-center text-white shadow-xs group-hover:scale-105 transition-transform shrink-0">
+            <Eye className="w-3 h-3" />
           </div>
         </div>
 
       </div>
 
-      {/* 2. Header with Primary Action Buttons */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 bg-white border border-slate-200 p-3.5 rounded-2xl shadow-sm">
-        <div className="space-y-0.5">
-          <h1 className="text-base sm:text-lg font-black text-slate-900 flex items-center gap-1.5">
+      {/* 2. Header with Primary Action Buttons (Light Luminous Pearl-Aqua-Gold Cover) */}
+      <div className="relative overflow-hidden flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-gradient-to-l from-amber-50/90 via-white to-teal-50/95 border border-amber-200/80 p-2.5 sm:p-3 rounded-xl shadow-sm shadow-amber-500/10 text-slate-900">
+        <div className="pointer-events-none absolute -top-10 -left-10 w-32 h-32 rounded-full bg-teal-300/20 blur-2xl" />
+        <div className="pointer-events-none absolute -bottom-10 -right-10 w-32 h-32 rounded-full bg-amber-300/20 blur-2xl" />
+        <div className="relative z-10 space-y-0.5">
+          <h1 className="text-sm sm:text-base font-black text-slate-900 flex items-center gap-1.5">
             <span>غرف الدردشة والمجالس العربية</span>
-            <Compass className="w-4 h-4 text-indigo-600" />
+            <Compass className="w-3.5 h-3.5 text-amber-500" />
           </h1>
-          <p className="text-[11px] sm:text-xs text-slate-500">
+          <p className="text-[10.5px] sm:text-[11px] text-slate-600 font-medium">
             شات كل العرب • غرف كتابية ومجالس صوتية مقترحة حسب اهتماماتك
           </p>
         </div>
 
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="relative z-10 flex items-center gap-1.5 shrink-0">
           <button
             onClick={onOpenCreateVoiceRoom}
-            className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white font-black text-xs flex items-center justify-center gap-1.5 shadow-sm active:scale-95 transition-all"
+            className="px-2.5 py-1.5 rounded-lg bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-white font-black text-[11px] flex items-center justify-center gap-1 shadow-sm shadow-orange-500/20 active:scale-95 transition-all"
             title="إنشاء مجلس صوتي جديد"
           >
-            <Mic className="w-3.5 h-3.5 text-purple-100" />
+            <Mic className="w-3 h-3 text-amber-50" />
             <span>إنشاء مجلس صوتي 🎙️</span>
           </button>
 
           <button
             onClick={onOpenCreateTextRoom}
-            className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 text-white font-black text-xs flex items-center justify-center gap-1.5 shadow-sm active:scale-95 transition-all"
+            className="px-2.5 py-1.5 rounded-lg bg-gradient-to-r from-teal-500 to-emerald-600 hover:from-teal-400 hover:to-emerald-500 text-white font-black text-[11px] flex items-center justify-center gap-1 shadow-sm shadow-emerald-500/20 active:scale-95 transition-all"
             title="إنشاء غرفة دردشة كتابية"
           >
-            <MessageSquare className="w-3.5 h-3.5 text-cyan-100" />
+            <MessageSquare className="w-3 h-3 text-emerald-50" />
             <span>إنشاء غرفة دردشة 💬</span>
           </button>
         </div>
@@ -401,68 +401,58 @@ export const RoomsView: React.FC<RoomsViewProps> = ({
           </div>
         </div>
 
-        <div className="space-y-2.5">
+        <div className="space-y-2">
           {filteredRooms.map((room, roomIdx) => {
             const isEgypt1 = room.id === 'room_egypt';
             const isEgypt2 = room.id === 'room_egypt2';
             const altPaletteIdx = roomIdx % 2 === 0;
             const iconGradient = isEgypt1
-              ? 'from-rose-500 via-pink-500 to-amber-500 ring-rose-200 shadow-rose-300/60'
+              ? 'from-amber-400 via-orange-500 to-rose-600 ring-white/40 shadow-rose-950/30'
               : isEgypt2
-              ? 'from-sky-500 via-blue-600 to-indigo-600 ring-sky-200 shadow-sky-300/60'
+              ? 'from-sky-400 via-blue-500 to-teal-500 ring-white/40 shadow-blue-950/30'
               : room.isPrivate
-              ? 'from-violet-600 via-purple-600 to-fuchsia-600 ring-violet-200 shadow-violet-300/60'
+              ? 'from-amber-400 via-amber-500 to-yellow-600 ring-white/40 shadow-zinc-950/40'
               : altPaletteIdx
-              ? 'from-emerald-500 via-teal-500 to-cyan-600 ring-emerald-200 shadow-emerald-300/60'
-              : 'from-indigo-500 via-blue-600 to-violet-600 ring-indigo-200 shadow-indigo-300/60';
+              ? 'from-emerald-400 via-teal-500 to-emerald-700 ring-white/40 shadow-emerald-950/30'
+              : 'from-rose-400 via-rose-500 to-amber-600 ring-white/40 shadow-rose-950/30';
 
-            const cardTheme = isEgypt1
-              ? 'bg-gradient-to-br from-rose-50/95 via-amber-50/45 to-orange-50/80 border-2 border-rose-200/90 hover:border-rose-400 shadow-rose-100/70'
+            const coverTheme = isEgypt1
+              ? 'bg-gradient-to-br from-[#7c2d12] via-[#991b1b] to-[#b45309] border border-amber-300/35 shadow-sm shadow-rose-950/20'
               : isEgypt2
-              ? 'bg-gradient-to-br from-sky-50/95 via-indigo-50/40 to-blue-50/80 border-2 border-sky-200/90 hover:border-sky-400 shadow-sky-100/70'
+              ? 'bg-gradient-to-br from-[#0c4a6e] via-[#1d4ed8] to-[#0f766e] border border-sky-300/35 shadow-sm shadow-blue-950/20'
               : room.isPrivate
-              ? 'bg-gradient-to-br from-violet-50/90 via-white to-fuchsia-50/80 border-2 border-violet-200/90 hover:border-violet-400 shadow-violet-100/70'
+              ? 'bg-gradient-to-br from-[#18181b] via-[#27272a] to-[#3f3f46] border border-amber-400/40 shadow-sm shadow-zinc-950/25'
               : altPaletteIdx
-              ? 'bg-gradient-to-br from-emerald-50/90 via-white to-teal-50/80 border-2 border-emerald-200/90 hover:border-emerald-400 shadow-emerald-100/70'
-              : 'bg-gradient-to-br from-indigo-50/90 via-white to-blue-50/80 border-2 border-indigo-200/90 hover:border-indigo-400 shadow-indigo-100/70';
+              ? 'bg-gradient-to-br from-[#14532d] via-[#15803d] to-[#0f766e] border border-emerald-300/35 shadow-sm shadow-emerald-950/20'
+              : 'bg-gradient-to-br from-[#4c0519] via-[#881337] to-[#9a3412] border border-rose-300/35 shadow-sm shadow-rose-950/20';
 
-            const topAccent = isEgypt1
-              ? 'from-rose-500 via-pink-500 to-amber-500'
+            const ctaBtnTheme = isEgypt1
+              ? 'bg-white text-[#991b1b] hover:bg-amber-50'
               : isEgypt2
-              ? 'from-sky-500 via-blue-600 to-indigo-600'
+              ? 'bg-white text-[#1e40af] hover:bg-sky-50'
               : room.isPrivate
-              ? 'from-violet-600 via-purple-600 to-fuchsia-600'
-              : room.accentGradient || 'from-emerald-500 to-cyan-600';
-
-            const btnGradient = isEgypt1
-              ? 'from-rose-500 to-amber-500 hover:from-rose-600 hover:to-amber-600 shadow-rose-300/50'
-              : isEgypt2
-              ? 'from-sky-600 to-indigo-600 hover:from-sky-500 hover:to-indigo-500 shadow-sky-300/50'
-              : room.isPrivate
-              ? 'from-violet-600 to-fuchsia-600 hover:from-violet-500 hover:to-fuchsia-500 shadow-violet-300/50'
-              : 'from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 shadow-emerald-300/50';
-
-            const presenceChip = isEgypt1
-              ? 'bg-white/90 border-rose-200 text-rose-700'
-              : isEgypt2
-              ? 'bg-white/90 border-sky-200 text-sky-700'
-              : 'bg-white/90 border-emerald-200 text-emerald-700';
+              ? 'bg-amber-400 text-zinc-950 hover:bg-amber-300'
+              : altPaletteIdx
+              ? 'bg-white text-[#166534] hover:bg-emerald-50'
+              : 'bg-white text-[#881337] hover:bg-rose-50';
 
             return (
             <div
               key={room.id}
               onClick={() => onSelectRoom(room)}
-              className={`group relative cursor-pointer overflow-hidden rounded-2xl ${cardTheme} p-3.5 transition-all duration-150 shadow-sm hover:shadow-md active:scale-[0.99]`}
+              className={`group relative cursor-pointer overflow-hidden rounded-xl ${coverTheme} p-2.5 sm:p-3 text-white transition-all duration-150 hover:shadow-lg hover:brightness-[1.03] active:scale-[0.99]`}
             >
-              <div className={`absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r ${topAccent}`} />
+              {/* Subtle Decorative Cover Sheen */}
+              <div className="pointer-events-none absolute -top-8 -left-8 w-28 h-28 rounded-full bg-white/10 blur-2xl" />
+              <div className="pointer-events-none absolute -bottom-8 -right-8 w-24 h-24 rounded-full bg-black/10 blur-2xl" />
 
-              <div className="flex items-center justify-between gap-3 pt-0.5">
-                {/* Left Action & Real-Time Presence Counter */}
-                <div className="flex flex-col items-start gap-2 shrink-0">
-                  <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-xl border text-xs font-bold shadow-xs ${presenceChip}`}>
-                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                    <Users className="w-3.5 h-3.5" />
-                    <span className="tabular-nums">{Math.max(1, room.activeUsers || 1)} متواجد الآن</span>
+              <div className="relative z-10 flex items-center justify-between gap-2.5">
+                {/* Left Action & Compact Real-Time Presence Counter */}
+                <div className="flex flex-col items-start gap-1.5 shrink-0">
+                  <div className="flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-white/20 backdrop-blur-xs border border-white/30 text-white text-[9.5px] font-black shadow-2xs">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-300 animate-pulse"></span>
+                    <Users className="w-2.5 h-2.5 text-white/95" />
+                    <span className="tabular-nums">{Math.max(1, room.activeUsers || 1)} متصل</span>
                   </div>
 
                   <button
@@ -471,54 +461,54 @@ export const RoomsView: React.FC<RoomsViewProps> = ({
                       e.stopPropagation();
                       onSelectRoom(room);
                     }}
-                    className={`px-4 py-1.5 rounded-xl bg-gradient-to-r ${btnGradient} text-white font-bold text-xs flex items-center gap-1 shadow-sm transition-all`}
+                    className={`px-2.5 py-1 rounded-lg ${ctaBtnTheme} font-black text-[11px] flex items-center gap-1 shadow-sm transition-all active:scale-95`}
                   >
                     <span>دخول</span>
-                    <ArrowLeft className="w-3 h-3" />
+                    <ArrowLeft className="w-2.5 h-2.5" />
                   </button>
                 </div>
 
                 {/* Center Content: Room Info */}
-                <div className="flex-1 text-right space-y-1 overflow-hidden">
+                <div className="flex-1 text-right space-y-0.5 overflow-hidden">
                   {room.isPrivate && (
                     <div className="flex items-center justify-end">
-                      <span className="px-2 py-0.5 rounded-lg bg-amber-50 border border-amber-200 text-amber-700 font-bold text-[10px] flex items-center gap-1">
-                        <Lock className="w-3 h-3" />
+                      <span className="px-1.5 py-0.5 rounded-md bg-black/20 border border-white/25 text-amber-200 font-bold text-[9px] flex items-center gap-1">
+                        <Lock className="w-2.5 h-2.5" />
                         <span>غرفة خاصة مغلقة</span>
                       </span>
                     </div>
                   )}
 
-                  <h2 className="text-sm font-black text-slate-900 group-hover:text-indigo-700 transition-colors truncate">
+                  <h2 className="text-xs sm:text-sm font-black text-white drop-shadow-2xs truncate">
                     {room.title}
                   </h2>
 
-                  <p className="text-xs text-slate-700 truncate font-medium">
+                  <p className="text-[11px] text-white/90 truncate font-semibold">
                     {room.description}
                   </p>
 
-                  <p className="text-[11px] text-slate-500 truncate">
+                  <p className="text-[10px] text-white/75 truncate">
                     {room.subtext}
                   </p>
                 </div>
 
-                {/* Right Side: Vibrant Colored Room Icon Emblem */}
+                {/* Right Side: Vibrant Compact Colored Room Icon Emblem */}
                 <div className="relative shrink-0">
-                  <div className={`w-12 h-12 sm:w-14 sm:h-14 rounded-2xl bg-gradient-to-br ${iconGradient} border-2 border-white ring-2 shadow-md flex items-center justify-center text-white shrink-0 group-hover:scale-105 transition-transform`}>
+                  <div className={`w-10 h-10 sm:w-11 sm:h-11 rounded-xl bg-gradient-to-br ${iconGradient} border border-white/90 ring-1 shadow-md flex items-center justify-center text-white shrink-0 group-hover:scale-105 transition-transform`}>
                     {room.isPrivate ? (
-                      <Lock className="w-6 h-6 text-white drop-shadow-xs" />
+                      <Lock className="w-4 h-4 sm:w-5 sm:h-5 text-white drop-shadow-xs" />
                     ) : room.type === 'voice' || room.roomType === 'voice' || room.isVoiceActive ? (
-                      <Mic className="w-6 h-6 text-white drop-shadow-xs" />
+                      <Mic className="w-4 h-4 sm:w-5 sm:h-5 text-white drop-shadow-xs" />
                     ) : isEgypt1 ? (
-                      <MessageSquare className="w-6 h-6 text-white drop-shadow-xs" />
+                      <MessageSquare className="w-4 h-4 sm:w-5 sm:h-5 text-white drop-shadow-xs" />
                     ) : isEgypt2 ? (
-                      <Flame className="w-6 h-6 text-white drop-shadow-xs" />
+                      <Flame className="w-4 h-4 sm:w-5 sm:h-5 text-white drop-shadow-xs" />
                     ) : (
-                      <span className="text-2xl sm:text-3xl">{room.icon}</span>
+                      <span className="text-lg sm:text-xl">{room.icon}</span>
                     )}
                   </div>
                   {(isEgypt1 || isEgypt2) && (
-                    <span className="absolute -bottom-1 -left-1 w-5 h-5 rounded-full bg-white border border-slate-200 shadow-xs flex items-center justify-center text-[11px] leading-none">
+                    <span className="absolute -bottom-1 -left-1 w-4 h-4 rounded-full bg-white border border-white shadow-xs flex items-center justify-center text-[9.5px] leading-none">
                       {room.icon}
                     </span>
                   )}
@@ -530,26 +520,26 @@ export const RoomsView: React.FC<RoomsViewProps> = ({
         </div>
       </div>
 
-      {/* 6. SUGGESTED VOICE ROOMS SECTION */}
-      <div className="rounded-2xl bg-gradient-to-br from-indigo-50/80 via-white to-purple-50/70 border border-indigo-200/80 p-3.5 sm:p-4 space-y-3 shadow-sm">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-indigo-100 pb-2.5">
+      {/* 6. SUGGESTED VOICE ROOMS SECTION (Compact & Colored Majalis) */}
+      <div className="rounded-xl bg-gradient-to-br from-slate-50 via-indigo-50/50 to-teal-50/50 border border-indigo-200/80 p-2.5 sm:p-3 space-y-2.5 shadow-sm">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 border-b border-indigo-100 pb-2">
           <div className="space-y-0.5">
-            <h2 className="text-sm sm:text-base font-black text-slate-900 flex items-center gap-2">
-              <span className="p-1.5 rounded-xl bg-indigo-100 border border-indigo-200 text-indigo-600">
-                <Mic className="w-4 h-4 animate-pulse text-pink-600" />
+            <h2 className="text-xs sm:text-sm font-black text-slate-900 flex items-center gap-1.5">
+              <span className="p-1 rounded-lg bg-indigo-100 border border-indigo-200 text-indigo-600">
+                <Mic className="w-3.5 h-3.5 animate-pulse text-pink-600" />
               </span>
               <span>مجالس صوتية مقترحة بناءً على اهتماماتك المشتركة</span>
-              <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+              <Sparkles className="w-3 h-3 text-amber-500" />
             </h2>
-            <p className="text-[11px] text-slate-600">
+            <p className="text-[10px] text-slate-600">
               انضم وتحدث على المايك مباشرة مع أصدقاء يشاركونك نفس الشغف والهوايات 🎙️
             </p>
           </div>
         </div>
 
         {/* Interest Selector Pills */}
-        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none text-xs font-bold">
-          <span className="text-[11px] font-black text-slate-500 shrink-0 whitespace-nowrap ml-1">
+        <div className="flex items-center gap-1 overflow-x-auto pb-0.5 scrollbar-none text-[11px] font-bold">
+          <span className="text-[10px] font-black text-slate-500 shrink-0 whitespace-nowrap ml-1">
             اختر اهتمامك:
           </span>
           {[
@@ -563,9 +553,9 @@ export const RoomsView: React.FC<RoomsViewProps> = ({
             <button
               key={interest.id}
               onClick={() => setSelectedInterest(interest.id)}
-              className={`px-3 py-1.5 rounded-xl whitespace-nowrap transition-all duration-150 text-xs font-bold shrink-0 ${
+              className={`px-2.5 py-1 rounded-lg whitespace-nowrap transition-all duration-150 text-[11px] font-bold shrink-0 ${
                 selectedInterest === interest.id
-                  ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-white shadow-sm scale-[1.02]'
+                  ? 'bg-gradient-to-r from-[#0f3b3e] to-[#0f766e] text-white shadow-sm'
                   : 'bg-white border border-slate-200 text-slate-600 hover:text-slate-900 hover:border-slate-300'
               }`}
             >
@@ -575,64 +565,75 @@ export const RoomsView: React.FC<RoomsViewProps> = ({
         </div>
 
         {/* Suggested Voice Rooms Grid */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
           {filteredSuggestedRooms.map((suggested) => {
-            const voiceCardTint =
+            const voiceCardTheme =
               suggested.interestCategory === 'sports'
-                ? 'bg-gradient-to-br from-emerald-50/90 via-white to-teal-50/80 border-2 border-emerald-200/90 hover:border-emerald-400'
+                ? 'bg-gradient-to-br from-[#064e3b] via-[#047857] to-[#0f766e] border-emerald-400/35'
                 : suggested.interestCategory === 'art'
-                ? 'bg-gradient-to-br from-purple-50/90 via-white to-pink-50/80 border-2 border-purple-200/90 hover:border-purple-400'
+                ? 'bg-gradient-to-br from-[#500724] via-[#881337] to-[#9d174d] border-rose-400/35'
                 : suggested.interestCategory === 'culture'
-                ? 'bg-gradient-to-br from-amber-50/90 via-white to-orange-50/80 border-2 border-amber-200/90 hover:border-amber-400'
+                ? 'bg-gradient-to-br from-[#451a03] via-[#92400e] to-[#b45309] border-amber-400/35'
                 : suggested.interestCategory === 'tech'
-                ? 'bg-gradient-to-br from-cyan-50/90 via-white to-blue-50/80 border-2 border-cyan-200/90 hover:border-cyan-400'
-                : 'bg-gradient-to-br from-rose-50/90 via-white to-purple-50/80 border-2 border-rose-200/90 hover:border-rose-400';
+                ? 'bg-gradient-to-br from-[#0f172a] via-[#1e3a8a] to-[#0369a1] border-sky-400/35'
+                : 'bg-gradient-to-br from-[#1e1b4b] via-[#3730a3] to-[#0f766e] border-indigo-400/35';
+
+            const voiceCtaClass =
+              suggested.interestCategory === 'sports'
+                ? 'text-[#065f46] hover:bg-emerald-50'
+                : suggested.interestCategory === 'art'
+                ? 'text-[#881337] hover:bg-rose-50'
+                : suggested.interestCategory === 'culture'
+                ? 'text-[#92400e] hover:bg-amber-50'
+                : suggested.interestCategory === 'tech'
+                ? 'text-[#1e3a8a] hover:bg-sky-50'
+                : 'text-[#312e81] hover:bg-indigo-50';
 
             return (
             <div
               key={suggested.id}
               onClick={() => handleJoinSuggestedVoiceRoom(suggested)}
-              className={`group relative cursor-pointer overflow-hidden rounded-2xl ${voiceCardTint} p-3.5 transition-all duration-150 shadow-sm hover:shadow-md active:scale-[0.99] flex flex-col justify-between`}
+              className={`group relative cursor-pointer overflow-hidden rounded-xl ${voiceCardTheme} border p-2.5 text-white transition-all duration-150 shadow-sm hover:shadow-md hover:brightness-[1.03] active:scale-[0.99] flex flex-col justify-between`}
             >
-              <div className={`absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r ${suggested.accentGradient}`} />
+              <div className="pointer-events-none absolute -top-8 -left-8 w-24 h-24 rounded-full bg-white/10 blur-xl" />
 
-              <div className="space-y-2 pt-0.5">
+              <div className="relative z-10 space-y-1.5">
                 {/* Top Badge */}
-                <div className="flex items-center justify-between gap-1.5">
-                  <div className="flex items-center gap-1 px-2 py-0.5 rounded-lg bg-white/90 border border-pink-200 text-pink-700 text-[10px] font-black">
-                    <span className="w-1.5 h-1.5 rounded-full bg-pink-500 animate-pulse"></span>
-                    <Mic className="w-3 h-3 text-pink-600" />
+                <div className="flex items-center justify-between gap-1">
+                  <div className="flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-white/20 border border-white/30 text-white text-[9px] font-black">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-300 animate-pulse"></span>
+                    <Mic className="w-2.5 h-2.5 text-white" />
                     <span>صوت حي 🎙️</span>
                   </div>
 
-                  <span className={`px-2 py-0.5 rounded-lg ${suggested.badgeBg} border ${suggested.badgeBorder} ${suggested.badgeText} text-[10px] font-black flex items-center gap-1`}>
-                    <Sparkles className="w-2.5 h-2.5" />
-                    <span>{suggested.matchScore}</span>
+                  <span className="px-1.5 py-0.5 rounded-md bg-black/20 border border-white/20 text-white/95 text-[9px] font-black flex items-center gap-1 truncate max-w-[165px]">
+                    <Sparkles className="w-2.5 h-2.5 text-amber-300 shrink-0" />
+                    <span className="truncate">{suggested.matchScore}</span>
                   </span>
                 </div>
 
                 {/* Room Info */}
-                <div className="flex items-start gap-2.5 text-right">
-                  <div className={`w-11 h-11 rounded-2xl bg-gradient-to-br ${suggested.accentGradient} border-2 border-white flex items-center justify-center text-2xl shrink-0 group-hover:scale-110 transition-transform shadow-md`}>
+                <div className="flex items-start gap-2 text-right">
+                  <div className="w-9 h-9 rounded-xl bg-white/20 border border-white/40 flex items-center justify-center text-lg shrink-0 group-hover:scale-105 transition-transform shadow-sm">
                     {suggested.icon}
                   </div>
 
                   <div className="flex-1 min-w-0">
-                    <h3 className="text-xs sm:text-sm font-black text-slate-900 group-hover:text-indigo-700 transition-colors truncate">
+                    <h3 className="text-xs font-black text-white truncate">
                       {suggested.title}
                     </h3>
-                    <p className="text-[11px] text-slate-600 line-clamp-2 mt-0.5 leading-relaxed">
+                    <p className="text-[10.5px] text-white/85 line-clamp-2 mt-0.5 leading-snug">
                       {suggested.description}
                     </p>
                   </div>
                 </div>
 
                 {/* Topics / Tags */}
-                <div className="flex items-center gap-1 flex-wrap pt-0.5">
-                  {suggested.topics.map((t, idx) => (
+                <div className="flex items-center gap-1 flex-wrap">
+                  {suggested.topics.slice(0, 3).map((t, idx) => (
                     <span
                       key={idx}
-                      className="px-1.5 py-0.5 rounded-md bg-white/80 border border-slate-200 text-slate-700 text-[9.5px] font-medium"
+                      className="px-1.5 py-0.5 rounded bg-white/15 border border-white/20 text-white/90 text-[9px] font-medium"
                     >
                       #{t}
                     </span>
@@ -641,10 +642,10 @@ export const RoomsView: React.FC<RoomsViewProps> = ({
               </div>
 
               {/* Bottom Card Action */}
-              <div className="flex items-center justify-between pt-2.5 mt-2 border-t border-slate-200/70">
-                <div className="flex items-center gap-2 text-[10px] text-slate-600 font-bold">
-                  <span className="flex items-center gap-1 text-emerald-700">
-                    <Users className="w-3 h-3" />
+              <div className="relative z-10 flex items-center justify-between pt-2 mt-2 border-t border-white/20">
+                <div className="flex items-center gap-1.5 text-[9.5px] text-white/90 font-bold">
+                  <span className="flex items-center gap-0.5 text-emerald-200">
+                    <Users className="w-2.5 h-2.5" />
                     <span>{suggested.activeSpeakers} على المايك</span>
                   </span>
                   <span>•</span>
@@ -657,10 +658,10 @@ export const RoomsView: React.FC<RoomsViewProps> = ({
                     e.stopPropagation();
                     handleJoinSuggestedVoiceRoom(suggested);
                   }}
-                  className={`px-3 py-1.5 rounded-xl bg-gradient-to-r ${suggested.accentGradient} text-white font-black text-xs flex items-center gap-1 shadow-sm transition-all active:scale-95`}
+                  className={`px-2.5 py-1 rounded-lg bg-white ${voiceCtaClass} font-black text-[10.5px] flex items-center gap-1 shadow-sm transition-all active:scale-95`}
                 >
-                  <span>انضمام للمجلس 🎙️</span>
-                  <ArrowLeft className="w-3 h-3" />
+                  <span>انضمام 🎙️</span>
+                  <ArrowLeft className="w-2.5 h-2.5" />
                 </button>
               </div>
 

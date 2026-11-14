@@ -348,7 +348,7 @@ export const MusicRadioModal: React.FC<MusicRadioModalProps> = ({
   ];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-2.5 sm:p-4 bg-black/85 backdrop-blur-md">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-2.5 sm:p-4 bg-black/85 backdrop-blur-md animate-in fade-in">
       <div 
         className="w-full max-w-2xl rounded-3xl bg-[#0d1424] border border-amber-500/40 shadow-[0_20px_50px_rgba(0,0,0,0.85)] overflow-hidden flex flex-col max-h-[92vh] animate-in fade-in zoom-in-95"
         dir="rtl"

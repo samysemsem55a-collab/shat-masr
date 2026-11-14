@@ -41,9 +41,9 @@ import {
   acceptFriendRequestInDB,
   declineFriendRequestInDB,
   checkAndMarkFirstPublicRoomEntry,
-  rtdb
+  syncCumulativeVisitorsRealtime,
+  setRoomBackgroundTheme
 } from './services/firebase';
-import { ref, set, get, onValue } from 'firebase/database';
 
 export default function App() {
   // 1. Core User State: Guaranteed Unique Per-Device User + Persistent Tab Session ID
@@ -161,15 +161,26 @@ export default function App() {
   });
 
   const [rooms, setRooms] = useState<Room[]>(() => {
+    const hydrateRoomBg = (list: Room[]) =>
+      list.map(r => {
+        try {
+          const cachedBg = localStorage.getItem(`room_bg_theme_${r.id}`);
+          if (cachedBg && cachedBg !== 'default') {
+            return { ...r, backgroundTheme: cachedBg };
+          }
+        } catch {}
+        return r;
+      });
+
     try {
       const saved = localStorage.getItem('arab_chat_rooms');
       if (saved) {
         const parsed: Room[] = JSON.parse(saved);
         const valid = parsed.filter(r => r.id === 'room_egypt' || r.id === 'room_egypt2');
-        if (valid.length === 2) return valid;
+        if (valid.length === 2) return hydrateRoomBg(valid);
       }
     } catch {}
-    return INITIAL_ROOMS;
+    return hydrateRoomBg(INITIAL_ROOMS);
   });
 
   // Real-time messages for active room from Firestore
@@ -195,6 +206,7 @@ export default function App() {
   const [createRoomType, setCreateRoomType] = useState<'voice' | 'text_only'>('voice');
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const [isOnlineUsersOpen, setIsOnlineUsersOpen] = useState(false);
+  const [isPrivateChatDrawerOpen, setIsPrivateChatDrawerOpen] = useState(false);
   const [isRadioModalOpen, setIsRadioModalOpen] = useState(false);
   const [selectedProfileUser, setSelectedProfileUser] = useState<User | null>(null);
   const [isPhoneAuthOpen, setIsPhoneAuthOpen] = useState(false);
@@ -399,53 +411,58 @@ export default function App() {
       }
     });
 
+    // Listen to room background theme updates across all rooms
+    const unsubRoomBgs = realtimeSocket.subscribeToAllRoomBackgrounds((backgrounds) => {
+      setRooms(prev =>
+        prev.map(r => {
+          const serverTheme = backgrounds[r.id];
+          const normalized = serverTheme && serverTheme !== 'default' ? serverTheme : undefined;
+          return r.backgroundTheme === normalized ? r : { ...r, backgroundTheme: normalized };
+        })
+      );
+      setActiveRoom(prev => {
+        if (!prev) return prev;
+        const serverTheme = backgrounds[prev.id];
+        const normalized = serverTheme && serverTheme !== 'default' ? serverTheme : undefined;
+        return prev.backgroundTheme === normalized ? prev : { ...prev, backgroundTheme: normalized };
+      });
+    });
+
     return () => {
       unsubGlobal();
       unsubFirestorePresence();
       unsubAdmin();
       unsubFriend();
+      unsubRoomBgs();
     };
   }, [currentUser.id, currentUser.sessionId, currentUser.name]);
 
-  // Track Cumulative Visitor on each visit/session and sync with Firebase RTDB (never decreases)
+  // Track Cumulative Visitor on each visit/session and sync atomically in real time (never decreases)
   useEffect(() => {
-    let currentCount = cumulativeVisitorsCount;
     const sessionKey = `shat_masr_visit_counted_${deviceId}`;
     const alreadyCountedInSession = sessionStorage.getItem(sessionKey);
-
-    if (!alreadyCountedInSession) {
+    const shouldIncrement = !alreadyCountedInSession;
+    if (shouldIncrement) {
       sessionStorage.setItem(sessionKey, 'true');
-      currentCount = Math.max(15480, currentCount + 1);
-      setCumulativeVisitorsCount(currentCount);
-      localStorage.setItem('shat_masr_cumulative_visitors', currentCount.toString());
     }
 
-    // Sync with Firebase RTDB (strictly cumulative, never decreases)
-    if (rtdb) {
-      const visitorsRef = ref(rtdb, 'platform_stats/cumulative_visitors');
-      
-      const unsub = onValue(visitorsRef, (snapshot) => {
-        const remoteCount = snapshot.val();
-        if (typeof remoteCount === 'number' && !isNaN(remoteCount)) {
-          setCumulativeVisitorsCount((prev) => {
-            const highest = Math.max(prev, remoteCount, 15480);
-            localStorage.setItem('shat_masr_cumulative_visitors', highest.toString());
-            return highest;
-          });
-        } else {
-          set(visitorsRef, currentCount).catch(() => {});
-        }
-      });
+    const visitToken = `${deviceId}_${sessionStorage.getItem('shat_masr_session_id') || 's'}`;
+    const unsub = syncCumulativeVisitorsRealtime(
+      visitToken,
+      shouldIncrement,
+      cumulativeVisitorsCount,
+      (highestCount) => {
+        setCumulativeVisitorsCount((prev) => {
+          const next = Math.max(prev, highestCount, 15480);
+          try {
+            localStorage.setItem('shat_masr_cumulative_visitors', String(next));
+          } catch {}
+          return next;
+        });
+      }
+    );
 
-      get(visitorsRef).then((snap) => {
-        const remoteVal = snap.val();
-        if (!remoteVal || currentCount > remoteVal) {
-          set(visitorsRef, currentCount).catch(() => {});
-        }
-      }).catch(() => {});
-
-      return () => unsub();
-    }
+    return () => unsub();
   }, [deviceId]);
 
   // Listen for real-time incoming direct messages across the entire app (supports registered users & online guests via ID/sessionId)
@@ -460,7 +477,9 @@ export default function App() {
 
       if (rawMsg.senderId !== currentUser.id && isForMe) {
         const isViewingThisSender =
-          currentTab === 'chat' && isInsidePrivateChat && targetChatUser?.id === rawMsg.senderId;
+          (isPrivateChatDrawerOpen || currentTab === 'chat') &&
+          isInsidePrivateChat &&
+          targetChatUser?.id === rawMsg.senderId;
 
         // Track per-sender unread incoming message count (deduplicated across WebSocket + BroadcastChannel)
         const dmDedupKey = rawMsg.id || `${rawMsg.senderId}_${rawMsg.timestamp || Date.now()}_${rawMsg.content || ''}`;
@@ -601,7 +620,7 @@ export default function App() {
       unsubDm();
       bus?.close();
     };
-  }, [currentUser.id, currentUser.sessionId, currentUser.notificationPrefs?.directMessages, currentUser.notificationPrefs?.gifts, currentTab, isInsidePrivateChat, targetChatUser?.id]);
+  }, [currentUser.id, currentUser.sessionId, currentUser.notificationPrefs?.directMessages, currentUser.notificationPrefs?.gifts, currentTab, isPrivateChatDrawerOpen, isInsidePrivateChat, targetChatUser?.id]);
 
   const handleOpenIncomingChat = (toastItem: { senderId: string; senderName: string; senderAvatar: string }) => {
     clearUnreadForSender(toastItem.senderId);
@@ -633,8 +652,7 @@ export default function App() {
     };
     setTargetChatUser(peer);
     setIsInsidePrivateChat(true);
-    setCurrentTab('chat');
-    setActiveRoom(null);
+    setIsPrivateChatDrawerOpen(true);
     sounds.playMessageReceived();
   };
 
@@ -1091,6 +1109,18 @@ export default function App() {
     setRooms(rooms.map((r) => (r.id === activeRoom.id ? updated : r)));
   };
 
+  // Update Custom Room Background Theme (Room Managers)
+  const handleUpdateRoomBackground = (roomId: string, backgroundTheme: string) => {
+    const normalized = backgroundTheme && backgroundTheme !== 'default' ? backgroundTheme : undefined;
+    setRooms((prev) =>
+      prev.map((r) => (r.id === roomId ? { ...r, backgroundTheme: normalized } : r))
+    );
+    setActiveRoom((prev) =>
+      prev && prev.id === roomId ? { ...prev, backgroundTheme: normalized } : prev
+    );
+    setRoomBackgroundTheme(roomId, normalized || 'default');
+  };
+
   // Upgrade VIP Tier
   const handleUpgradeTier = (tier: VipTier) => {
     setCurrentUser((prev) => ({
@@ -1137,15 +1167,14 @@ export default function App() {
     }
   };
 
-  // Open Direct Chat With User
+  // Open Direct Chat With User (inside Side Drawer without kicking user out of active room)
   const handleOpenPrivateChatWith = (user: User) => {
     clearUnreadForSender(user.id);
     setSelectedProfileUser(null);
     setIsOnlineUsersOpen(false);
     setTargetChatUser(user);
     setIsInsidePrivateChat(true);
-    setCurrentTab('chat');
-    setActiveRoom(null);
+    setIsPrivateChatDrawerOpen(true);
   };
 
   // Leave room: Automatically delete private rooms when creator exits (Requirement 7)
@@ -1213,6 +1242,15 @@ export default function App() {
       if (isCreateRoomOpen) { setIsCreateRoomOpen(false); return; }
       if (isNotificationsOpen) { setIsNotificationsOpen(false); return; }
       if (isOnlineUsersOpen) { setIsOnlineUsersOpen(false); return; }
+      if (isPrivateChatDrawerOpen) {
+        if (isInsidePrivateChat) {
+          setIsInsidePrivateChat(false);
+          setTargetChatUser(null);
+        } else {
+          setIsPrivateChatDrawerOpen(false);
+        }
+        return;
+      }
       if (isRadioModalOpen) { setIsRadioModalOpen(false); return; }
       if (selectedProfileUser) { setSelectedProfileUser(null); return; }
       if (isPhoneAuthOpen) { setIsPhoneAuthOpen(false); return; }
@@ -1244,7 +1282,7 @@ export default function App() {
     return () => window.removeEventListener('popstate', handlePopState);
   }, [
     isAdminOpen, isWalletOpen, isVipOpen, isGiftModalOpen, isCreateRoomOpen,
-    isNotificationsOpen, isOnlineUsersOpen, isRadioModalOpen, selectedProfileUser,
+    isNotificationsOpen, isOnlineUsersOpen, isPrivateChatDrawerOpen, isRadioModalOpen, selectedProfileUser,
     isPhoneAuthOpen, isPrivatePromptOpen, isDailyMissionsOpen,
     isFriendRequestsOpen, isInsidePrivateChat, activeRoom, currentTab
   ]);
@@ -1338,10 +1376,10 @@ export default function App() {
           onOpenSenderChat={handleOpenIncomingChat}
           onClearAllUnreadMessages={clearAllUnreadMessages}
           onOpenMessagesTab={() => {
+            setIsOnlineUsersOpen(false);
             setIsInsidePrivateChat(false);
             setTargetChatUser(null);
-            setCurrentTab('chat');
-            setActiveRoom(null);
+            setIsPrivateChatDrawerOpen(true);
           }}
         />
       )}
@@ -1387,6 +1425,7 @@ export default function App() {
             onSendMessage={handleSendMessage}
             onOpenGiftModal={() => setIsGiftModalOpen(true)}
             onUpdateSpeakers={handleUpdateSpeakers}
+            onUpdateRoomBackground={(theme) => handleUpdateRoomBackground(activeRoom.id, theme)}
             onOpenUserProfile={(u) => setSelectedProfileUser(u)}
             onOpenOnlineUsers={() => setIsOnlineUsersOpen(true)}
             onUpdateUser={(updated) => {
@@ -1458,14 +1497,20 @@ export default function App() {
       </main>
 
       {/* 3. Bottom Navigation Bar - Hidden inside active room OR active 1-on-1 private chat */}
-      {!activeRoom && (!isInsidePrivateChat || currentTab !== 'chat') && (
+      {!activeRoom && !isPrivateChatDrawerOpen && (!isInsidePrivateChat || currentTab !== 'chat') && (
         <BottomNav
-          currentTab={currentTab}
+          currentTab={isPrivateChatDrawerOpen ? 'chat' : currentTab}
           onTabChange={(tab) => {
-            if (tab !== 'chat') {
+            if (tab === 'chat') {
+              setIsOnlineUsersOpen(false);
               setIsInsidePrivateChat(false);
               setTargetChatUser(null);
+              setIsPrivateChatDrawerOpen(true);
+              return;
             }
+            setIsPrivateChatDrawerOpen(false);
+            setIsInsidePrivateChat(false);
+            setTargetChatUser(null);
             setCurrentTab(tab);
           }}
           unreadChatsCount={totalUnreadMessagesCount + pendingFriendRequests.length}
@@ -1526,7 +1571,7 @@ export default function App() {
         onOpenWallet={() => setIsWalletOpen(true)}
       />
 
-      {/* Online Users List Modal with real presence occupants */}
+      {/* Online Users List Side Drawer with real presence occupants */}
       <OnlineUsersModal
         isOpen={isOnlineUsersOpen}
         onClose={() => setIsOnlineUsersOpen(false)}
@@ -1541,6 +1586,46 @@ export default function App() {
         onInviteToMic={handleInviteUserToMic}
         onOpenPrivateChatWith={handleOpenPrivateChatWith}
       />
+
+      {/* Private Messages & Friends Side Drawer */}
+      {isPrivateChatDrawerOpen && (
+        <div
+          dir="rtl"
+          onClick={() => setIsPrivateChatDrawerOpen(false)}
+          className="fixed inset-0 z-50 flex justify-end bg-slate-900/45 backdrop-blur-sm animate-in fade-in"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="h-full w-[92vw] max-w-[400px] bg-white border-r border-slate-200 shadow-2xl flex flex-col overflow-hidden animate-drawer-in-left"
+          >
+            <PrivateChatView
+              isDrawer
+              onCloseDrawer={() => setIsPrivateChatDrawerOpen(false)}
+              currentUser={currentUser}
+              onOpenWallet={() => setIsWalletOpen(true)}
+              targetUser={targetChatUser}
+              onClearTargetUser={() => {
+                setTargetChatUser(null);
+                setIsInsidePrivateChat(false);
+              }}
+              globalOnlineUsers={globalOnlineUsers}
+              onChatActiveChange={setIsInsidePrivateChat}
+              onUpdateUser={(updated) => {
+                setCurrentUser((prev) => ({ ...prev, ...updated }));
+                syncUserProfileToFirebase({ ...currentUser, ...updated });
+              }}
+              onPromptRegister={() => {
+                setIsPrivateChatDrawerOpen(false);
+                setIsWelcomeAuthOpen(true);
+              }}
+              unreadBySender={unreadCountsBySenderId}
+              unreadMessagesBySender={unreadMessagesBySender}
+              onMarkSenderRead={clearUnreadForSender}
+              onClearAllUnreadMessages={clearAllUnreadMessages}
+            />
+          </div>
+        </div>
+      )}
 
       {/* User Profile Card Modal with Friend Request & Earned Badges */}
       <UserProfileModal
@@ -1616,28 +1701,12 @@ export default function App() {
         onClose={() => {
           localStorage.setItem('shat_masr_has_entered', 'true');
           setIsWelcomeAuthOpen(false);
-          setCumulativeVisitorsCount(prev => {
-            const next = prev + 1;
-            localStorage.setItem('shat_masr_cumulative_visitors', next.toString());
-            if (rtdb) {
-              set(ref(rtdb, 'platform_stats/cumulative_visitors'), next).catch(() => {});
-            }
-            return next;
-          });
         }}
         currentUser={currentUser}
         onUserAuthenticated={(u) => {
           localStorage.setItem('shat_masr_has_entered', 'true');
           handleSwitchUser(u);
           setIsWelcomeAuthOpen(false);
-          setCumulativeVisitorsCount(prev => {
-            const next = prev + 1;
-            localStorage.setItem('shat_masr_cumulative_visitors', next.toString());
-            if (rtdb) {
-              set(ref(rtdb, 'platform_stats/cumulative_visitors'), next).catch(() => {});
-            }
-            return next;
-          });
         }}
       />
 

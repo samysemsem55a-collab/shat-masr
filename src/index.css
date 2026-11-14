@@ -138,7 +138,143 @@
 
 @media (prefers-reduced-motion: reduce) {
   .animate-subtle-new-user-pulse,
-  .animate-subtle-gift-pulse {
-    animation: none;
+  .animate-subtle-gift-pulse,
+  .animate-fade-in,
+  .animate-in {
+    animation: none !important;
   }
+}
+
+/* Smooth Modal & UI Fade-In Animations (Tailwind v4 compatible, compositor-only) */
+@keyframes uiFadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes uiModalPanelFadeIn {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 10px, 0) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@keyframes uiSheetFadeIn {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 20px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes uiSlideInBottom {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 12px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes uiSlideInTop {
+  from {
+    opacity: 0;
+    transform: translate3d(0, -12px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+.animate-fade-in,
+.animate-in.fade-in {
+  animation: uiFadeIn 220ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.animate-in.zoom-in-95,
+.animate-in.fade-in.zoom-in-95 {
+  animation: uiModalPanelFadeIn 240ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.animate-in.slide-in-from-bottom-2 {
+  animation: uiSlideInBottom 220ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.animate-in.slide-in-from-top,
+.animate-in.slide-in-from-top-2 {
+  animation: uiSlideInTop 220ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.animate-in.duration-200 {
+  animation-duration: 200ms;
+}
+
+.animate-in.duration-300 {
+  animation-duration: 300ms;
+}
+
+/* Smooth fade-in entrance for modal content panels inside fixed overlays */
+.fixed.inset-0.animate-in > div:not(.pointer-events-none):not(.animate-pulse),
+.fixed.inset-0.animate-fade-in > div:not(.pointer-events-none):not(.animate-pulse) {
+  animation: uiModalPanelFadeIn 260ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@media (max-width: 639px) {
+  .fixed.inset-0.items-end.animate-in > div:not(.pointer-events-none):not(.animate-pulse),
+  .fixed.inset-0.items-end.animate-fade-in > div:not(.pointer-events-none):not(.animate-pulse) {
+    animation: uiSheetFadeIn 260ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fixed.inset-0.animate-in > div:not(.pointer-events-none):not(.animate-pulse),
+  .fixed.inset-0.animate-fade-in > div:not(.pointer-events-none):not(.animate-pulse),
+  .animate-drawer-in-right,
+  .animate-drawer-in-left {
+    animation: none !important;
+  }
+}
+
+/* Smooth Side Drawer Animations (GPU-composited) */
+@keyframes uiDrawerInRight {
+  from {
+    opacity: 0;
+    transform: translate3d(100%, 0, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes uiDrawerInLeft {
+  from {
+    opacity: 0;
+    transform: translate3d(-100%, 0, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+.animate-drawer-in-right {
+  animation: uiDrawerInRight 260ms cubic-bezier(0.16, 1, 0.3, 1) both !important;
+}
+
+.animate-drawer-in-left {
+  animation: uiDrawerInLeft 260ms cubic-bezier(0.16, 1, 0.3, 1) both !important;
 }

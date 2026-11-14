@@ -161,3 +161,180 @@ export function getWallpaperStyleById(wallpaperId?: string): React.CSSProperties
   const found = CHAT_WALLPAPERS.find(w => w.id === wallpaperId);
   return found ? found.style : CHAT_WALLPAPERS[0].style;
 }
+
+export interface RoomBackgroundTheme {
+  id: string;
+  name: string;
+  category: 'default' | 'gradient' | 'solid';
+  previewLabel: string;
+  style: React.CSSProperties;
+  isDark?: boolean;
+}
+
+export const ROOM_BACKGROUND_THEMES: RoomBackgroundTheme[] = [
+  {
+    id: 'default',
+    name: 'الخلفية الرسمية الافتراضية',
+    category: 'default',
+    previewLabel: 'افتراضي',
+    style: {},
+    isDark: false
+  },
+  // Attractive Gradients (Light & Luminous)
+  {
+    id: 'grad_turquoise_breeze',
+    name: 'نسيم الفيروز الساحلي',
+    category: 'gradient',
+    previewLabel: 'تدرج فيروزي',
+    style: {
+      background: 'linear-gradient(135deg, #ecfeff 0%, #d1fae5 48%, #e0f2fe 100%)'
+    },
+    isDark: false
+  },
+  {
+    id: 'grad_peach_sunset',
+    name: 'غروب الخوخ والورد',
+    category: 'gradient',
+    previewLabel: 'تدرج دافئ',
+    style: {
+      background: 'linear-gradient(135deg, #fff1f2 0%, #ffedd5 50%, #fef3c7 100%)'
+    },
+    isDark: false
+  },
+  {
+    id: 'grad_alexandria_sky',
+    name: 'سماء الإسكندرية الصافية',
+    category: 'gradient',
+    previewLabel: 'تدرج سماوي',
+    style: {
+      background: 'linear-gradient(135deg, #eff6ff 0%, #e0e7ff 50%, #e0f2fe 100%)'
+    },
+    isDark: false
+  },
+  {
+    id: 'grad_lavender_dream',
+    name: 'لافندر حالم',
+    category: 'gradient',
+    previewLabel: 'تدرج بنفسجي',
+    style: {
+      background: 'linear-gradient(135deg, #faf5ff 0%, #f3e8ff 50%, #fce7f3 100%)'
+    },
+    isDark: false
+  },
+  {
+    id: 'grad_spring_mint',
+    name: 'نعناع الربيع المنعش',
+    category: 'gradient',
+    previewLabel: 'تدرج نعناعي',
+    style: {
+      background: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 50%, #ccfbf1 100%)'
+    },
+    isDark: false
+  },
+  {
+    id: 'grad_golden_honey',
+    name: 'ذهب وعسل دافئ',
+    category: 'gradient',
+    previewLabel: 'تدرج ذهبي',
+    style: {
+      background: 'linear-gradient(135deg, #fffbeb 0%, #fef3c7 50%, #fde68a 100%)'
+    },
+    isDark: false
+  },
+  {
+    id: 'grad_royal_midnight',
+    name: 'ليالي القاهرة الملكية',
+    category: 'gradient',
+    previewLabel: 'تدرج ليلي فاخر',
+    style: {
+      background: 'linear-gradient(135deg, #0f172a 0%, #1e1b4b 52%, #172554 100%)'
+    },
+    isDark: true
+  },
+  {
+    id: 'grad_emerald_palace',
+    name: 'قصر الزمرد الليلي',
+    category: 'gradient',
+    previewLabel: 'تدرج زمردي داكن',
+    style: {
+      background: 'linear-gradient(135deg, #022c22 0%, #064e3b 52%, #0f172a 100%)'
+    },
+    isDark: true
+  },
+  {
+    id: 'grad_velvet_plum',
+    name: 'مخمل الياقوت الداكن',
+    category: 'gradient',
+    previewLabel: 'تدرج مخملي',
+    style: {
+      background: 'linear-gradient(135deg, #2e1065 0%, #581c87 50%, #4c0519 100%)'
+    },
+    isDark: true
+  },
+  // Attractive Solid Colors
+  {
+    id: 'solid_pearl_white',
+    name: 'أبيض لؤلؤي نقي',
+    category: 'solid',
+    previewLabel: 'لون نقي',
+    style: {
+      backgroundColor: '#ffffff'
+    },
+    isDark: false
+  },
+  {
+    id: 'solid_warm_ivory',
+    name: 'عاجي دافئ مريح',
+    category: 'solid',
+    previewLabel: 'لون دافئ',
+    style: {
+      backgroundColor: '#fef9ef'
+    },
+    isDark: false
+  },
+  {
+    id: 'solid_soft_sky',
+    name: 'أزرق سماوي هادئ',
+    category: 'solid',
+    previewLabel: 'لون سماوي',
+    style: {
+      backgroundColor: '#eef6ff'
+    },
+    isDark: false
+  },
+  {
+    id: 'solid_soft_mint',
+    name: 'أخضر نعناعي رقيق',
+    category: 'solid',
+    previewLabel: 'لون نعناعي',
+    style: {
+      backgroundColor: '#ecfdf5'
+    },
+    isDark: false
+  },
+  {
+    id: 'solid_soft_rose',
+    name: 'وردي باستيل ناعم',
+    category: 'solid',
+    previewLabel: 'لون وردي',
+    style: {
+      backgroundColor: '#fff1f5'
+    },
+    isDark: false
+  },
+  {
+    id: 'solid_obsidian_night',
+    name: 'كحلي ليلي أنيق',
+    category: 'solid',
+    previewLabel: 'لون ليلي',
+    style: {
+      backgroundColor: '#0f172a'
+    },
+    isDark: true
+  }
+];
+
+export function getRoomBackgroundThemeById(themeId?: string): RoomBackgroundTheme | undefined {
+  if (!themeId || themeId === 'default') return undefined;
+  return ROOM_BACKGROUND_THEMES.find(t => t.id === themeId);
+}

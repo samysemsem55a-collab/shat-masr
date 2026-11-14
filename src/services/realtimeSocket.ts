@@ -17,6 +17,15 @@ type ReactionCallback = (data: {
   reactionUsers: Record<string, string[]>;
 }) => void;
 type ReadReceiptCallback = (messageIds: string[], readerId: string) => void;
+export interface PinnedRoomMessage {
+  id: string;
+  senderId?: string;
+  senderName: string;
+  content: string;
+  pinnedBy?: string;
+  pinnedAt?: number;
+}
+type PinnedMessageCallback = (pinnedMessage: PinnedRoomMessage | null) => void;
 
 class RealtimeSocketManager {
   private socket: WebSocket | null = null;
@@ -40,8 +49,14 @@ class RealtimeSocketManager {
   private reactionListeners: Map<string, Set<ReactionCallback>> = new Map();
   private roomReadListeners: Map<string, Set<ReadReceiptCallback>> = new Map();
   private directReadListeners: Map<string, Set<ReadReceiptCallback>> = new Map();
+  private pinnedMessageListeners: Map<string, Set<PinnedMessageCallback>> = new Map();
+  private roomBackgroundListeners: Map<string, Set<(backgroundTheme: string) => void>> = new Map();
+  private allRoomBackgroundListeners: Set<(backgrounds: Record<string, string>) => void> = new Set();
+  private latestRoomBackgrounds: Record<string, string> = {};
   private statusListeners: Set<(connected: boolean) => void> = new Set();
+  private cumulativeVisitorsListeners: Set<(count: number) => void> = new Set();
   private isConnectedState = false;
+  private latestCumulativeVisitorsCount = 15480;
 
   isConnected(): boolean {
     return this.isConnectedState && this.socket !== null && this.socket.readyState === WebSocket.OPEN;
@@ -299,6 +314,59 @@ class RealtimeSocketManager {
         break;
       }
 
+      case 'ROOM_PINNED_MESSAGE': {
+        const { roomId, pinnedMessage } = action;
+        if (roomId) {
+          const listeners = this.pinnedMessageListeners.get(roomId);
+          if (listeners) {
+            listeners.forEach(cb => cb(pinnedMessage || null));
+          }
+        }
+        break;
+      }
+
+      case 'ALL_ROOM_BACKGROUNDS': {
+        const backgrounds = (action.backgrounds && typeof action.backgrounds === 'object')
+          ? (action.backgrounds as Record<string, string>)
+          : {};
+        this.latestRoomBackgrounds = { ...backgrounds };
+        this.allRoomBackgroundListeners.forEach(cb => cb(this.latestRoomBackgrounds));
+        Object.entries(backgrounds).forEach(([rId, theme]) => {
+          const listeners = this.roomBackgroundListeners.get(rId);
+          if (listeners) {
+            listeners.forEach(cb => cb(theme || 'default'));
+          }
+        });
+        break;
+      }
+
+      case 'ROOM_BACKGROUND_UPDATED': {
+        const { roomId, backgroundTheme } = action;
+        if (roomId) {
+          const normalized = typeof backgroundTheme === 'string' && backgroundTheme ? backgroundTheme : 'default';
+          if (normalized === 'default') {
+            delete this.latestRoomBackgrounds[roomId];
+          } else {
+            this.latestRoomBackgrounds[roomId] = normalized;
+          }
+          this.allRoomBackgroundListeners.forEach(cb => cb({ ...this.latestRoomBackgrounds }));
+          const listeners = this.roomBackgroundListeners.get(roomId);
+          if (listeners) {
+            listeners.forEach(cb => cb(normalized));
+          }
+        }
+        break;
+      }
+
+      case 'CUMULATIVE_VISITORS_UPDATE': {
+        const count = Number(action.count);
+        if (!isNaN(count) && count >= 15480) {
+          this.latestCumulativeVisitorsCount = Math.max(this.latestCumulativeVisitorsCount, count);
+          this.cumulativeVisitorsListeners.forEach(cb => cb(this.latestCumulativeVisitorsCount));
+        }
+        break;
+      }
+
       default:
         break;
     }
@@ -367,6 +435,20 @@ class RealtimeSocketManager {
     this.send('ROOM_TYPING', { roomId, userId, userName, isTyping });
   }
 
+  setRoomPinnedMessage(roomId: string, pinnedMessage: PinnedRoomMessage | null) {
+    this.send('SET_PINNED_MESSAGE', { roomId, pinnedMessage });
+  }
+
+  updateRoomBackground(roomId: string, backgroundTheme: string) {
+    const normalized = backgroundTheme && backgroundTheme !== 'default' ? backgroundTheme : 'default';
+    if (normalized === 'default') {
+      delete this.latestRoomBackgrounds[roomId];
+    } else {
+      this.latestRoomBackgrounds[roomId] = normalized;
+    }
+    this.send('UPDATE_ROOM_BACKGROUND', { roomId, backgroundTheme: normalized });
+  }
+
   creditInstaPayCoins(userId: string, coinsToAdd: number, order: any) {
     this.send('INSTAPAY_CREDIT_COINS', { userId, coinsToAdd, order });
   }
@@ -389,6 +471,27 @@ class RealtimeSocketManager {
     timestamp: number;
   }) {
     this.send('USER_REPORT', { report });
+  }
+
+  registerVisit(visitToken: string, clientHighestCount?: number) {
+    this.send('REGISTER_VISIT', { visitToken, clientHighestCount });
+  }
+
+  syncCumulativeVisitorsCount(count: number) {
+    if (!isNaN(count) && count > this.latestCumulativeVisitorsCount) {
+      this.latestCumulativeVisitorsCount = count;
+    }
+    this.send('SYNC_VISITORS_COUNT', { count });
+  }
+
+  subscribeToCumulativeVisitors(callback: (count: number) => void): () => void {
+    this.cumulativeVisitorsListeners.add(callback);
+    if (this.latestCumulativeVisitorsCount > 15480) {
+      callback(this.latestCumulativeVisitorsCount);
+    }
+    return () => {
+      this.cumulativeVisitorsListeners.delete(callback);
+    };
   }
 
   // Subscription helpers
@@ -562,6 +665,39 @@ class RealtimeSocketManager {
     this.directReadListeners.get(convId)!.add(callback);
     return () => {
       this.directReadListeners.get(convId)?.delete(callback);
+    };
+  }
+
+  subscribeToRoomPinnedMessage(roomId: string, callback: PinnedMessageCallback): () => void {
+    if (!this.pinnedMessageListeners.has(roomId)) {
+      this.pinnedMessageListeners.set(roomId, new Set());
+    }
+    this.pinnedMessageListeners.get(roomId)!.add(callback);
+    return () => {
+      this.pinnedMessageListeners.get(roomId)?.delete(callback);
+    };
+  }
+
+  subscribeToRoomBackground(roomId: string, callback: (backgroundTheme: string) => void): () => void {
+    if (!this.roomBackgroundListeners.has(roomId)) {
+      this.roomBackgroundListeners.set(roomId, new Set());
+    }
+    this.roomBackgroundListeners.get(roomId)!.add(callback);
+    if (this.latestRoomBackgrounds[roomId]) {
+      callback(this.latestRoomBackgrounds[roomId]);
+    }
+    return () => {
+      this.roomBackgroundListeners.get(roomId)?.delete(callback);
+    };
+  }
+
+  subscribeToAllRoomBackgrounds(callback: (backgrounds: Record<string, string>) => void): () => void {
+    this.allRoomBackgroundListeners.add(callback);
+    if (Object.keys(this.latestRoomBackgrounds).length > 0) {
+      callback({ ...this.latestRoomBackgrounds });
+    }
+    return () => {
+      this.allRoomBackgroundListeners.delete(callback);
     };
   }
 }

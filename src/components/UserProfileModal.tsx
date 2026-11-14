@@ -136,7 +136,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
         />
 
         {/* Cover Header */}
-        <div className="h-24 bg-gradient-to-r from-indigo-500 via-purple-500 to-amber-400 relative">
+        <div className="h-24 bg-gradient-to-r from-[#0f172a] via-[#1e3a8a] to-[#0f766e] relative">
           <button 
             onClick={onClose}
             className="absolute top-2.5 left-2.5 p-1.5 rounded-full bg-white/90 text-slate-700 hover:bg-white shadow active:scale-90 transition-transform"
