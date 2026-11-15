@@ -16,9 +16,10 @@ export default defineConfig(() => {
         workbox: {
           globPatterns: ['**/*.{js,css,html,ico,png,svg,jpg,jpeg,webp}'],
           maximumFileSizeToCacheInBytes: 8 * 1024 * 1024, // 8 MB to allow bundled assets
+          navigateFallbackDenylist: [/^\/api/, /^\/ws/],
         },
         devOptions: {
-          enabled: true,
+          enabled: false, // Disabled in dev because server.ts runs with hmr: false, which triggers SendBeforeConnectError in registerDevSW
           type: 'module'
         }
       })

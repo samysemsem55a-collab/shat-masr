@@ -72,7 +72,8 @@ export const firebaseConfig = {
   storageBucket: (firebaseConfigJson as any).storageBucket || "shatmasr-c7e60.firebasestorage.app",
   messagingSenderId: (firebaseConfigJson as any).messagingSenderId || "586338448855",
   appId: (firebaseConfigJson as any).appId || "1:586338448855:web:e359899b2f92d7aae3c792",
-  measurementId: (firebaseConfigJson as any).measurementId || "G-JDPKPDB084"
+  measurementId: (firebaseConfigJson as any).measurementId || "G-JDPKPDB084",
+  firestoreDatabaseId: (firebaseConfigJson as any).firestoreDatabaseId || "ai-studio-arabegyptchat-0f30a306-6748-4873-88b8-0dddc4cb5a41"
 };
 
 let app: FirebaseApp;
@@ -133,12 +134,12 @@ function isMsgExpired(msg: { expiresAt?: number; timestamp?: number; createdAt?:
 
 try {
   app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
-  const dbId = (firebaseConfigJson as any).firestoreDatabaseId;
+  const dbId = firebaseConfig.firestoreDatabaseId;
   try {
     db = initializeFirestore(
       app,
       {
-        experimentalForceLongPolling: true,
+        experimentalAutoDetectLongPolling: true,
         ignoreUndefinedProperties: true
       },
       dbId || undefined
@@ -210,7 +211,11 @@ export async function testConnection() {
     }
   }
 }
-testConnection();
+if (typeof window !== 'undefined') {
+  setTimeout(() => {
+    testConnection();
+  }, 1500);
+}
 
 export async function checkFirestoreHealth(): Promise<{ ok: boolean; latencyMs: number; projectId: string }> {
   const start = Date.now();
