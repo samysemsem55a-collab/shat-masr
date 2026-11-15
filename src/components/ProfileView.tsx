@@ -37,14 +37,14 @@ interface ProfileViewProps {
 }
 
 const ANIME_AVATARS = [
-  { id: 'anime_1', url: 'https://images.unsplash.com/photo-1578632767115-351597cf2477?w=200&auto=format&fit=crop&q=80', label: 'محارب الظلال ⚔️' },
-  { id: 'anime_2', url: 'https://images.unsplash.com/photo-1607604276583-eef5d076aa5f?w=200&auto=format&fit=crop&q=80', label: 'أميرة الساكورا 🌸' },
-  { id: 'anime_3', url: 'https://images.unsplash.com/photo-1563089145-599997674d42?w=200&auto=format&fit=crop&q=80', label: 'ساحر النيون ⚡' },
-  { id: 'anime_4', url: 'https://images.unsplash.com/photo-1534447677768-be436bb09401?w=200&auto=format&fit=crop&q=80', label: 'فارس المجرة 🌌' },
-  { id: 'anime_5', url: 'https://images.unsplash.com/photo-1569701813229-33284b643e3c?w=200&auto=format&fit=crop&q=80', label: 'الأسطورة الذهبية 👑' },
-  { id: 'anime_6', url: 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=200&auto=format&fit=crop&q=80', label: 'طاقة الكي 💥' },
-  { id: 'anime_7', url: 'https://images.unsplash.com/photo-1579783902614-a3fb3927b675?w=200&auto=format&fit=crop&q=80', label: 'فتاة القمر 🌙' },
-  { id: 'anime_8', url: 'https://images.unsplash.com/photo-1608889175123-8ee362201f81?w=200&auto=format&fit=crop&q=80', label: 'شينوبي النينجا 🥷' }
+  { id: 'anime_1', url: 'https://api.dicebear.com/9.x/adventurer/svg?seed=ShadowWarrior&backgroundColor=e0e7ff', label: 'محارب الظلال ⚔️' },
+  { id: 'anime_2', url: 'https://api.dicebear.com/9.x/adventurer/svg?seed=SakuraPrincess&backgroundColor=fce7f3', label: 'أميرة الساكورا 🌸' },
+  { id: 'anime_3', url: 'https://api.dicebear.com/9.x/bottts/svg?seed=NeonMage&backgroundColor=cffafe', label: 'ساحر النيون ⚡' },
+  { id: 'anime_4', url: 'https://api.dicebear.com/9.x/adventurer/svg?seed=GalaxyKnight&backgroundColor=ede9fe', label: 'فارس المجرة 🌌' },
+  { id: 'anime_5', url: 'https://api.dicebear.com/9.x/avataaars/svg?seed=GoldenLegend&backgroundColor=fef3c7', label: 'الأسطورة الذهبية 👑' },
+  { id: 'anime_6', url: 'https://api.dicebear.com/9.x/adventurer-neutral/svg?seed=KiEnergy&backgroundColor=ffedd5', label: 'طاقة الكي 💥' },
+  { id: 'anime_7', url: 'https://api.dicebear.com/9.x/lorelei/svg?seed=MoonGirl&backgroundColor=e0f2fe', label: 'فتاة القمر 🌙' },
+  { id: 'anime_8', url: 'https://api.dicebear.com/9.x/adventurer/svg?seed=NinjaShinobi&backgroundColor=dcfce7', label: 'شينوبي النينجا 🥷' }
 ];
 
 const ACTIVITY_STATUS_OPTIONS: {
@@ -98,7 +98,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   const [countryFlag, setCountryFlag] = useState(currentUser.countryFlag || '🇪🇬');
   const [activityStatus, setActivityStatus] = useState<User['status']>(currentUser.status || 'online');
   const [fontPreference, setFontPreference] = useState(currentUser.fontPreference || 'cairo');
-  const [selectedWallpaper, setSelectedWallpaper] = useState(currentUser.profileWallpaper || 'https://images.unsplash.com/photo-1509356843151-3e7d96241e11?w=800&auto=format&fit=crop&q=80');
+  const [selectedWallpaper, setSelectedWallpaper] = useState(currentUser.profileWallpaper || '/assets/wallpapers/nature_nile_sunset.jpg');
   const [selectedFrame, setSelectedFrame] = useState(currentUser.frameStyle || 'border-slate-600');
   const [avatarUrl, setAvatarUrl] = useState(currentUser.avatar);
   const [allowPrivateMessages, setAllowPrivateMessages] = useState<boolean>(currentUser.allowPrivateMessages !== false);
@@ -168,10 +168,10 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   ];
 
   const wallpapers = [
-    { name: 'غروب نيل القاهرة 🌅', url: 'https://images.unsplash.com/photo-1509356843151-3e7d96241e11?w=800&auto=format&fit=crop&q=80', isVipOnly: false },
-    { name: 'سماء الأهرامات 🌌', url: 'https://images.unsplash.com/photo-1539650116574-8efeb43e2750?w=800&auto=format&fit=crop&q=80', isVipOnly: false },
-    { name: 'الأورورا الملكية 🌠', url: 'https://images.unsplash.com/photo-1538370965046-79c0d6907d47?w=800&auto=format&fit=crop&q=80', isVipOnly: true },
-    { name: 'الزخارف الإسلامية 🕌', url: 'https://images.unsplash.com/photo-1564769625905-50e93615e769?w=800&auto=format&fit=crop&q=80', isVipOnly: true },
+    { name: 'غروب نيل القاهرة 🌅', url: '/assets/wallpapers/nature_nile_sunset.jpg', isVipOnly: false },
+    { name: 'سماء الأهرامات 🏺', url: '/assets/wallpapers/egypt_chat_bg.jpg', isVipOnly: false },
+    { name: 'المروج الخضراء 🌿', url: '/assets/wallpapers/nature_green_meadow.jpg', isVipOnly: true },
+    { name: 'ليالي الواحة والنجوم 🌌', url: '/assets/wallpapers/nature_starry_oasis.jpg', isVipOnly: true },
   ];
 
   const frames = [

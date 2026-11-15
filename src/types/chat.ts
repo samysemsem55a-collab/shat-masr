@@ -147,6 +147,7 @@ export interface Room {
   mutedUserIds?: string[];
   isPrivate?: boolean;
   isPublic?: boolean;
+  isLocked?: boolean;
   requiresApproval?: boolean;
   ownerId?: string;
   hostId?: string;
@@ -192,7 +193,7 @@ export interface Message {
   senderVipBadge: string;
   senderFont?: string;
   badges?: string[];
-  type: 'text' | 'voice' | 'image' | 'gift' | 'system_welcome' | 'quick_phrase' | 'private' | 'coins_transfer';
+  type: 'text' | 'voice' | 'image' | 'video' | 'sticker' | 'gift' | 'system_welcome' | 'quick_phrase' | 'private' | 'coins_transfer';
   isPrivate?: boolean;
   content: string;
   text?: string;
@@ -200,6 +201,12 @@ export interface Message {
   audioUrl?: string;
   voiceUrl?: string;
   imageUrl?: string;
+  mediaUrl?: string;
+  mediaType?: 'image' | 'video';
+  stickerId?: string;
+  stickerEmoji?: string;
+  stickerLabel?: string;
+  stickerAnimation?: string;
   gift?: {
     giftId: string;
     name: string;
@@ -213,6 +220,7 @@ export interface Message {
     content: string;
     type?: string;
   };
+  expiresAt?: number;
   createdAt?: number;
   timestamp: number;
   status: 'sent' | 'delivered' | 'read';
@@ -220,6 +228,59 @@ export interface Message {
   reactions?: { [emoji: string]: number };
   userReactions?: { [userId: string]: string };
   reactionUsers?: { [emoji: string]: string[] };
+}
+
+export interface ForumComment {
+  id: string;
+  postId: string;
+  authorId: string;
+  authorName: string;
+  authorAvatar: string;
+  text: string;
+  createdAt: number;
+}
+
+export interface ForumPost {
+  id: string;
+  authorId: string;
+  authorName: string;
+  authorAvatar: string;
+  authorGender?: 'male' | 'female';
+  authorCountryFlag?: string;
+  authorVipBadge?: string;
+  authorRole?: UserRole;
+  text: string;
+  likedBy: string[];
+  likesCount: number;
+  commentsCount: number;
+  createdAt: number;
+}
+
+export interface SharedRoomMission {
+  id: string;
+  dateKey: string;
+  title: string;
+  description: string;
+  icon: string;
+  currentProgress: number;
+  targetProgress: number;
+  rewardCoins: number;
+  rewardVipLabel?: string;
+  contributors: string[];
+  claimedBy: string[];
+  updatedAt: number;
+}
+
+export interface UserReport {
+  id: string;
+  reporterId: string;
+  reporterName: string;
+  reportedUserId: string;
+  reportedUserName: string;
+  reason: string;
+  details?: string;
+  status?: 'pending' | 'reviewed' | 'dismissed';
+  timestamp: number;
 }
 
 export interface RadioStation {

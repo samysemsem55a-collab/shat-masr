@@ -54,47 +54,47 @@ export const NotificationsModal: React.FC<NotificationsModalProps> = ({
   ];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/80 backdrop-blur-sm p-0 sm:p-4 animate-in fade-in">
-      <div className="w-full sm:max-w-md bg-[#0e1626] border border-slate-700/80 rounded-t-3xl sm:rounded-3xl overflow-hidden shadow-2xl flex flex-col max-h-[80vh]">
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-slate-900/45 backdrop-blur-sm p-0 sm:p-4 animate-in fade-in">
+      <div className="w-full sm:max-w-md bg-white border border-slate-200 rounded-t-3xl sm:rounded-3xl overflow-hidden shadow-2xl flex flex-col max-h-[80vh]">
         
         {/* Header */}
-        <div className="p-4 bg-slate-900 border-b border-slate-800 flex items-center justify-between">
+        <div className="p-4 bg-gradient-to-r from-indigo-50 via-white to-purple-50 border-b border-slate-200 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-xl bg-indigo-500/20 text-indigo-400 flex items-center justify-center">
+            <div className="w-8 h-8 rounded-xl bg-indigo-100 text-indigo-600 flex items-center justify-center border border-indigo-200">
               <Bell className="w-4 h-4" />
             </div>
-            <h3 className="text-sm font-black text-white">مركز الإشعارات الفورية</h3>
+            <h3 className="text-sm font-black text-slate-900">مركز الإشعارات الفورية</h3>
           </div>
-          <button onClick={onClose} className="p-1 rounded-full text-slate-400 hover:text-white bg-slate-800">
+          <button onClick={onClose} className="p-1.5 rounded-full text-slate-500 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 transition">
             <X className="w-4 h-4" />
           </button>
         </div>
 
         {/* List */}
-        <div className="p-3 space-y-2 overflow-y-auto">
+        <div className="p-3 space-y-2 overflow-y-auto bg-slate-50/70">
           {notifications.map((n) => (
             <div
               key={n.id}
-              className={`p-3 rounded-2xl border flex items-start gap-3 transition-colors ${
+              className={`p-3 rounded-2xl border flex items-start gap-3 transition-colors shadow-sm ${
                 n.isNew
-                  ? 'bg-indigo-950/40 border-indigo-700/50'
-                  : 'bg-slate-900/60 border-slate-800'
+                  ? 'bg-indigo-50/80 border-indigo-200'
+                  : 'bg-white border-slate-200'
               }`}
             >
               <div className="text-2xl shrink-0 mt-0.5">{n.icon}</div>
               <div className="flex-1 space-y-1">
                 <div className="flex items-center justify-between">
-                  <h4 className="text-xs font-black text-white">{n.title}</h4>
-                  <span className="text-[10px] text-slate-400">{n.time}</span>
+                  <h4 className="text-xs font-black text-slate-900">{n.title}</h4>
+                  <span className="text-[10px] text-slate-500">{n.time}</span>
                 </div>
-                <p className="text-xs text-slate-300 leading-relaxed">{n.desc}</p>
+                <p className="text-xs text-slate-600 leading-relaxed">{n.desc}</p>
                 {n.action && (
                   <button
                     onClick={() => {
                       onClose();
                       onOpenWallet();
                     }}
-                    className="text-[11px] font-bold text-amber-400 hover:underline mt-1 block"
+                    className="text-[11px] font-bold text-amber-600 hover:underline mt-1 block"
                   >
                     {n.action} ←
                   </button>

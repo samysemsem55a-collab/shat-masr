@@ -59,6 +59,11 @@
         "userVipBadge": { "type": "string", "maxLength": 50 },
         "badges": { "type": "array" },
         "type": { "type": "string", "maxLength": 30 },
+        "mediaUrl": { "type": "string", "maxLength": 2000 },
+        "mediaType": { "type": "string", "maxLength": 20 },
+        "stickerEmoji": { "type": "string", "maxLength": 40 },
+        "stickerLabel": { "type": "string", "maxLength": 80 },
+        "expiresAt": { "type": "number" },
         "createdAt": { "type": "string" }
       },
       "required": ["text", "userId", "userName"]
@@ -91,10 +96,98 @@
         "content": { "type": "string", "maxLength": 2000 },
         "text": { "type": "string", "maxLength": 2000 },
         "type": { "type": "string", "maxLength": 30 },
+        "mediaUrl": { "type": "string", "maxLength": 2000 },
+        "mediaType": { "type": "string", "maxLength": 20 },
+        "stickerEmoji": { "type": "string", "maxLength": 40 },
+        "stickerLabel": { "type": "string", "maxLength": 80 },
+        "expiresAt": { "type": "number" },
         "status": { "type": "string", "maxLength": 30 },
         "timestamp": { "type": "number" }
       },
       "required": ["senderId", "recipientId"]
+    },
+    "VisitorStat": {
+      "title": "VisitorStat",
+      "description": "Global cumulative platform visitor counter",
+      "type": "object",
+      "properties": {
+        "totalVisitors": { "type": "number" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["totalVisitors"]
+    },
+    "ForumPost": {
+      "title": "ForumPost",
+      "description": "Social dating & community forum post",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "authorId": { "type": "string", "maxLength": 128 },
+        "authorName": { "type": "string", "maxLength": 100 },
+        "authorAvatar": { "type": "string", "maxLength": 500 },
+        "authorGender": { "type": "string", "maxLength": 20 },
+        "authorCountryFlag": { "type": "string", "maxLength": 10 },
+        "authorVipBadge": { "type": "string", "maxLength": 50 },
+        "authorRole": { "type": "string", "maxLength": 30 },
+        "text": { "type": "string", "maxLength": 2000 },
+        "likedBy": { "type": "array" },
+        "likesCount": { "type": "number" },
+        "commentsCount": { "type": "number" },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["id", "authorId", "authorName", "text"]
+    },
+    "ForumComment": {
+      "title": "ForumComment",
+      "description": "Comment on a forum post",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "postId": { "type": "string", "maxLength": 128 },
+        "authorId": { "type": "string", "maxLength": 128 },
+        "authorName": { "type": "string", "maxLength": 100 },
+        "authorAvatar": { "type": "string", "maxLength": 500 },
+        "text": { "type": "string", "maxLength": 1000 },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["id", "postId", "authorId", "text"]
+    },
+    "SharedRoomMission": {
+      "title": "SharedRoomMission",
+      "description": "Daily shared collaborative room mission",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "dateKey": { "type": "string", "maxLength": 20 },
+        "title": { "type": "string", "maxLength": 150 },
+        "description": { "type": "string", "maxLength": 400 },
+        "icon": { "type": "string", "maxLength": 20 },
+        "currentProgress": { "type": "number" },
+        "targetProgress": { "type": "number" },
+        "rewardCoins": { "type": "number" },
+        "rewardVipLabel": { "type": "string", "maxLength": 100 },
+        "contributors": { "type": "array" },
+        "claimedBy": { "type": "array" },
+        "updatedAt": { "type": "number" }
+      },
+      "required": ["id", "title", "targetProgress"]
+    },
+    "UserReport": {
+      "title": "UserReport",
+      "description": "Abuse report submitted against a user",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "reporterId": { "type": "string", "maxLength": 128 },
+        "reporterName": { "type": "string", "maxLength": 100 },
+        "reportedUserId": { "type": "string", "maxLength": 128 },
+        "reportedUserName": { "type": "string", "maxLength": 100 },
+        "reason": { "type": "string", "maxLength": 150 },
+        "details": { "type": "string", "maxLength": 1000 },
+        "status": { "type": "string", "maxLength": 30 },
+        "timestamp": { "type": "number" }
+      },
+      "required": ["id", "reporterId", "reportedUserId", "reason"]
     },
     "PaymentRequest": {
       "title": "PaymentRequest",
@@ -117,6 +210,18 @@
         "createdAt": { "type": "number" }
       },
       "required": ["userId", "amountEgp", "status"]
+    },
+    "RoomSettings": {
+      "title": "RoomSettings",
+      "description": "Shared room settings including lock status",
+      "type": "object",
+      "properties": {
+        "roomId": { "type": "string", "maxLength": 128 },
+        "isLocked": { "type": "boolean" },
+        "updatedBy": { "type": "string", "maxLength": 128 },
+        "updatedAt": { "type": "number" }
+      },
+      "required": ["isLocked"]
     },
     "CoinTransfer": {
       "title": "CoinTransfer",
@@ -142,9 +247,13 @@
       "schema": "Friend",
       "description": "Accepted friends list of a user"
     },
+    "/rooms/{roomId}": {
+      "schema": "RoomSettings",
+      "description": "Room lock state and settings controlled by room managers"
+    },
     "/rooms/{roomId}/messages/{messageId}": {
       "schema": "Message",
-      "description": "Public room message feed"
+      "description": "Public room message feed (auto-expires after 24h)"
     },
     "/direct_chats/{chatId}": {
       "schema": "DirectChat",
@@ -152,7 +261,27 @@
     },
     "/direct_chats/{chatId}/messages/{messageId}": {
       "schema": "DirectMessage",
-      "description": "Messages inside a direct chat"
+      "description": "Messages inside a direct chat (auto-expires after 7 days)"
+    },
+    "/stats/{statId}": {
+      "schema": "VisitorStat",
+      "description": "Global platform cumulative visitor statistics"
+    },
+    "/forum_posts/{postId}": {
+      "schema": "ForumPost",
+      "description": "Community social forum posts"
+    },
+    "/forum_posts/{postId}/comments/{commentId}": {
+      "schema": "ForumComment",
+      "description": "Comments under forum posts"
+    },
+    "/room_daily_missions/{missionId}": {
+      "schema": "SharedRoomMission",
+      "description": "Daily collaborative room missions"
+    },
+    "/user_reports/{reportId}": {
+      "schema": "UserReport",
+      "description": "User abuse reports sent to admin panel"
     },
     "/payment_requests/{orderId}": {
       "schema": "PaymentRequest",

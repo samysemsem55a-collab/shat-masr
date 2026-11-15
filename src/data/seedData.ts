@@ -22,7 +22,7 @@ export const CURRENT_USER: User = {
   id: 'usr_me',
   name: 'ضيف عربي',
   username: 'arab_guest',
-  avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
+  avatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=shat_masr_guest',
   bio: 'مرحباً بكم في شات مصر والعرب 🇪🇬 🌸',
   country: 'مصر',
   countryFlag: '🇪🇬',
@@ -244,14 +244,14 @@ export const QUICK_PHRASES = [
 ];
 
 export const AVATAR_PRESETS = [
-  { id: 'av1', url: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80', label: 'كليوباترا الملكية' },
-  { id: 'av2', url: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&auto=format&fit=crop&q=80', label: 'الشيخ الشهم' },
-  { id: 'av3', url: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=150&auto=format&fit=crop&q=80', label: 'فارس الأطلس' },
-  { id: 'av4', url: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=150&auto=format&fit=crop&q=80', label: 'نور الياسمين' },
-  { id: 'av5', url: 'https://images.unsplash.com/photo-1492562080023-ab3db95bfbce?w=150&auto=format&fit=crop&q=80', label: 'ابن النيل الأنيق' },
-  { id: 'av6', url: 'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=150&auto=format&fit=crop&q=80', label: 'أمير الرافدين' },
-  { id: 'av7', url: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=150&auto=format&fit=crop&q=80', label: 'ملكة الشرق' },
-  { id: 'av8', url: 'https://images.unsplash.com/photo-1522075469751-3a6694fb2f61?w=150&auto=format&fit=crop&q=80', label: 'شاب عربي عصري' },
+  { id: 'av1', url: 'https://api.dicebear.com/7.x/avataaars/svg?seed=cleopatra_eg', label: 'كليوباترا الملكية' },
+  { id: 'av2', url: 'https://api.dicebear.com/7.x/avataaars/svg?seed=sheikh_eg', label: 'الشيخ الشهم' },
+  { id: 'av3', url: 'https://api.dicebear.com/7.x/avataaars/svg?seed=atlas_knight', label: 'فارس الأطلس' },
+  { id: 'av4', url: 'https://api.dicebear.com/7.x/avataaars/svg?seed=noor_yasmin', label: 'نور الياسمين' },
+  { id: 'av5', url: 'https://api.dicebear.com/7.x/avataaars/svg?seed=nile_son', label: 'ابن النيل الأنيق' },
+  { id: 'av6', url: 'https://api.dicebear.com/7.x/avataaars/svg?seed=amir_rafidain', label: 'أمير الرافدين' },
+  { id: 'av7', url: 'https://api.dicebear.com/7.x/avataaars/svg?seed=malika_east', label: 'ملكة الشرق' },
+  { id: 'av8', url: 'https://api.dicebear.com/7.x/avataaars/svg?seed=modern_arab', label: 'شاب عربي عصري' },
 ];
 
 // VIP Tiers with exact pricing requested:

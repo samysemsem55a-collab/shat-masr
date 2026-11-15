@@ -38,8 +38,15 @@ service cloud.firestore {
       allow read, write: if true;
     }
 
-    match /rooms/{roomId}/messages/{messageId} {
-      allow read, write: if true;
+    match /rooms/{roomId} {
+      allow read: if true;
+      allow create, update: if request.resource.data.keys().hasAll(['isLocked'])
+        && request.resource.data.isLocked is bool;
+      allow delete: if false;
+
+      match /messages/{messageId} {
+        allow read, write: if true;
+      }
     }
 
     // Direct Messages security: Read and write conversations and their messages
@@ -77,6 +84,30 @@ service cloud.firestore {
 
     match /coin_transfers/{transferId} {
       allow read, write: if true;
+    }
+
+    match /stats/{statId} {
+      allow read, write: if true;
+    }
+
+    match /forum_posts/{postId} {
+      allow read, write: if true;
+
+      match /comments/{commentId} {
+        allow read, write: if true;
+      }
+    }
+
+    match /room_daily_missions/{missionId} {
+      allow read, write: if true;
+    }
+
+    match /user_reports/{reportId} {
+      allow read, write: if true;
+    }
+
+    match /test/{docId} {
+      allow read: if true;
     }
   }
 }

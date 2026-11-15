@@ -556,7 +556,7 @@ export const VoiceStage: React.FC<VoiceStageProps> = ({
             <div className="flex items-center gap-2.5 bg-slate-50 p-2.5 rounded-xl border border-slate-200 text-right">
               <div className="w-10 h-10 rounded-full overflow-hidden border border-slate-200 shrink-0">
                 <img 
-                  src={selectedSeatAction.user.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150'} 
+                  src={selectedSeatAction.user.avatar || `https://api.dicebear.com/9.x/avataaars/svg?seed=${encodeURIComponent(selectedSeatAction.user.name || selectedSeatAction.user.id)}`} 
                   alt="" 
                   className="w-full h-full object-cover" 
                 />

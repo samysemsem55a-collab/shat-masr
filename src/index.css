@@ -128,6 +128,17 @@
   }
 }
 
+@keyframes radioCloseGlowPulse {
+  0%, 100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 rgba(225, 29, 72, 0.38), 0 0 8px rgba(225, 29, 72, 0.2);
+  }
+  50% {
+    transform: scale(1.06);
+    box-shadow: 0 0 0 5px rgba(225, 29, 72, 0), 0 0 14px rgba(225, 29, 72, 0.42);
+  }
+}
+
 .animate-subtle-new-user-pulse {
   animation: subtleNewUserPulse 2.8s ease-in-out infinite;
 }
@@ -136,9 +147,14 @@
   animation: subtleGiftPulse 2.4s ease-in-out infinite;
 }
 
+.animate-radio-close-glow {
+  animation: radioCloseGlowPulse 2.1s ease-in-out infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .animate-subtle-new-user-pulse,
   .animate-subtle-gift-pulse,
+  .animate-radio-close-glow,
   .animate-fade-in,
   .animate-in {
     animation: none !important;

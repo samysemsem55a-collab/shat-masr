@@ -35,12 +35,31 @@ interface ChatMessage {
   audioDuration?: number;
   audioUrl?: string;
   voiceUrl?: string;
+  mediaUrl?: string;
+  mediaType?: 'image' | 'video';
+  stickerId?: string;
+  stickerEmoji?: string;
+  stickerLabel?: string;
+  stickerAnimation?: string;
   reactions?: Record<string, number>;
   userReactions?: Record<string, string>;
   reactionUsers?: Record<string, string[]>;
+  expiresAt?: number;
   createdAt: number;
   timestamp: number;
   status: 'sent' | 'delivered' | 'read';
+}
+
+const PUBLIC_MESSAGE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+const DM_MESSAGE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+
+function isMessageExpired(msg: { expiresAt?: number; timestamp?: number; createdAt?: number }, defaultTtlMs: number): boolean {
+  const now = Date.now();
+  if (typeof msg.expiresAt === 'number' && msg.expiresAt > 0) {
+    return msg.expiresAt <= now;
+  }
+  const baseTime = msg.timestamp || msg.createdAt || now;
+  return now - baseTime > defaultTtlMs;
 }
 
 interface RoomOccupant {
@@ -86,12 +105,30 @@ interface PinnedRoomMessage {
 const messagesByRoom: Map<string, ChatMessage[]> = new Map();
 const pinnedMessageByRoom: Map<string, PinnedRoomMessage | null> = new Map();
 const roomBackgroundByRoom: Map<string, string> = new Map();
+const roomLockByRoom: Map<string, boolean> = new Map();
 const directMessagesByConv: Map<string, any[]> = new Map();
 const roomOccupants: Map<string, Map<string, RoomOccupant>> = new Map();
 const usersStore: Map<string, UserProfile> = new Map();
+const userReportsStore: any[] = [];
 const socketToUser: Map<WebSocket, { userId: string; sessionId?: string; roomId?: string }> = new Map();
 // Global map of connected sockets by userId
 const connectedUsers: Map<string, { ws: WebSocket; user: UserProfile; lastSeen: number }> = new Map();
+
+// Periodic purge of expired public (24h) and direct (7d) messages
+setInterval(() => {
+  messagesByRoom.forEach((msgs, rId) => {
+    const filtered = msgs.filter(m => !isMessageExpired(m, PUBLIC_MESSAGE_TTL_MS));
+    if (filtered.length !== msgs.length) {
+      messagesByRoom.set(rId, filtered);
+    }
+  });
+  directMessagesByConv.forEach((msgs, convId) => {
+    const filtered = msgs.filter(m => !isMessageExpired(m, DM_MESSAGE_TTL_MS));
+    if (filtered.length !== msgs.length) {
+      directMessagesByConv.set(convId, filtered);
+    }
+  });
+}, 5 * 60 * 1000);
 
 // Initialize default rooms: Only Egypt 1 and Egypt 2
 const DEFAULT_ROOMS = ['room_egypt', 'room_egypt2'];
@@ -121,6 +158,32 @@ function persistRoomBackgrounds() {
     fs.writeFileSync(
       ROOM_BACKGROUNDS_FILE,
       JSON.stringify(Object.fromEntries(roomBackgroundByRoom), null, 2),
+      'utf-8'
+    );
+  } catch {}
+}
+
+// Persist room lock states across restarts
+const ROOM_LOCKS_FILE = path.resolve(__dirname, '.room-locks.json');
+try {
+  if (fs.existsSync(ROOM_LOCKS_FILE)) {
+    const rawLocks = fs.readFileSync(ROOM_LOCKS_FILE, 'utf-8');
+    const parsedLocks = JSON.parse(rawLocks);
+    if (parsedLocks && typeof parsedLocks === 'object') {
+      Object.entries(parsedLocks).forEach(([rId, locked]) => {
+        if (locked === true) {
+          roomLockByRoom.set(rId, true);
+        }
+      });
+    }
+  }
+} catch {}
+
+function persistRoomLocks() {
+  try {
+    fs.writeFileSync(
+      ROOM_LOCKS_FILE,
+      JSON.stringify(Object.fromEntries(roomLockByRoom), null, 2),
       'utf-8'
     );
   } catch {}
@@ -261,6 +324,10 @@ wss.on('connection', (ws: WebSocket) => {
     type: 'ALL_ROOM_BACKGROUNDS',
     backgrounds: Object.fromEntries(roomBackgroundByRoom)
   }));
+  ws.send(JSON.stringify({
+    type: 'ALL_ROOM_LOCKS',
+    locks: Object.fromEntries(roomLockByRoom)
+  }));
 
   ws.on('message', (raw) => {
     try {
@@ -278,9 +345,11 @@ wss.on('connection', (ws: WebSocket) => {
             socketToUser.set(ws, { userId: user.id, sessionId: user.sessionId, roomId: prevInfo?.roomId });
             connectedUsers.set(user.id, { ws, user: merged, lastSeen: Date.now() });
 
-            // Deliver any recent direct messages targeting this user or their active sessionId
+            // Deliver any non-expired direct messages targeting this user or their active sessionId
             directMessagesByConv.forEach((msgs, convId) => {
-              msgs.forEach((msg) => {
+              const activeMsgs = msgs.filter(m => !isMessageExpired(m, DM_MESSAGE_TTL_MS));
+              if (activeMsgs.length !== msgs.length) directMessagesByConv.set(convId, activeMsgs);
+              activeMsgs.forEach((msg) => {
                 const isForUser =
                   msg.recipientId === user.id ||
                   (user.sessionId && msg.recipientId === user.sessionId) ||
@@ -332,8 +401,10 @@ wss.on('connection', (ws: WebSocket) => {
 
           socketToUser.set(ws, { userId: user.id, sessionId: user.sessionId, roomId });
 
-          // Send existing room history to newly joined client
-          const history = messagesByRoom.get(roomId) || [];
+          // Send existing non-expired room history (24h TTL) to newly joined client
+          const rawHistory = messagesByRoom.get(roomId) || [];
+          const history = rawHistory.filter(m => !isMessageExpired(m, PUBLIC_MESSAGE_TTL_MS));
+          if (history.length !== rawHistory.length) messagesByRoom.set(roomId, history);
           ws.send(JSON.stringify({
             type: 'ROOM_HISTORY',
             roomId,
@@ -354,6 +425,13 @@ wss.on('connection', (ws: WebSocket) => {
             type: 'ROOM_BACKGROUND_UPDATED',
             roomId,
             backgroundTheme: currentBg
+          }));
+
+          // Send current room lock state
+          ws.send(JSON.stringify({
+            type: 'ROOM_LOCK_UPDATED',
+            roomId,
+            isLocked: Boolean(roomLockByRoom.get(roomId))
           }));
 
           // Broadcast updated presence to all clients in room
@@ -444,9 +522,16 @@ wss.on('connection', (ws: WebSocket) => {
             audioDuration: message.audioDuration,
             audioUrl: message.audioUrl,
             voiceUrl: message.voiceUrl,
+            mediaUrl: message.mediaUrl,
+            mediaType: message.mediaType,
+            stickerId: message.stickerId,
+            stickerEmoji: message.stickerEmoji,
+            stickerLabel: message.stickerLabel,
+            stickerAnimation: message.stickerAnimation,
             reactions: message.reactions || {},
             userReactions: message.userReactions || {},
             reactionUsers: message.reactionUsers || {},
+            expiresAt: message.expiresAt || ((message.createdAt || Date.now()) + PUBLIC_MESSAGE_TTL_MS),
             createdAt: message.createdAt || Date.now(),
             timestamp: message.timestamp || Date.now(),
             status: message.status || ((message.isPrivate || message.type === 'private') ? 'sent' : 'read')
@@ -581,6 +666,24 @@ wss.on('connection', (ws: WebSocket) => {
             type: 'ROOM_BACKGROUND_UPDATED',
             roomId,
             backgroundTheme: normalized
+          });
+          break;
+        }
+
+        case 'UPDATE_ROOM_LOCK': {
+          const { roomId, isLocked } = payload || {};
+          if (!roomId) return;
+          const nextLocked = Boolean(isLocked);
+          if (nextLocked) {
+            roomLockByRoom.set(roomId, true);
+          } else {
+            roomLockByRoom.delete(roomId);
+          }
+          persistRoomLocks();
+          broadcastToAll({
+            type: 'ROOM_LOCK_UPDATED',
+            roomId,
+            isLocked: nextLocked
           });
           break;
         }
@@ -742,11 +845,15 @@ wss.on('connection', (ws: WebSocket) => {
             const targetId = recipientId || message.recipientId;
             console.log(`[Direct Message] From ${message.senderName} (${message.senderId}) to ${targetId} in conv ${convId}`);
 
-            // Cache recent direct messages in memory for instant guest/reconnect sync
+            // Cache recent direct messages with 7-day auto-expiration
+            const enrichedDm = {
+              ...message,
+              expiresAt: message.expiresAt || ((message.timestamp || Date.now()) + DM_MESSAGE_TTL_MS)
+            };
             if (convId) {
-              const convList = directMessagesByConv.get(convId) || [];
-              if (!convList.some(m => m.id === message.id)) {
-                convList.push(message);
+              const convList = (directMessagesByConv.get(convId) || []).filter(m => !isMessageExpired(m, DM_MESSAGE_TTL_MS));
+              if (!convList.some(m => m.id === enrichedDm.id)) {
+                convList.push(enrichedDm);
                 if (convList.length > 100) convList.shift();
                 directMessagesByConv.set(convId, convList);
               }
@@ -825,18 +932,48 @@ wss.on('connection', (ws: WebSocket) => {
           const { report } = payload;
           if (report) {
             console.log(`[User Report] From ${report.reporterName} against ${report.reportedUserName}: ${report.reason}`);
+            const fullReport = {
+              ...report,
+              id: report.id || `rep_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+              status: report.status || 'pending',
+              timestamp: report.timestamp || Date.now()
+            };
+            userReportsStore.unshift(fullReport);
+            if (userReportsStore.length > 200) userReportsStore.pop();
             broadcastToAll({
               type: 'ADMIN_REPORT_RECEIVED',
-              report: {
-                ...report,
-                id: `rep_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-                timestamp: Date.now()
-              }
+              report: fullReport
             });
             ws.send(JSON.stringify({
               type: 'REPORT_SUBMITTED_SUCCESS',
               message: 'تم استلام البلاغ بنجاح وجارٍ مراجعته من الإدارة'
             }));
+          }
+          break;
+        }
+
+        case 'CALL_SIGNAL': {
+          const { targetUserId, signal } = payload || {};
+          if (targetUserId && signal) {
+            const delivered = sendToUser(targetUserId, {
+              type: 'CALL_SIGNAL',
+              signal
+            });
+            if (!delivered) {
+              broadcastToAll({ type: 'CALL_SIGNAL', signal }, ws);
+            }
+          }
+          break;
+        }
+
+        case 'CLEAR_ROOM_MESSAGES': {
+          const { roomId } = payload || {};
+          if (roomId) {
+            messagesByRoom.set(roomId, []);
+            broadcastToRoom(roomId, {
+              type: 'ROOM_PURGED',
+              roomId
+            });
           }
           break;
         }
@@ -951,13 +1088,21 @@ app.get('/api/health', (_req: Request, res: Response) => {
     connectedClients: wss.clients.size,
     totalUsers: usersStore.size,
     activeRooms: messagesByRoom.size,
+    pendingReports: userReportsStore.filter(r => r.status !== 'reviewed').length,
+    uptimeSeconds: Math.floor(process.uptime()),
     timestamp: Date.now()
   });
 });
 
+app.get('/api/admin/reports', (_req: Request, res: Response) => {
+  res.json({ reports: userReportsStore });
+});
+
 app.get('/api/messages/:roomId', (req: Request, res: Response) => {
   const roomId = req.params.roomId;
-  const history = messagesByRoom.get(roomId) || [];
+  const rawHistory = messagesByRoom.get(roomId) || [];
+  const history = rawHistory.filter(m => !isMessageExpired(m, PUBLIC_MESSAGE_TTL_MS));
+  if (history.length !== rawHistory.length) messagesByRoom.set(roomId, history);
   res.json({ roomId, messages: history });
 });
 

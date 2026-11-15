@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Toaster, toast } from 'sonner';
+import { Play, Pause, SkipForward, Radio, Volume2, VolumeX, X } from 'lucide-react';
 import { Header } from './components/Header';
 import { BottomNav, NavTab } from './components/BottomNav';
 import { RoomsView } from './components/RoomsView';
@@ -22,11 +23,18 @@ import { DailyMissionsModal } from './components/DailyMissionsModal';
 import { PrivateRoomPromptModal } from './components/PrivateRoomPromptModal';
 import { PhoneAuthModal } from './components/PhoneAuthModal';
 import { WelcomeAuthModal } from './components/WelcomeAuthModal';
+import { CallModal } from './components/CallModal';
 
-import { User, Room, Message, GiftItem, VipTier, SpeakerSeat, RadioStation, FriendRequest, DailyMission, UnreadSenderSummary } from './types/chat';
-import { CURRENT_USER, INITIAL_ROOMS, RADIO_STATIONS, getOrCreateUser, isUserAdminOrOwner } from './data/seedData';
+import { User, Room, Message, GiftItem, VipTier, SpeakerSeat, FriendRequest, DailyMission, UnreadSenderSummary } from './types/chat';
+import { INITIAL_ROOMS, getOrCreateUser, isUserAdminOrOwner } from './data/seedData';
 import { sounds } from './utils/soundEffects';
 import { realtimeSocket } from './services/realtimeSocket';
+import { globalRadioPlayer, RadioPlayerSnapshot } from './services/radioPlayer';
+import {
+  initExternalPushNotifications,
+  requestPushNotificationPermission,
+  triggerExternalBrowserNotification,
+} from './services/pushNotifications';
 import { 
   subscribeToRoomMessages, 
   sendFirestoreMessage, 
@@ -42,7 +50,10 @@ import {
   declineFriendRequestInDB,
   checkAndMarkFirstPublicRoomEntry,
   syncCumulativeVisitorsRealtime,
-  setRoomBackgroundTheme
+  setRoomBackgroundTheme,
+  setRoomLockState,
+  subscribeToAllRoomLocks,
+  contributeToSharedRoomMission
 } from './services/firebase';
 
 export default function App() {
@@ -163,13 +174,17 @@ export default function App() {
   const [rooms, setRooms] = useState<Room[]>(() => {
     const hydrateRoomBg = (list: Room[]) =>
       list.map(r => {
+        let next = r;
         try {
           const cachedBg = localStorage.getItem(`room_bg_theme_${r.id}`);
           if (cachedBg && cachedBg !== 'default') {
-            return { ...r, backgroundTheme: cachedBg };
+            next = { ...next, backgroundTheme: cachedBg };
+          }
+          if (localStorage.getItem(`room_lock_${r.id}`) === 'true') {
+            next = { ...next, isLocked: true };
           }
         } catch {}
-        return r;
+        return next;
       });
 
     try {
@@ -217,9 +232,27 @@ export default function App() {
     return !hasEntered && !authEmail;
   });
 
-  // Radio Player State
-  const [activeRadioStation, setActiveRadioStation] = useState<RadioStation | null>(RADIO_STATIONS[0]);
-  const [isRadioPlaying, setIsRadioPlaying] = useState(false);
+  // Global Persistent FM Radio & Music Player State
+  const [radioSnap, setRadioSnap] = useState<RadioPlayerSnapshot>(() => globalRadioPlayer.getSnapshot());
+  const [miniRadioDismissed, setMiniRadioDismissed] = useState(false);
+
+  // Incoming Call State (WebRTC)
+  const [incomingCall, setIncomingCall] = useState<{
+    peer: User;
+    callType: 'audio' | 'video';
+    signal: any;
+  } | null>(null);
+
+  useEffect(() => {
+    const unsub = globalRadioPlayer.subscribe((snap) => setRadioSnap(snap));
+    return unsub;
+  }, []);
+
+  useEffect(() => {
+    if (!isWelcomeAuthOpen) {
+      globalRadioPlayer.tryAutoPlayFM();
+    }
+  }, [isWelcomeAuthOpen]);
 
   // Fullscreen Celebratory Gift Overlay
   const [activeFullscreenGift, setActiveFullscreenGift] = useState<{
@@ -428,12 +461,67 @@ export default function App() {
       });
     });
 
+    // Listen to room lock status across all rooms
+    const unsubRoomLocks = subscribeToAllRoomLocks((locks) => {
+      setRooms(prev =>
+        prev.map(r => {
+          const nextLocked = Boolean(locks[r.id]);
+          return Boolean(r.isLocked) === nextLocked ? r : { ...r, isLocked: nextLocked };
+        })
+      );
+      setActiveRoom(prev => {
+        if (!prev) return prev;
+        const nextLocked = Boolean(locks[prev.id]);
+        return Boolean(prev.isLocked) === nextLocked ? prev : { ...prev, isLocked: nextLocked };
+      });
+    });
+
+    // Listen to incoming WebRTC calls targeting current user
+    const unsubCalls = realtimeSocket.subscribeToCallSignals((signal) => {
+      if (!signal || signal.type !== 'call_offer') return;
+      if (signal.targetUserId && signal.targetUserId !== currentUser.id) return;
+      if (!signal.fromUserId || signal.fromUserId === currentUser.id) return;
+
+      sounds.playMessageReceived();
+      setIncomingCall({
+        peer: {
+          id: signal.fromUserId,
+          name: signal.callerName || 'عضو متصل',
+          username: (signal.callerName || 'member').toLowerCase(),
+          avatar: signal.callerAvatar || '',
+          bio: 'عضو في شات مصر',
+          country: 'مصر',
+          countryFlag: signal.callerFlag || '🇪🇬',
+          role: 'member',
+          coins: 0,
+          earningsEgp: 0,
+          earningsUsd: 0,
+          vipBadge: '',
+          frameStyle: 'border-slate-300',
+          profileWallpaper: '',
+          fontPreference: 'cairo',
+          isOnline: true,
+          status: 'online',
+          joinedAt: new Date().toISOString(),
+          gender: 'male',
+          level: 1,
+          likesReceived: 0,
+          giftsReceivedCount: 0,
+          badges: [],
+        },
+        callType: signal.callType === 'video' ? 'video' : 'audio',
+        signal,
+      });
+    });
+
     return () => {
       unsubGlobal();
       unsubFirestorePresence();
       unsubAdmin();
       unsubFriend();
       unsubRoomBgs();
+      unsubRoomLocks();
+      unsubCalls();
     };
   }, [currentUser.id, currentUser.sessionId, currentUser.name]);
 
@@ -597,6 +685,14 @@ export default function App() {
               onClick: () => handleOpenIncomingChat(toastPayload)
             }
           });
+          if (typeof document !== 'undefined' && document.hidden) {
+            triggerExternalBrowserNotification(
+              `💬 رسالة جديدة من ${toastPayload.senderName}`,
+              rawMsg.content || rawMsg.text || 'أرسل لك رسالة خاصة جديدة',
+              { senderId: rawMsg.senderId },
+              () => handleOpenIncomingChat(toastPayload)
+            );
+          }
         }
       }
     };
@@ -621,6 +717,27 @@ export default function App() {
       bus?.close();
     };
   }, [currentUser.id, currentUser.sessionId, currentUser.notificationPrefs?.directMessages, currentUser.notificationPrefs?.gifts, currentTab, isPrivateChatDrawerOpen, isInsidePrivateChat, targetChatUser?.id]);
+
+  // Initialize External Push Notifications (FCM / Service Worker / Browser Deep-Link)
+  useEffect(() => {
+    initExternalPushNotifications(
+      (payload) => {
+        if (payload?.title || payload?.body) {
+          toast.info(payload.title || 'إشعار جديد', { description: payload.body });
+        }
+      },
+      (data) => {
+        if (data?.senderId) {
+          const found = globalOnlineUsers.find(u => u.id === data.senderId);
+          handleOpenIncomingChat({
+            senderId: data.senderId,
+            senderName: found?.name || 'مستخدم',
+            senderAvatar: found?.avatar || '',
+          });
+        }
+      }
+    );
+  }, []);
 
   const handleOpenIncomingChat = (toastItem: { senderId: string; senderName: string; senderAvatar: string }) => {
     clearUnreadForSender(toastItem.senderId);
@@ -790,16 +907,43 @@ export default function App() {
       }
     });
 
-    // Automatic System Bot Welcome Message on first entry into any public chat room
+    // Listen to room purge events from Moderator / Owner God Mode
+    const unsubPurged = realtimeSocket.subscribeToRoomPurged(activeRoom.id, () => {
+      setActiveRoomMessages([]);
+    });
+
+    // Automatic System Welcome & Compact Bot Welcome Message on entry into public rooms
     const sessionKey = `${currentUser.id}::${activeRoom.id}`;
     if (!activeRoom.isPrivate && !welcomedPublicRoomKeysRef.current.has(sessionKey)) {
       welcomedPublicRoomKeysRef.current.add(sessionKey);
+
+      // Broadcast concise live join system notice for everyone in the room
+      const joinNotice: Message = {
+        id: `join_${activeRoom.id}_${currentUser.id}_${Date.now()}`,
+        roomId: activeRoom.id,
+        senderId: currentUser.id,
+        senderName: currentUser.name,
+        senderAvatar: currentUser.avatar,
+        senderRole: currentUser.role,
+        senderVipBadge: currentUser.vipBadge,
+        badges: currentUser.badges || [],
+        type: 'system_welcome',
+        isPrivate: false,
+        content: `انضم ${currentUser.name} إلى شات مصر / نورت الغرفة! 🌸`,
+        text: `انضم ${currentUser.name} إلى شات مصر / نورت الغرفة! 🌸`,
+        createdAt: Date.now(),
+        timestamp: Date.now(),
+        status: 'read',
+      };
+      setActiveRoomMessages(prev => mergeMessageList(prev, [joinNotice]));
+      realtimeSocket.sendMessage(activeRoom.id, joinNotice);
+
       checkAndMarkFirstPublicRoomEntry(currentUser.id, activeRoom.id)
         .then((isFirstEntry) => {
           if (!isFirstEntry || isCancelled) return;
           welcomeBotTimer = setTimeout(() => {
             if (isCancelled) return;
-            const welcomeText = `أهلاً وسهلاً بك يا ${currentUser.name} في ${activeRoom.title}! 🌟✨ نورت مجلسنا بوجودك الجميل وطلتك المميزة. البيت بيتك بين إخوتك وأصدقائك؛ شاركنا تحيتك، اكتب رأيك في الشات، أو انضم للمايك الصوتي لنبدأ أحلى اللحظات معاً! 🎙️💬💛`;
+            const welcomeText = 'أهلاً بك معنا في شات مصر! نورت المجلس 🌸 - شاركنا بتواجدك الراقي';
             const botMsg: Message = {
               id: `bot_welcome_${activeRoom.id}_${currentUser.id}`,
               roomId: activeRoom.id,
@@ -827,10 +971,6 @@ export default function App() {
               console.warn('Welcome bot message write notice:', err);
             });
             sounds.playMessageReceived();
-            toast.success(`أهلاً بك يا ${currentUser.name} في ${activeRoom.title} 🌟`, {
-              id: `welcome_bot_toast_${activeRoom.id}_${currentUser.id}`,
-              description: 'وصلك ترحيب خاص من بوت النظام — شاركنا الآن!'
-            });
           }, 550);
         })
         .catch(() => {});
@@ -845,6 +985,7 @@ export default function App() {
       unsubReactions();
       unsubRead();
       unsubFirebase();
+      unsubPurged();
     };
   }, [activeRoom?.id, currentUser.id]);
 
@@ -896,7 +1037,7 @@ export default function App() {
     }
 
     const content = (msgData.content || msgData.text || '').trim();
-    if (!content && !msgData.audioUrl && !msgData.gift) return;
+    if (!content && !msgData.audioUrl && !msgData.gift && msgData.type !== 'sticker') return;
 
     try {
       sounds.playMessageSent();
@@ -919,6 +1060,10 @@ export default function App() {
         audioDuration: msgData.audioDuration,
         audioUrl: msgData.audioUrl,
         voiceUrl: msgData.voiceUrl,
+        stickerId: msgData.stickerId,
+        stickerEmoji: msgData.stickerEmoji,
+        stickerLabel: msgData.stickerLabel,
+        stickerAnimation: msgData.stickerAnimation,
         reactions: {},
         userReactions: {},
         reactionUsers: {},
@@ -941,8 +1086,9 @@ export default function App() {
         console.warn("Realtime DB message write notice:", err);
       });
 
-      // 3. Track Daily Mission: "إرسال 5 رسائل"
+      // 3. Track Daily Mission & Shared Room Daily Mission
       updateMissionProgress('send_5_messages', 1);
+      contributeToSharedRoomMission('messages', currentUser.id, 1).catch(() => {});
 
       // Award "عضو نشط" badge if not yet granted
       if (!currentUser.badges?.includes('عضو نشط')) {
@@ -1030,8 +1176,22 @@ export default function App() {
     });
   };
 
-  // Enter Room Handler with Private Room Protection (Requirement 7)
+  // Enter Room Handler with Room Lock & Private Room Protection
   const handleSelectRoom = (room: Room) => {
+    const canManageRoom =
+      isUserAdminOrOwner(currentUser) ||
+      room.ownerId === currentUser.id ||
+      room.hostId === currentUser.id ||
+      (room.moderators || []).includes(currentUser.id);
+
+    if (room.isLocked && !canManageRoom) {
+      sounds.playMicToggle(false);
+      toast.error('🔒 هذه الغرفة مقفلة حالياً', {
+        description: `قام مديرو "${room.title}" بقفل الغرفة مؤقتاً، ولا يمكن دخول أعضاء جدد الآن.`,
+      });
+      return;
+    }
+
     if (room.isPrivate) {
       const isAllowed = 
         room.ownerId === currentUser.id ||
@@ -1121,6 +1281,18 @@ export default function App() {
     setRoomBackgroundTheme(roomId, normalized || 'default');
   };
 
+  // Toggle Room Lock State (Room Managers)
+  const handleUpdateRoomLock = (roomId: string, isLocked: boolean) => {
+    const nextLocked = Boolean(isLocked);
+    setRooms((prev) =>
+      prev.map((r) => (r.id === roomId ? { ...r, isLocked: nextLocked } : r))
+    );
+    setActiveRoom((prev) =>
+      prev && prev.id === roomId ? { ...prev, isLocked: nextLocked } : prev
+    );
+    setRoomLockState(roomId, nextLocked, currentUser.id);
+  };
+
   // Upgrade VIP Tier
   const handleUpgradeTier = (tier: VipTier) => {
     setCurrentUser((prev) => ({
@@ -1146,17 +1318,7 @@ export default function App() {
     }));
   };
 
-  // Radio Station Toggle
-  const handleToggleRadioStation = (station: RadioStation) => {
-    if (activeRadioStation?.id === station.id && isRadioPlaying) {
-      setIsRadioPlaying(false);
-      sounds.playMicToggle(false);
-    } else {
-      setActiveRadioStation(station);
-      setIsRadioPlaying(true);
-      sounds.playMicToggle(true);
-    }
-  };
+  // Host Invite to Mic removed cleanly (text-first experience)
 
   // Host Invite to Mic
   const handleInviteUserToMic = (user: User) => {
@@ -1368,7 +1530,7 @@ export default function App() {
           pendingFriendRequestsCount={pendingFriendRequests.length}
           onlineUsersCount={globalOnlineUsers.length}
           onOpenRadio={() => setIsRadioModalOpen(true)}
-          isRadioPlaying={isRadioPlaying}
+          isRadioPlaying={radioSnap.isPlaying}
           onAvatarChanged={handleAvatarChanged}
           onLogout={handleLogout}
           unreadMessagesBySender={unreadMessagesBySender}
@@ -1426,6 +1588,7 @@ export default function App() {
             onOpenGiftModal={() => setIsGiftModalOpen(true)}
             onUpdateSpeakers={handleUpdateSpeakers}
             onUpdateRoomBackground={(theme) => handleUpdateRoomBackground(activeRoom.id, theme)}
+            onUpdateRoomLock={(locked) => handleUpdateRoomLock(activeRoom.id, locked)}
             onOpenUserProfile={(u) => setSelectedProfileUser(u)}
             onOpenOnlineUsers={() => setIsOnlineUsersOpen(true)}
             onUpdateUser={(updated) => {
@@ -1442,15 +1605,22 @@ export default function App() {
             {currentTab === 'rooms' && (
               <RoomsView
                 rooms={rooms}
+                currentUser={currentUser}
+                onlineUsers={globalOnlineUsers}
                 onSelectRoom={handleSelectRoom}
-                onOpenCreateVoiceRoom={handleOpenCreateVoiceRoom}
-                onOpenCreateTextRoom={handleOpenCreateTextRoom}
+                onOpenPrivateChatWith={handleOpenPrivateChatWith}
                 onOpenWallet={() => setIsWalletOpen(true)}
                 onOpenVip={() => setIsVipOpen(true)}
                 onOpenMissions={() => setIsDailyMissionsOpen(true)}
                 totalActiveUsersCount={globalOnlineUsers.length}
                 cumulativeVisitorsCount={cumulativeVisitorsCount}
                 onOpenOnlineUsers={() => setIsOnlineUsersOpen(true)}
+                onClaimSharedRewardCoins={(coins, label) => {
+                  const updated = { ...currentUser, coins: currentUser.coins + coins };
+                  setCurrentUser(updated);
+                  syncUserProfileToFirebase(updated);
+                  toast.success(`مبروك! تم استلام +${coins} كوينز من ${label} 🎉`);
+                }}
               />
             )}
 
@@ -1587,7 +1757,7 @@ export default function App() {
         onOpenPrivateChatWith={handleOpenPrivateChatWith}
       />
 
-      {/* Private Messages & Friends Side Drawer */}
+      {/* Private Messages & Friends Side Drawer (Full Width on Mobile) */}
       {isPrivateChatDrawerOpen && (
         <div
           dir="rtl"
@@ -1596,7 +1766,7 @@ export default function App() {
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            className="h-full w-[92vw] max-w-[400px] bg-white border-r border-slate-200 shadow-2xl flex flex-col overflow-hidden animate-drawer-in-left"
+            className="h-full w-full sm:max-w-[420px] bg-white sm:border-r border-slate-200 shadow-2xl flex flex-col overflow-hidden animate-drawer-in-left"
           >
             <PrivateChatView
               isDrawer
@@ -1653,10 +1823,80 @@ export default function App() {
       <MusicRadioModal
         isOpen={isRadioModalOpen}
         onClose={() => setIsRadioModalOpen(false)}
-        activeStation={activeRadioStation}
-        isPlaying={isRadioPlaying}
-        onToggleStation={handleToggleRadioStation}
       />
+
+      {/* Persistent Global Mini FM Radio Bar */}
+      {!miniRadioDismissed && !isRadioModalOpen && (radioSnap.isPlaying || radioSnap.autoplayBlocked) && (
+        <div
+          dir="rtl"
+          className={`fixed z-40 left-3 sm:left-5 ${
+            activeRoom ? 'bottom-20' : 'bottom-16 sm:bottom-20'
+          } max-w-[92vw] sm:max-w-xs bg-white/95 backdrop-blur-md border border-indigo-200 rounded-2xl px-3 py-1.5 shadow-xl flex items-center gap-2`}
+        >
+          <button
+            type="button"
+            onClick={() => setIsRadioModalOpen(true)}
+            className="w-7 h-7 rounded-xl bg-gradient-to-tr from-indigo-600 to-purple-600 text-white flex items-center justify-center shrink-0"
+            title="فتح مكتبة الأغاني وراديو FM"
+          >
+            <Radio className={`w-3.5 h-3.5 ${radioSnap.isPlaying ? 'animate-pulse' : ''}`} />
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setIsRadioModalOpen(true)}
+            className="flex-1 min-w-0 text-right"
+          >
+            <p className="text-[11px] font-black text-slate-900 truncate">
+              {radioSnap.activeTab === 'radio'
+                ? radioSnap.activeStation?.name || 'راديو شات مصر FM'
+                : radioSnap.activeSong?.title || 'مكتبة الأغاني'}
+            </p>
+            <p className="text-[9.5px] font-bold text-indigo-600 truncate">
+              {radioSnap.isPlaying
+                ? 'يبث الآن مباشرة 🎵'
+                : 'اضغط لتشغيل راديو FM المباشر ▶️'}
+            </p>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => globalRadioPlayer.togglePlay()}
+            className="p-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white active:scale-95 shrink-0"
+            title={radioSnap.isPlaying ? 'إيقاف مؤقت' : 'تشغيل'}
+          >
+            {radioSnap.isPlaying ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => globalRadioPlayer.next()}
+            className="p-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 active:scale-95 shrink-0"
+            title="التالي"
+          >
+            <SkipForward className="w-3.5 h-3.5" />
+          </button>
+
+          <button
+            type="button"
+            onClick={() => globalRadioPlayer.toggleMute()}
+            className="p-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 active:scale-95 shrink-0 cursor-pointer"
+            title={radioSnap.isMuted ? 'إلغاء الكتم' : 'كتم'}
+          >
+            {radioSnap.isMuted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setMiniRadioDismissed(true)}
+            className="animate-radio-close-glow p-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-300/90 active:scale-95 shrink-0 cursor-pointer transition-colors"
+            title="إغلاق وإخفاء شريط الراديو"
+            aria-label="إغلاق وإخفاء شريط الراديو"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
 
       {/* Admin Control Panel Modal */}
       <AdminControlPanelModal
@@ -1695,18 +1935,39 @@ export default function App() {
       />
 
 
+      {/* Incoming WebRTC Call Modal */}
+      {incomingCall && (
+        <CallModal
+          isOpen={Boolean(incomingCall)}
+          onClose={() => setIncomingCall(null)}
+          currentUser={currentUser}
+          peerUser={incomingCall.peer}
+          callType={incomingCall.callType}
+          incomingMode
+          incomingSignal={incomingCall.signal}
+          onPromptRegister={() => {
+            setIncomingCall(null);
+            setIsWelcomeAuthOpen(true);
+          }}
+        />
+      )}
+
       {/* Welcome & Authentication Modal for Google and Guest mode on first entrance */}
       <WelcomeAuthModal
         isOpen={isWelcomeAuthOpen}
         onClose={() => {
           localStorage.setItem('shat_masr_has_entered', 'true');
           setIsWelcomeAuthOpen(false);
+          globalRadioPlayer.tryAutoPlayFM();
+          requestPushNotificationPermission().catch(() => {});
         }}
         currentUser={currentUser}
         onUserAuthenticated={(u) => {
           localStorage.setItem('shat_masr_has_entered', 'true');
           handleSwitchUser(u);
           setIsWelcomeAuthOpen(false);
+          globalRadioPlayer.tryAutoPlayFM();
+          requestPushNotificationPermission().catch(() => {});
         }}
       />
 

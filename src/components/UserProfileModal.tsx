@@ -18,7 +18,7 @@ import {
 } from 'lucide-react';
 import { User } from '../types/chat';
 import { BADGES_CATALOG } from '../data/seedData';
-import { sendFriendRequest, submitUserRating } from '../services/firebase';
+import { sendFriendRequest, submitUserRating, submitUserReport } from '../services/firebase';
 import { realtimeSocket } from '../services/realtimeSocket';
 import { sounds } from '../utils/soundEffects';
 import { toast } from 'sonner';
@@ -72,29 +72,35 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
     toast.success(`تم إرسال طلب صداقة إلى ${user.name} بنجاح 🤝`);
   };
 
-  const handleSubmitReport = (e: React.FormEvent) => {
+  const handleSubmitReport = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmittingReport) return;
     setIsSubmittingReport(true);
-    
-    // Send report via WebSocket to Administration
-    realtimeSocket.sendUserReport({
-      reporterId: currentUser.id,
-      reporterName: currentUser.name,
-      reportedUserId: user.id,
-      reportedUserName: user.name,
-      reason: reportReason,
-      details: reportNotes.trim(),
-      timestamp: Date.now()
-    });
+    try {
+      await submitUserReport({
+        reporterId: currentUser.id,
+        reporterName: currentUser.name,
+        reportedUserId: user.id,
+        reportedUserName: user.name,
+        reason: reportReason,
+        details: reportNotes.trim(),
+        timestamp: Date.now(),
+      });
 
-    sounds.playMessageReceived();
-    setIsSubmittingReport(false);
-    setReportSentSuccess(true);
-    toast.info('تم إرسال البلاغ للإدارة للمراجعة الفورية 🛡️');
-    setTimeout(() => {
-      setReportSentSuccess(false);
-      setIsReportOpen(false);
-    }, 2000);
+      sounds.playMessageReceived();
+      setReportSentSuccess(true);
+      setReportNotes('');
+      toast.info('تم إرسال البلاغ للإدارة للمراجعة الفورية 🛡️');
+      setTimeout(() => {
+        setReportSentSuccess(false);
+        setIsReportOpen(false);
+      }, 2000);
+    } catch (err) {
+      console.error('Failed to submit report:', err);
+      toast.error('تعذر إرسال البلاغ حالياً، حاول مرة أخرى.');
+    } finally {
+      setIsSubmittingReport(false);
+    }
   };
 
   const handleGiveRating = async () => {
@@ -152,7 +158,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
           <div className="relative inline-block">
             <div className={`w-22 h-22 rounded-full overflow-hidden border-4 bg-white shadow-xl mx-auto ${user.frameStyle || 'border-amber-400'}`}>
               <img 
-                src={user.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150'} 
+                src={user.avatar || `https://api.dicebear.com/9.x/avataaars/svg?seed=${encodeURIComponent(user.name || user.id)}`} 
                 alt={user.name} 
                 className="w-full h-full object-cover" 
                 referrerPolicy="no-referrer"

@@ -53,8 +53,14 @@ class RealtimeSocketManager {
   private roomBackgroundListeners: Map<string, Set<(backgroundTheme: string) => void>> = new Map();
   private allRoomBackgroundListeners: Set<(backgrounds: Record<string, string>) => void> = new Set();
   private latestRoomBackgrounds: Record<string, string> = {};
+  private roomLockListeners: Map<string, Set<(isLocked: boolean) => void>> = new Map();
+  private allRoomLockListeners: Set<(locks: Record<string, boolean>) => void> = new Set();
+  private latestRoomLocks: Record<string, boolean> = {};
   private statusListeners: Set<(connected: boolean) => void> = new Set();
   private cumulativeVisitorsListeners: Set<(count: number) => void> = new Set();
+  private adminReportListeners: Set<(report: any) => void> = new Set();
+  private callSignalListeners: Set<(signal: any) => void> = new Set();
+  private roomPurgedListeners: Map<string, Set<() => void>> = new Map();
   private isConnectedState = false;
   private latestCumulativeVisitorsCount = 15480;
 
@@ -358,11 +364,65 @@ class RealtimeSocketManager {
         break;
       }
 
+      case 'ALL_ROOM_LOCKS': {
+        const locks = (action.locks && typeof action.locks === 'object')
+          ? (action.locks as Record<string, boolean>)
+          : {};
+        this.latestRoomLocks = { ...locks };
+        this.allRoomLockListeners.forEach(cb => cb(this.latestRoomLocks));
+        Object.entries(locks).forEach(([rId, locked]) => {
+          const listeners = this.roomLockListeners.get(rId);
+          if (listeners) {
+            listeners.forEach(cb => cb(Boolean(locked)));
+          }
+        });
+        break;
+      }
+
+      case 'ROOM_LOCK_UPDATED': {
+        const { roomId, isLocked } = action;
+        if (roomId) {
+          const nextLocked = Boolean(isLocked);
+          if (nextLocked) {
+            this.latestRoomLocks[roomId] = true;
+          } else {
+            delete this.latestRoomLocks[roomId];
+          }
+          this.allRoomLockListeners.forEach(cb => cb({ ...this.latestRoomLocks }));
+          const listeners = this.roomLockListeners.get(roomId);
+          if (listeners) {
+            listeners.forEach(cb => cb(nextLocked));
+          }
+        }
+        break;
+      }
+
       case 'CUMULATIVE_VISITORS_UPDATE': {
         const count = Number(action.count);
         if (!isNaN(count) && count >= 15480) {
           this.latestCumulativeVisitorsCount = Math.max(this.latestCumulativeVisitorsCount, count);
           this.cumulativeVisitorsListeners.forEach(cb => cb(this.latestCumulativeVisitorsCount));
+        }
+        break;
+      }
+
+      case 'ADMIN_REPORT_RECEIVED': {
+        if (action.report) {
+          this.adminReportListeners.forEach(cb => cb(action.report));
+        }
+        break;
+      }
+
+      case 'CALL_SIGNAL': {
+        if (action.signal) {
+          this.callSignalListeners.forEach(cb => cb(action.signal));
+        }
+        break;
+      }
+
+      case 'ROOM_PURGED': {
+        if (action.roomId) {
+          this.roomPurgedListeners.get(action.roomId)?.forEach(cb => cb());
         }
         break;
       }
@@ -449,6 +509,16 @@ class RealtimeSocketManager {
     this.send('UPDATE_ROOM_BACKGROUND', { roomId, backgroundTheme: normalized });
   }
 
+  updateRoomLock(roomId: string, isLocked: boolean) {
+    const nextLocked = Boolean(isLocked);
+    if (nextLocked) {
+      this.latestRoomLocks[roomId] = true;
+    } else {
+      delete this.latestRoomLocks[roomId];
+    }
+    this.send('UPDATE_ROOM_LOCK', { roomId, isLocked: nextLocked });
+  }
+
   creditInstaPayCoins(userId: string, coinsToAdd: number, order: any) {
     this.send('INSTAPAY_CREDIT_COINS', { userId, coinsToAdd, order });
   }
@@ -491,6 +561,38 @@ class RealtimeSocketManager {
     }
     return () => {
       this.cumulativeVisitorsListeners.delete(callback);
+    };
+  }
+
+  subscribeToAdminReports(callback: (report: any) => void): () => void {
+    this.adminReportListeners.add(callback);
+    return () => {
+      this.adminReportListeners.delete(callback);
+    };
+  }
+
+  sendCallSignal(targetUserId: string, signal: any) {
+    this.send('CALL_SIGNAL', { targetUserId, signal });
+  }
+
+  subscribeToCallSignals(callback: (signal: any) => void): () => void {
+    this.callSignalListeners.add(callback);
+    return () => {
+      this.callSignalListeners.delete(callback);
+    };
+  }
+
+  sendClearRoomMessages(roomId: string) {
+    this.send('CLEAR_ROOM_MESSAGES', { roomId });
+  }
+
+  subscribeToRoomPurged(roomId: string, callback: () => void): () => void {
+    if (!this.roomPurgedListeners.has(roomId)) {
+      this.roomPurgedListeners.set(roomId, new Set());
+    }
+    this.roomPurgedListeners.get(roomId)!.add(callback);
+    return () => {
+      this.roomPurgedListeners.get(roomId)?.delete(callback);
     };
   }
 
@@ -698,6 +800,29 @@ class RealtimeSocketManager {
     }
     return () => {
       this.allRoomBackgroundListeners.delete(callback);
+    };
+  }
+
+  subscribeToRoomLock(roomId: string, callback: (isLocked: boolean) => void): () => void {
+    if (!this.roomLockListeners.has(roomId)) {
+      this.roomLockListeners.set(roomId, new Set());
+    }
+    this.roomLockListeners.get(roomId)!.add(callback);
+    if (Object.prototype.hasOwnProperty.call(this.latestRoomLocks, roomId)) {
+      callback(Boolean(this.latestRoomLocks[roomId]));
+    }
+    return () => {
+      this.roomLockListeners.get(roomId)?.delete(callback);
+    };
+  }
+
+  subscribeToAllRoomLocks(callback: (locks: Record<string, boolean>) => void): () => void {
+    this.allRoomLockListeners.add(callback);
+    if (Object.keys(this.latestRoomLocks).length > 0) {
+      callback({ ...this.latestRoomLocks });
+    }
+    return () => {
+      this.allRoomLockListeners.delete(callback);
     };
   }
 }

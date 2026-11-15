@@ -10,7 +10,8 @@ import {
   Camera,
   ShieldCheck,
   LogOut,
-  MoreVertical
+  MoreVertical,
+  ShoppingBag
 } from 'lucide-react';
 import { User, UnreadSenderSummary } from '../types/chat';
 import { isUserAdminOrOwner } from '../data/seedData';
@@ -120,8 +121,8 @@ export const Header: React.FC<HeaderProps> = ({
   };
 
   return (
-    <header className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-slate-200/90 px-2.5 sm:px-5 py-2 pt-[calc(env(safe-area-inset-top,0px)+0.5rem)] shadow-sm">
-      <div className="max-w-7xl mx-auto flex items-center justify-between gap-2">
+    <header dir="rtl" className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-slate-200/90 px-2 sm:px-5 py-2 pt-[calc(env(safe-area-inset-top,0px)+0.5rem)] shadow-sm">
+      <div className="max-w-7xl mx-auto flex items-center justify-between gap-1.5 sm:gap-2">
         
         {/* Hidden File Input for Direct Avatar Upload */}
         <input 
@@ -133,13 +134,13 @@ export const Header: React.FC<HeaderProps> = ({
         />
 
         {/* Primary Header Row: Profile + Desktop Brand/Pills + Symmetrical Icon Toolbar */}
-        <div className="flex items-center justify-between gap-2 min-w-0 md:flex-1">
+        <div className="flex items-center justify-between gap-1.5 sm:gap-2 min-w-0 w-full flex-1">
           
           {/* Right Side (in RTL): Integrated Profile Card + Brand + Desktop Economy Pills */}
           <div className="flex items-center gap-1.5 sm:gap-2 min-w-0 flex-1 md:flex-initial">
             
             {/* Integrated User Profile Card */}
-            <div className="flex items-center gap-2 p-1 pl-2.5 rounded-2xl bg-slate-50 hover:bg-slate-100/80 border border-slate-200 transition min-w-0 max-w-full sm:max-w-[240px] md:max-w-none shrink">
+            <div className="flex items-center gap-1.5 sm:gap-2 p-1 pl-2 sm:pl-2.5 rounded-2xl bg-slate-50 hover:bg-slate-100/80 border border-slate-200 transition min-w-0 max-w-full sm:max-w-[240px] md:max-w-none shrink">
               {/* Avatar Wrapper with Self-Contained Status Dot & Quick Camera Trigger */}
               <div className="relative shrink-0">
                 <button
@@ -287,8 +288,8 @@ export const Header: React.FC<HeaderProps> = ({
 
           </div>
 
-          {/* Left Side (in RTL): Symmetrical Action Icons Toolbar */}
-          <div className="flex items-center gap-1.5 shrink-0">
+          {/* Left Side (in RTL): Symmetrical Action Icons Toolbar + Store + Far-Left Menu */}
+          <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
 
             {/* Incoming Messages Side Drawer Trigger + Unread Badge */}
             <button
@@ -298,7 +299,7 @@ export const Header: React.FC<HeaderProps> = ({
                 onOpenMessagesTab?.();
               }}
               title="الرسائل الخاصة والإشعارات الواردة"
-              className={`relative w-9 h-9 rounded-xl border flex items-center justify-center transition-all shrink-0 active:scale-95 cursor-pointer ${
+              className={`relative w-8 h-9 sm:w-9 rounded-xl border flex items-center justify-center transition-all shrink-0 active:scale-95 cursor-pointer ${
                 totalUnreadMessagesCount > 0
                   ? 'bg-indigo-50 hover:bg-indigo-100 border-indigo-300 text-indigo-600 shadow-xs'
                   : 'bg-slate-100 hover:bg-slate-200 border-slate-200 text-slate-700'
@@ -317,7 +318,7 @@ export const Header: React.FC<HeaderProps> = ({
               type="button"
               onClick={onOpenFriendRequests}
               title="طلبات الصداقة"
-              className="relative w-9 h-9 rounded-xl bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-600 flex items-center justify-center transition-all shrink-0 active:scale-95 cursor-pointer"
+              className="relative w-8 h-9 sm:w-9 rounded-xl bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-600 flex items-center justify-center transition-all shrink-0 active:scale-95 cursor-pointer"
             >
               <UserPlus className="w-4 h-4" />
               {pendingFriendRequestsCount > 0 && (
@@ -331,7 +332,7 @@ export const Header: React.FC<HeaderProps> = ({
             <button 
               type="button"
               onClick={onOpenOnlineUsers}
-              className="h-8 flex items-center gap-1 px-2 rounded-xl bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-800 text-[11px] font-black active:scale-95 transition-all shrink-0 whitespace-nowrap tabular-nums cursor-pointer shadow-2xs"
+              className="h-9 flex items-center gap-1 px-1.5 sm:px-2 rounded-xl bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-800 text-[11px] font-black active:scale-95 transition-all shrink-0 whitespace-nowrap tabular-nums cursor-pointer shadow-2xs"
               title="المتواجدون حالياً"
             >
               <Users className="w-3 h-3 text-emerald-600 shrink-0" />
@@ -373,15 +374,37 @@ export const Header: React.FC<HeaderProps> = ({
               <Share2 className="w-4 h-4" />
             </button>
 
-            {/* Compact More Options Menu Toggle Button */}
+            {/* Distinctive Store & Coins Recharge Button (1-Tap Direct Access next to Three-Dots Menu) */}
+            <button
+              type="button"
+              onClick={() => {
+                setIsMoreMenuOpen(false);
+                onOpenWallet();
+              }}
+              title="المتجر وشحن الكوينز"
+              aria-label="المتجر وشحن الكوينز"
+              className="relative w-9 h-9 sm:w-auto sm:px-2.5 rounded-xl bg-gradient-to-tr from-amber-500 via-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white border border-amber-400/70 shadow-sm shadow-amber-500/20 flex items-center justify-center gap-1.5 transition-all shrink-0 whitespace-nowrap active:scale-95 cursor-pointer"
+            >
+              <ShoppingBag className="w-4 h-4 shrink-0" />
+              <span className="hidden sm:inline text-xs font-black">المتجر</span>
+              <span
+                className="sm:hidden absolute -top-1 -left-1 text-[9px] leading-none bg-white rounded-full p-0.5 shadow-xs border border-amber-200 pointer-events-none"
+                aria-hidden="true"
+              >
+                🪙
+              </span>
+            </button>
+
+            {/* Far-Left More Options Menu Toggle Button (...) */}
             <div className="relative shrink-0" ref={moreMenuRef}>
               <button
                 type="button"
                 onClick={() => {
                   setIsMoreMenuOpen((prev) => !prev);
                 }}
-                className="w-9 h-9 flex items-center justify-center rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 transition-all active:scale-95 shrink-0 cursor-pointer"
+                className="w-8 h-9 sm:w-9 flex items-center justify-center rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 transition-all active:scale-95 shrink-0 cursor-pointer"
                 title="خيارات إضافية"
+                aria-label="القائمة والخيارات الإضافية"
               >
                 <MoreVertical className="w-4 h-4" />
               </button>

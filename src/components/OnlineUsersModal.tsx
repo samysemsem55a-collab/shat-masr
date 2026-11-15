@@ -90,22 +90,22 @@ export const OnlineUsersModal: React.FC<OnlineUsersModalProps> = ({
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="h-full w-[88vw] max-w-[380px] bg-white border-l border-slate-200 shadow-2xl flex flex-col text-slate-900 animate-drawer-in-right"
+        className="h-[100dvh] w-1/2 w-[50vw] max-w-[420px] min-w-[200px] bg-white border-l border-slate-200 shadow-2xl flex flex-col text-slate-900 animate-drawer-in-right overflow-hidden"
       >
         
         {/* Side Drawer Header */}
-        <div className="p-3.5 pt-[calc(env(safe-area-inset-top,0px)+0.875rem)] bg-gradient-to-l from-teal-600 via-emerald-600 to-cyan-700 text-white border-b border-emerald-500/40 flex items-center justify-between shrink-0">
-          <div className="flex items-center gap-2 min-w-0">
-            <div className="w-8 h-8 rounded-xl bg-white/20 border border-white/30 text-white flex items-center justify-center shrink-0">
-              <Users className="w-4 h-4" />
+        <div className="p-2.5 sm:p-3 pt-[calc(env(safe-area-inset-top,0px)+0.625rem)] bg-gradient-to-l from-teal-600 via-emerald-600 to-cyan-700 text-white border-b border-emerald-500/40 flex items-center justify-between gap-1 shrink-0">
+          <div className="flex items-center gap-1.5 min-w-0">
+            <div className="w-7 h-7 rounded-lg bg-white/20 border border-white/30 text-white flex items-center justify-center shrink-0">
+              <Users className="w-3.5 h-3.5" />
             </div>
             <div className="min-w-0">
-              <h3 className="text-sm font-black text-white flex items-center gap-1.5 truncate">
-                <span className="truncate">{roomTitle ? `المتصلون (${roomTitle})` : 'المتصلون الآن'}</span>
-                <span className="w-2 h-2 rounded-full bg-emerald-300 animate-pulse shrink-0"></span>
+              <h3 className="text-[11px] sm:text-xs font-black text-white flex items-center gap-1 truncate">
+                <span className="truncate">{roomTitle ? `متصلو الغرفة` : 'المتصلون الآن'}</span>
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-300 animate-pulse shrink-0"></span>
               </h3>
-              <p className="text-[10.5px] text-emerald-100 truncate">
-                {filteredUsers.length} متصلين • مرتبين حسب نقاط التقييم ⭐
+              <p className="text-[9.5px] text-emerald-100 truncate">
+                {filteredUsers.length} عضو متصل
               </p>
             </div>
           </div>
@@ -113,205 +113,180 @@ export const OnlineUsersModal: React.FC<OnlineUsersModalProps> = ({
           <button
             type="button"
             onClick={onClose}
-            className="p-1.5 rounded-full text-white/90 hover:text-white bg-white/15 hover:bg-white/25 transition shrink-0"
+            className="p-1.5 rounded-full text-white/90 hover:text-white bg-white/15 hover:bg-white/25 transition shrink-0 cursor-pointer"
             title="إغلاق القائمة الجانبية"
           >
-            <X className="w-4 h-4" />
+            <X className="w-3.5 h-3.5" />
           </button>
         </div>
 
         {/* Tab Switcher */}
         {roomTitle && (
-          <div className="grid grid-cols-2 p-1.5 bg-slate-50 border-b border-slate-200 text-xs font-bold gap-1">
+          <div className="grid grid-cols-2 p-1 bg-slate-50 border-b border-slate-200 text-[10px] font-bold gap-1 shrink-0">
             <button
               onClick={() => setActiveTab('room')}
-              className={`py-1.5 rounded-xl transition-all ${
+              className={`py-1 rounded-lg transition-all truncate px-1 ${
                 activeTab === 'room'
                   ? 'bg-indigo-600 text-white shadow-sm'
                   : 'text-slate-600 hover:text-slate-900'
               }`}
             >
-              في هذه الغرفة ({roomUsers.length || 1})
+              الغرفة ({roomUsers.length || 1})
             </button>
             <button
               onClick={() => setActiveTab('general')}
-              className={`py-1.5 rounded-xl transition-all ${
+              className={`py-1 rounded-lg transition-all truncate px-1 ${
                 activeTab === 'general'
                   ? 'bg-indigo-600 text-white shadow-sm'
                   : 'text-slate-600 hover:text-slate-900'
               }`}
             >
-              جميع المتصلين ({allActiveUsers.length || 1})
+              الكل ({allActiveUsers.length || 1})
             </button>
           </div>
         )}
 
         {/* Search Bar & Role Filter */}
-        <div className="p-2.5 border-b border-slate-200 bg-slate-50/70 space-y-2">
+        <div className="p-2 border-b border-slate-200 bg-slate-50/70 space-y-1.5 shrink-0">
           <div className="relative">
             <input
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="ابحث بالاسم أو الدولة..."
-              className="w-full bg-white border border-slate-200 rounded-xl px-3 py-1.5 pr-8 text-xs text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-indigo-500"
+              placeholder="بحث..."
+              className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1 pr-7 text-[11px] text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-indigo-500"
             />
-            <Search className="w-3.5 h-3.5 text-slate-400 absolute right-2.5 top-1/2 -translate-y-1/2" />
+            <Search className="w-3 h-3 text-slate-400 absolute right-2 top-1/2 -translate-y-1/2" />
           </div>
 
-          {/* Role Filter Chips */}
-          <div className="flex items-center gap-1.5 overflow-x-auto text-[11px] font-bold no-scrollbar py-0.5">
+          <div className="flex items-center gap-1 overflow-x-auto text-[9.5px] font-bold no-scrollbar">
             <button
               onClick={() => setRoleFilter('all')}
-              className={`px-2.5 py-1 rounded-lg transition shrink-0 ${
+              className={`px-2 py-0.5 rounded-md transition shrink-0 ${
                 roleFilter === 'all'
                   ? 'bg-indigo-600 text-white'
-                  : 'bg-white border border-slate-200 text-slate-600 hover:text-slate-900'
+                  : 'bg-white border border-slate-200 text-slate-600'
               }`}
             >
               الكل
             </button>
             <button
               onClick={() => setRoleFilter('diamond')}
-              className={`px-2.5 py-1 rounded-lg transition shrink-0 flex items-center gap-1 ${
+              className={`px-2 py-0.5 rounded-md transition shrink-0 ${
                 roleFilter === 'diamond'
                   ? 'bg-cyan-600 text-white'
-                  : 'bg-white border border-slate-200 text-cyan-700 hover:bg-cyan-50'
+                  : 'bg-white border border-slate-200 text-cyan-700'
               }`}
             >
-              <span>💎</span> VIP ألماسي
+              💎 ألماسي
             </button>
             <button
               onClick={() => setRoleFilter('gold')}
-              className={`px-2.5 py-1 rounded-lg transition shrink-0 flex items-center gap-1 ${
+              className={`px-2 py-0.5 rounded-md transition shrink-0 ${
                 roleFilter === 'gold'
                   ? 'bg-amber-500 text-white'
-                  : 'bg-white border border-slate-200 text-amber-700 hover:bg-amber-50'
+                  : 'bg-white border border-slate-200 text-amber-700'
               }`}
             >
-              <span>👑</span> VIP ذهبي
+              👑 ذهبي
             </button>
             <button
               onClick={() => setRoleFilter('members')}
-              className={`px-2.5 py-1 rounded-lg transition shrink-0 ${
+              className={`px-2 py-0.5 rounded-md transition shrink-0 ${
                 roleFilter === 'members'
                   ? 'bg-slate-800 text-white'
-                  : 'bg-white border border-slate-200 text-slate-600 hover:text-slate-900'
+                  : 'bg-white border border-slate-200 text-slate-600'
               }`}
             >
-              الأعضاء
+              أعضاء
             </button>
           </div>
         </div>
 
-        {/* Users List Sorted by Rating */}
-        <div className="p-2.5 space-y-1.5 overflow-y-auto flex-1">
+        {/* Compact Users List Fitted Cleanly for 50% Drawer Width */}
+        <div className="p-1.5 sm:p-2 space-y-1 overflow-y-auto flex-1">
           {filteredUsers.map((user, idx) => {
             const isMe = user.id === currentUser.id;
             const hasInvited = invitedUserIds.has(user.id);
-            const userBadges = user.badges || ['عضو نشط'];
 
             return (
               <div
                 key={user.id || idx}
                 onClick={() => onSelectUserForProfile(user)}
-                className="p-2 sm:p-2.5 rounded-2xl bg-white border border-slate-200 hover:border-indigo-300 flex items-center justify-between gap-2 cursor-pointer transition-all hover:bg-slate-50 shadow-sm"
+                className="p-1.5 sm:p-2 rounded-xl bg-white border border-slate-200 hover:border-indigo-300 flex items-center justify-between gap-1.5 cursor-pointer transition-all hover:bg-slate-50 shadow-2xs"
               >
-                {/* Left Side: Actions */}
-                <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
-                  {!isMe && (
-                    <>
-                      {/* Invite to Mic */}
-                      {roomTitle && (
-                        <button
-                          onClick={() => handleInvite(user)}
-                          disabled={hasInvited}
-                          className={`px-2 py-1 rounded-xl text-[10px] font-bold flex items-center gap-0.5 shadow-sm transition-all ${
-                            hasInvited
-                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                              : 'bg-indigo-50 hover:bg-indigo-600 border border-indigo-200 text-indigo-700 hover:text-white'
-                          }`}
-                          title="دعوة للصعود إلى المايك"
-                        >
-                          {hasInvited ? <Check className="w-3 h-3" /> : <Mic className="w-3 h-3" />}
-                          <span>{hasInvited ? 'تمت الدعوة' : 'دعوة للمايك'}</span>
-                        </button>
-                      )}
+                {/* Right Side (in RTL): Rank + Compact Avatar + Name */}
+                <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                  <span className="text-[9.5px] font-black text-slate-400 w-4 text-center shrink-0">
+                    #{idx + 1}
+                  </span>
 
-                      {/* Direct Message */}
-                      <button
-                        onClick={() => {
-                          onClose();
-                          onOpenPrivateChatWith(user);
-                        }}
-                        className="p-1.5 rounded-xl bg-slate-100 hover:bg-indigo-600 text-slate-600 hover:text-white transition-colors"
-                        title="محادثة خاصة"
-                      >
-                        <MessageCircle className="w-3.5 h-3.5" />
-                      </button>
-                    </>
-                  )}
-
-                  {isMe && (
-                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 font-bold">
-                      أنت
-                    </span>
-                  )}
-                </div>
-
-                {/* Right Side (in RTL): Avatar, Name, VIP, Rating Points, Badges */}
-                <div className="flex items-center gap-2 min-w-0">
-                  <div className="text-right min-w-0">
-                    <div className="flex items-center gap-1 justify-end">
-                      <span className="text-xs font-black text-slate-900 truncate hover:underline">
-                        {user.name}
-                      </span>
-                      <span className="text-sm shrink-0">{user.countryFlag || '🇪🇬'}</span>
-                    </div>
-
-                    <div className="flex items-center gap-1.5 justify-end text-[10px] text-slate-500 mt-0.5">
-                      {/* Rating Points Badge */}
-                      <span className="flex items-center gap-0.5 text-amber-700 font-bold bg-amber-50 border border-amber-200 px-1 rounded">
-                        <Star className="w-2.5 h-2.5 fill-amber-400 text-amber-500" />
-                        <span>{user.ratingPoints || 0} تقييم</span>
-                      </span>
-
-                      {/* VIP Badge */}
-                      {user.vipBadge && (
-                        <span className="text-amber-700 font-bold">
-                          {user.vipBadge}
-                        </span>
-                      )}
-                    </div>
-
-                    {/* Earned Badges chips */}
-                    <div className="flex items-center gap-1 justify-end mt-0.5">
-                      {userBadges.slice(0, 2).map((b, bI) => (
-                        <span key={bI} className="text-[9px] px-1.5 rounded bg-slate-100 text-slate-600 border border-slate-200">
-                          {b}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Avatar */}
                   <div className="relative shrink-0">
-                    <div className="w-10 h-10 rounded-full overflow-hidden border-2 border-slate-200 bg-slate-100 flex items-center justify-center font-bold text-xs text-slate-700">
+                    <div className="w-7 h-7 rounded-full overflow-hidden border border-slate-200 bg-slate-100 flex items-center justify-center font-bold text-[10px] text-slate-700">
                       {user.avatar ? (
                         <img src={user.avatar} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                       ) : (
                         <span>{user.name.charAt(0)}</span>
                       )}
                     </div>
-                    <span className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-emerald-500 border-2 border-white"></span>
+                    <span className="absolute -bottom-0.5 -right-0.5 w-2 h-2 rounded-full bg-emerald-500 border border-white"></span>
                   </div>
 
-                  {/* Rank Number */}
-                  <span className="text-xs font-black text-slate-400 w-4 text-center">
-                    #{idx + 1}
-                  </span>
+                  <div className="text-right min-w-0 flex-1">
+                    <div className="flex items-center gap-1 min-w-0">
+                      <span className="text-[11px] font-black text-slate-900 truncate">
+                        {user.name}
+                      </span>
+                      <span className="text-[10px] shrink-0">{user.countryFlag || '🇪🇬'}</span>
+                    </div>
+                    <div className="flex items-center gap-1 text-[9px] text-slate-500 truncate">
+                      <span className="text-amber-600 font-bold flex items-center gap-0.5 shrink-0">
+                        <Star className="w-2.5 h-2.5 fill-amber-400 text-amber-500" />
+                        {user.ratingPoints || 0}
+                      </span>
+                      {user.vipBadge && (
+                        <span className="text-indigo-600 font-bold truncate">• {user.vipBadge}</span>
+                      )}
+                    </div>
+                  </div>
                 </div>
 
+                {/* Left Side: Compact Actions */}
+                <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
+                  {!isMe ? (
+                    <>
+                      {roomTitle && (
+                        <button
+                          onClick={() => handleInvite(user)}
+                          disabled={hasInvited}
+                          className={`p-1.5 rounded-lg text-[10px] font-bold transition-all cursor-pointer ${
+                            hasInvited
+                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                              : 'bg-indigo-50 hover:bg-indigo-600 border border-indigo-200 text-indigo-700 hover:text-white'
+                          }`}
+                          title="دعوة للمايك"
+                        >
+                          {hasInvited ? <Check className="w-3 h-3" /> : <Mic className="w-3 h-3" />}
+                        </button>
+                      )}
+
+                      <button
+                        onClick={() => {
+                          onClose();
+                          onOpenPrivateChatWith(user);
+                        }}
+                        className="p-1.5 rounded-lg bg-slate-100 hover:bg-indigo-600 text-slate-600 hover:text-white transition-colors cursor-pointer"
+                        title="محادثة خاصة"
+                      >
+                        <MessageCircle className="w-3.5 h-3.5" />
+                      </button>
+                    </>
+                  ) : (
+                    <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 font-bold">
+                      أنت
+                    </span>
+                  )}
+                </div>
               </div>
             );
           })}

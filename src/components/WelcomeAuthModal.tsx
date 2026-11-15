@@ -65,8 +65,8 @@ export const WelcomeAuthModal: React.FC<WelcomeAuthModalProps> = ({
     localStorage.setItem('arab_chat_userId', guestId);
 
     const defaultAvatar = guestGender === 'female'
-      ? 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=150&auto=format&fit=crop&q=80'
-      : 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80';
+      ? `https://api.dicebear.com/9.x/avataaars/svg?seed=fem_${encodeURIComponent(guestId)}`
+      : `https://api.dicebear.com/9.x/avataaars/svg?seed=male_${encodeURIComponent(guestId)}`;
 
     const guestUser: User = {
       ...currentUser,

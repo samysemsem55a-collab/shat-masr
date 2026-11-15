@@ -1,10 +1,10 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { motion } from 'framer-motion';
 import { 
   MessageCircle, 
   Search, 
   Send, 
   Mic, 
-  MicOff,
   ArrowRight, 
   ArrowUp,
   Check, 
@@ -25,7 +25,11 @@ import {
   Palette,
   Crown,
   Coins,
-  Square
+  Image as ImageIcon,
+  Smile,
+  Sticker,
+  Loader2,
+  Maximize2
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { User, Message, Friend, GiftItem, UnreadSenderSummary } from '../types/chat';
@@ -36,7 +40,8 @@ import {
   deleteDirectMessage,
   subscribeToFriendsList,
   subscribeToUserRecentDirectChats,
-  markDirectMessagesAsRead
+  markDirectMessagesAsRead,
+  uploadPrivateChatMedia
 } from '../services/firebase';
 import { realtimeSocket } from '../services/realtimeSocket';
 import { isGuestUser } from '../data/seedData';
@@ -44,6 +49,8 @@ import { FriendsList } from './FriendsList';
 import { LuxuryGiftModal } from './LuxuryGiftModal';
 import { CallModal } from './CallModal';
 import { CoinsTransferModal } from './CoinsTransferModal';
+import { ChatWallpapersModal } from './ChatWallpapersModal';
+import { CURATED_EMOJIS, STICKERS_CATALOG, StickerItem } from '../data/stickers';
 import { toast } from 'sonner';
 import { getWallpaperStyleById } from '../data/wallpapers';
 
@@ -105,13 +112,24 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
     onChatActiveChange?.(Boolean(activeContact));
   }, [activeContact, onChatActiveChange]);
 
-  // Modals: Calls, Coins Transfer & Luxury Virtual Gifts
+  // Modals: Calls, Coins Transfer, Wallpapers & Luxury Virtual Gifts
   const [isGiftModalOpen, setIsGiftModalOpen] = useState(false);
+  const [isWallpapersModalOpen, setIsWallpapersModalOpen] = useState(false);
   const [callModalState, setCallModalState] = useState<{ isOpen: boolean; callType: 'audio' | 'video' }>({
     isOpen: false,
     callType: 'audio'
   });
   const [isCoinsTransferOpen, setIsCoinsTransferOpen] = useState(false);
+
+  // Emoji & Stickers Picker + Media Upload + Lightbox States
+  const [isEmojiStickerOpen, setIsEmojiStickerOpen] = useState(false);
+  const [emojiStickerTab, setEmojiStickerTab] = useState<'emojis' | 'stickers'>('emojis');
+  const [isUploadingMedia, setIsUploadingMedia] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [lightboxImageUrl, setLightboxImageUrl] = useState<string | null>(null);
+  const mediaFileInputRef = useRef<HTMLInputElement>(null);
+  const chatInputRef = useRef<HTMLInputElement>(null);
+  const emojiStickerPanelRef = useRef<HTMLDivElement>(null);
 
   // Real Voice Recording States & Refs
   const [isRecordingVoice, setIsRecordingVoice] = useState(false);
@@ -307,6 +325,126 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, activeContact, isPeerTyping]);
+
+  // Close Emoji/Sticker drawer when clicking outside
+  useEffect(() => {
+    if (!isEmojiStickerOpen) return;
+    const handleOutside = (e: MouseEvent) => {
+      if (emojiStickerPanelRef.current && !emojiStickerPanelRef.current.contains(e.target as Node)) {
+        setIsEmojiStickerOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleOutside);
+    return () => document.removeEventListener('mousedown', handleOutside);
+  }, [isEmojiStickerOpen]);
+
+  // Cursor-aware Emoji Insertion
+  const handleInsertEmojiAtCursor = (emoji: string) => {
+    const input = chatInputRef.current;
+    if (input) {
+      const start = input.selectionStart ?? inputText.length;
+      const end = input.selectionEnd ?? inputText.length;
+      const updated = inputText.slice(0, start) + emoji + inputText.slice(end);
+      handleInputChange(updated);
+      requestAnimationFrame(() => {
+        input.focus();
+        const nextPos = start + emoji.length;
+        try {
+          input.setSelectionRange(nextPos, nextPos);
+        } catch {}
+      });
+    } else {
+      handleInputChange(inputText + emoji);
+    }
+  };
+
+  // Send Sticker directly
+  const handleSendSticker = async (sticker: StickerItem) => {
+    if (!activeContact) return;
+    sounds.playMessageSent();
+    setIsEmojiStickerOpen(false);
+    const newMsg: Partial<Message> & { recipientName?: string; recipientAvatar?: string; recipientSessionId?: string } = {
+      senderId: currentUser.id,
+      senderName: currentUser.name,
+      senderAvatar: currentUser.avatar,
+      senderRole: currentUser.role,
+      senderVipBadge: currentUser.vipBadge,
+      recipientId: activeContact.id,
+      recipientName: activeContact.name,
+      recipientAvatar: activeContact.avatar,
+      recipientSessionId: getActivePeerSessionId(),
+      type: 'sticker',
+      content: `${sticker.emoji} ${sticker.label}`,
+      text: `${sticker.emoji} ${sticker.label}`,
+      stickerId: sticker.id,
+      stickerEmoji: sticker.emoji,
+      stickerLabel: sticker.label,
+      stickerAnimation: sticker.category === 'animated' ? sticker.animationClass : undefined,
+      timestamp: Date.now(),
+      status: 'sent'
+    };
+    try {
+      const sent = await sendDirectMessage(currentUser.id, activeContact.id, newMsg);
+      setMessages(prev => (prev.some(m => m.id === sent.id) ? prev : [...prev, sent]));
+    } catch (err) {
+      console.warn('Sticker send error:', err);
+    }
+  };
+
+  // Media file picker & upload handler (Images & Videos)
+  const handleMediaFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file || !activeContact) return;
+
+    const isVideo = file.type.startsWith('video/');
+    const isImage = file.type.startsWith('image/');
+    if (!isImage && !isVideo) {
+      toast.error('يرجى اختيار صورة أو مقطع فيديو صالح.');
+      return;
+    }
+    if (file.size > 15 * 1024 * 1024) {
+      toast.error('حجم الملف كبير جداً! الحد الأقصى المسموح هو 15 ميجابايت.');
+      return;
+    }
+
+    const convId = [currentUser.id, activeContact.id].sort().join('_');
+    setIsUploadingMedia(true);
+    setUploadProgress(5);
+    try {
+      const { url, mediaType } = await uploadPrivateChatMedia(file, convId, (pct) => {
+        setUploadProgress(pct);
+      });
+      sounds.playMessageSent();
+      const newMsg: Partial<Message> & { recipientName?: string; recipientAvatar?: string; recipientSessionId?: string } = {
+        senderId: currentUser.id,
+        senderName: currentUser.name,
+        senderAvatar: currentUser.avatar,
+        senderRole: currentUser.role,
+        senderVipBadge: currentUser.vipBadge,
+        recipientId: activeContact.id,
+        recipientName: activeContact.name,
+        recipientAvatar: activeContact.avatar,
+        recipientSessionId: getActivePeerSessionId(),
+        type: mediaType,
+        mediaUrl: url,
+        mediaType,
+        imageUrl: mediaType === 'image' ? url : undefined,
+        content: mediaType === 'video' ? '🎥 مقطع فيديو' : '🖼️ صورة مرفقة',
+        text: mediaType === 'video' ? '🎥 مقطع فيديو' : '🖼️ صورة مرفقة',
+        timestamp: Date.now(),
+        status: 'sent'
+      };
+      const sent = await sendDirectMessage(currentUser.id, activeContact.id, newMsg);
+      setMessages(prev => (prev.some(m => m.id === sent.id) ? prev : [...prev, sent]));
+      toast.success(mediaType === 'video' ? 'تم إرسال الفيديو بنجاح 🎬' : 'تم إرسال الصورة بنجاح 🖼️');
+    } catch (err: any) {
+      toast.error(err?.message || 'حدث خطأ أثناء رفع الوسائط.');
+    } finally {
+      setIsUploadingMedia(false);
+      setUploadProgress(0);
+    }
+  };
 
   const handleSendMessage = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -510,11 +648,11 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
   };
 
   return (
-    <div className={isDrawer ? "h-full w-full flex flex-col bg-white overflow-hidden" : "px-2 sm:px-3 max-w-4xl mx-auto h-[calc(100dvh-54px-50px)] sm:h-[calc(100dvh-56px-52px)] flex flex-col"}>
+    <div className={isDrawer ? "h-full w-full max-w-full flex flex-col bg-white overflow-x-hidden overflow-y-hidden" : "w-full sm:px-3 max-w-4xl mx-auto h-[calc(100dvh-54px-50px)] sm:h-[calc(100dvh-56px-52px)] flex flex-col overflow-x-hidden"}>
 
       {/* If No Contact Selected: Show Inbox & Friends Navigation (Modern Light Theme) */}
       {!activeContact ? (
-        <div className={isDrawer ? "flex-1 flex flex-col overflow-hidden" : "space-y-3 flex-1 flex flex-col overflow-hidden pt-2"}>
+        <div className={isDrawer ? "flex-1 flex flex-col overflow-hidden" : "space-y-3 flex-1 flex flex-col overflow-hidden pt-2 px-2.5 sm:px-0"}>
           
           {/* Header */}
           {isDrawer ? (
@@ -842,16 +980,25 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
           </div>
         </div>
       ) : (
-        /* If Contact Selected: Show Active 1-on-1 Chat (PERMANENT LOCKED WHITE GOLD DOODLE THEME) */
+        /* If Contact Selected: Full-bleed edge-to-edge 1-on-1 Chat on Mobile + Natural/Custom Wallpaper Support */
         <div 
-          style={getWallpaperStyleById('wp_white_gold_doodle')}
+          style={getWallpaperStyleById(currentUser.chatWallpaper || 'wp_white_gold_doodle')}
           className={isDrawer
-            ? "h-full w-full flex flex-col bg-[#fafaf9] overflow-hidden"
-            : "fixed inset-0 z-50 sm:relative sm:inset-auto sm:h-full flex flex-col bg-[#fafaf9] border-0 sm:border border-slate-200/80 rounded-none sm:rounded-3xl overflow-hidden shadow-2xl"
+            ? "h-full w-full max-w-full flex flex-col bg-[#fafaf9] overflow-x-hidden overflow-y-hidden"
+            : "fixed inset-0 z-50 w-screen max-w-full h-[100dvh] sm:relative sm:inset-auto sm:w-full sm:h-full flex flex-col bg-[#fafaf9] border-0 sm:border border-slate-200/80 rounded-none sm:rounded-3xl overflow-x-hidden overflow-y-hidden shadow-2xl"
           }
         >
-          {/* 1. Modern Light Glass Header */}
-          <div className="relative z-10 px-2.5 sm:px-3 py-2 pt-[calc(env(safe-area-inset-top,0px)+0.5rem)] sm:py-2.5 bg-white/95 backdrop-blur-md border-b border-amber-200/70 shadow-xs flex items-center justify-between gap-2 shrink-0">
+          {/* Hidden Media File Input (Images & Videos) */}
+          <input
+            ref={mediaFileInputRef}
+            type="file"
+            accept="image/*,video/*"
+            onChange={handleMediaFileSelected}
+            className="hidden"
+          />
+
+          {/* 1. Modern Light Glass Header (Full-Width Mobile Safe) */}
+          <div className="relative z-10 w-full px-2 sm:px-3 py-2 pt-[calc(env(safe-area-inset-top,0px)+0.5rem)] sm:py-2.5 bg-white/95 backdrop-blur-md border-b border-amber-200/70 shadow-xs flex items-center justify-between gap-1.5 shrink-0">
             <div className="flex items-center gap-2 min-w-0 flex-1">
               <button
                 type="button"
@@ -859,14 +1006,14 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                   setActiveContact(null);
                   if (onClearTargetUser) onClearTargetUser();
                 }}
-                className="w-9 h-9 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 flex items-center justify-center shrink-0 active:scale-95 border border-slate-200/80 transition"
+                className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 flex items-center justify-center shrink-0 active:scale-95 border border-slate-200/80 transition"
                 title="الرجوع إلى القائمة"
               >
                 <ArrowRight className="w-4 h-4" />
               </button>
 
               <div className="relative shrink-0">
-                <div className="w-9 h-9 rounded-full overflow-hidden border-2 border-amber-400 bg-slate-100 flex items-center justify-center font-bold text-xs text-slate-800 shadow-xs">
+                <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-full overflow-hidden border-2 border-amber-400 bg-slate-100 flex items-center justify-center font-bold text-xs text-slate-800 shadow-xs">
                   {activeContact.avatar ? (
                     <img src={activeContact.avatar} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                   ) : (
@@ -905,38 +1052,48 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
               </div>
             </div>
 
-            {/* Header Left Actions (RTL): Coins Transfer, Gift, Phone, Video */}
-            <div className="flex items-center gap-1.5 shrink-0">
+            {/* Header Left Actions (RTL): Natural Wallpaper, Coins Transfer, Gift, Audio Call */}
+            <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
+              {/* Custom Natural & Shop Wallpaper Picker Button */}
+              <button
+                type="button"
+                onClick={() => setIsWallpapersModalOpen(true)}
+                className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 flex items-center justify-center active:scale-95 transition shadow-xs shrink-0"
+                title="تخصيص خلفية الشات والصور الطبيعية"
+              >
+                <Palette className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-emerald-600" />
+              </button>
+
               {/* Coins Transfer Button */}
               <button
                 type="button"
                 onClick={() => setIsCoinsTransferOpen(true)}
-                className="w-9 h-9 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-300/80 flex items-center justify-center active:scale-95 transition shadow-xs shrink-0"
+                className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-300/80 flex items-center justify-center active:scale-95 transition shadow-xs shrink-0"
                 title="تحويل كوينز فوري"
               >
-                <Coins className="w-4 h-4 text-amber-600" />
+                <Coins className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-600" />
               </button>
 
               {/* Luxury Virtual Gift Button */}
               <button
                 type="button"
                 onClick={() => setIsGiftModalOpen(true)}
-                className="w-9 h-9 sm:w-auto sm:px-2.5 rounded-xl bg-gradient-to-r from-pink-500 to-rose-500 hover:from-pink-600 hover:to-rose-600 text-white font-black text-xs flex items-center justify-center gap-1 shadow-sm active:scale-95 transition shrink-0 whitespace-nowrap"
+                className="w-8 h-8 sm:w-auto sm:px-2.5 rounded-xl bg-gradient-to-r from-pink-500 to-rose-500 hover:from-pink-600 hover:to-rose-600 text-white font-black text-xs flex items-center justify-center gap-1 shadow-sm active:scale-95 transition shrink-0 whitespace-nowrap"
                 title="إرسال هدية فاخرة"
               >
                 <Gift className="w-3.5 h-3.5 shrink-0" />
                 <span className="hidden sm:inline">هدية 🎁</span>
               </button>
 
-              {/* Calls strictly available to registered accounts; completely hidden for guests */}
+              {/* Calls strictly available to registered accounts */}
               {!isGuest && (
                 <>
                   {/* HD Audio Call Button */}
                   <button 
                     type="button"
                     onClick={() => setCallModalState({ isOpen: true, callType: 'audio' })}
-                    className="w-9 h-9 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 hover:text-emerald-600 border border-slate-200/80 flex items-center justify-center transition active:scale-95 shrink-0"
-                    title="اتصال صوتي HD"
+                    className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 flex items-center justify-center transition active:scale-95 shrink-0"
+                    title="اتصال صوتي مباشر"
                   >
                     <Phone className="w-3.5 h-3.5" />
                   </button>
@@ -945,7 +1102,7 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                   <button 
                     type="button"
                     onClick={() => setCallModalState({ isOpen: true, callType: 'video' })}
-                    className="w-9 h-9 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 hover:text-indigo-600 border border-slate-200/80 flex items-center justify-center transition active:scale-95 shrink-0"
+                    className="hidden sm:flex w-9 h-9 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 hover:text-indigo-600 border border-slate-200/80 items-center justify-center transition active:scale-95 shrink-0"
                     title="مكالمة فيديو مباشرة"
                   >
                     <Video className="w-3.5 h-3.5" />
@@ -1029,8 +1186,11 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                 }
 
                 return (
-                  <div
+                  <motion.div
                     key={`${msg.id || 'pm'}_${idx}`}
+                    initial={{ opacity: 0, y: 8, scale: 0.98 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    transition={{ duration: 0.18, ease: 'easeOut' }}
                     className={`flex ${isMe ? 'justify-start' : 'justify-end'}`}
                   >
                   <div 
@@ -1063,13 +1223,55 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                       setActiveContextMenu({ msg, x: e.clientX, y: e.clientY });
                     }}
                     className={`max-w-[85%] sm:max-w-[75%] rounded-2xl px-3.5 py-2.5 text-xs sm:text-sm space-y-1 shadow-md cursor-pointer select-text transition-transform active:scale-[0.99] ${
-                    isMe
+                    msg.type === 'sticker'
+                      ? 'bg-white/95 text-slate-900 border-2 border-indigo-200/80 shadow-md'
+                      : isMe
                       ? 'bg-gradient-to-r from-indigo-600 via-purple-600 to-indigo-700 text-white rounded-tr-none shadow-indigo-900/30'
                       : 'bg-white/95 text-slate-900 border-2 border-amber-300/80 rounded-tl-none shadow-amber-900/10'
                   }`}
                     title="اضغط مطولاً لخيارات الرسالة (حذف / نسخ)"
                   >
-                    {msg.type === 'coins_transfer' ? (
+                    {msg.type === 'sticker' ? (
+                      <div className="flex flex-col items-center justify-center px-3 py-1.5 text-center space-y-1">
+                        <span className={`text-5xl select-none inline-block ${msg.stickerAnimation || ''}`}>
+                          {msg.stickerEmoji || '✨'}
+                        </span>
+                        {msg.stickerLabel && (
+                          <span className="text-[11px] font-black text-indigo-700 bg-indigo-50 px-2.5 py-0.5 rounded-full border border-indigo-200">
+                            {msg.stickerLabel}
+                          </span>
+                        )}
+                      </div>
+                    ) : msg.type === 'image' && (msg.mediaUrl || msg.imageUrl) ? (
+                      <div className="space-y-1.5">
+                        <div
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setLightboxImageUrl(msg.mediaUrl || msg.imageUrl || null);
+                          }}
+                          className="relative rounded-xl overflow-hidden border border-white/25 bg-black/10 group cursor-zoom-in"
+                        >
+                          <img
+                            src={msg.mediaUrl || msg.imageUrl}
+                            alt="صورة مرسلة"
+                            className="max-h-60 w-full object-cover rounded-xl"
+                            loading="lazy"
+                          />
+                          <span className="absolute bottom-1.5 left-1.5 p-1 rounded-lg bg-slate-900/60 text-white opacity-80 group-hover:opacity-100">
+                            <Maximize2 className="w-3.5 h-3.5" />
+                          </span>
+                        </div>
+                      </div>
+                    ) : msg.type === 'video' && msg.mediaUrl ? (
+                      <div className="space-y-1">
+                        <video
+                          src={msg.mediaUrl}
+                          controls
+                          playsInline
+                          className="max-h-64 w-full rounded-xl bg-black border border-white/20"
+                        />
+                      </div>
+                    ) : msg.type === 'coins_transfer' ? (
                       <div className="flex items-center gap-2.5 p-2 rounded-xl bg-amber-500/15 border border-amber-400/50 text-amber-900 font-bold text-xs">
                         <span className="text-2xl shrink-0">💰</span>
                         <div className="text-right">
@@ -1121,7 +1323,7 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                       <p className={`leading-relaxed whitespace-pre-wrap font-medium ${isMe ? 'text-white' : 'text-slate-900'}`}>{msg.content || msg.text}</p>
                     )}
 
-                    <div className={`flex items-center justify-end gap-1 text-[10px] ${isMe ? 'text-white/85' : 'text-slate-500'}`}>
+                    <div className={`flex items-center justify-end gap-1 text-[10px] ${msg.type === 'sticker' ? 'text-slate-500' : isMe ? 'text-white/85' : 'text-slate-500'}`}>
                       <span>{new Date(msg.timestamp).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })}</span>
                       {isMe && (
                         <span className="inline-flex items-center gap-0.5">
@@ -1137,7 +1339,7 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                       )}
                     </div>
                   </div>
-                </div>
+                </motion.div>
               );
             }))}
             
@@ -1163,8 +1365,85 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
             <div ref={messagesEndRef} />
           </div>
 
-          {/* Bottom Chat Bar: Modern Light Theme - GUARANTEED fully visible and accessible */}
-          <div className="p-2.5 sm:p-3 bg-white/98 backdrop-blur-md border-t border-slate-200/90 flex items-center gap-1.5 sm:gap-2 shrink-0 pb-[calc(env(safe-area-inset-bottom,0px)+12px)] sm:pb-3 shadow-[0_-4px_20px_rgba(0,0,0,0.06)]">
+          {/* Media Upload Progress Strip */}
+          {isUploadingMedia && (
+            <div className="w-full px-3 py-1.5 bg-indigo-50 border-t border-indigo-200 flex items-center gap-2 text-xs text-indigo-800 font-bold shrink-0">
+              <Loader2 className="w-3.5 h-3.5 animate-spin text-indigo-600 shrink-0" />
+              <span className="shrink-0">جاري رفع الوسائط... {uploadProgress}%</span>
+              <div className="flex-1 h-1.5 bg-indigo-100 rounded-full overflow-hidden">
+                <div className="h-full bg-indigo-600 transition-all" style={{ width: `${Math.max(8, uploadProgress)}%` }} />
+              </div>
+            </div>
+          )}
+
+          {/* Bottom Chat Bar: Full-Width Mobile + Emoji/Sticker Drawer + Media Picker */}
+          <div ref={emojiStickerPanelRef} className="relative w-full p-2 sm:p-3 bg-white/98 backdrop-blur-md border-t border-slate-200/90 flex items-center gap-1 sm:gap-2 shrink-0 pb-[calc(env(safe-area-inset-bottom,0px)+10px)] sm:pb-3 shadow-[0_-4px_20px_rgba(0,0,0,0.06)]">
+            {/* Emoji & Animated/Static Stickers Floating Drawer */}
+            {isEmojiStickerOpen && (
+              <div className="absolute bottom-full left-2 right-2 sm:left-auto sm:right-3 mb-2 sm:w-80 bg-white border border-slate-200 rounded-2xl shadow-2xl p-2.5 z-40 space-y-2 animate-in slide-in-from-bottom-2">
+                <div className="grid grid-cols-2 gap-1 p-1 bg-slate-100 rounded-xl text-[11px] font-black">
+                  <button
+                    type="button"
+                    onClick={() => setEmojiStickerTab('emojis')}
+                    className={`py-1.5 rounded-lg flex items-center justify-center gap-1 transition ${
+                      emojiStickerTab === 'emojis' ? 'bg-indigo-600 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    <Smile className="w-3.5 h-3.5" />
+                    <span>إيموجي 😊</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setEmojiStickerTab('stickers')}
+                    className={`py-1.5 rounded-lg flex items-center justify-center gap-1 transition ${
+                      emojiStickerTab === 'stickers' ? 'bg-amber-500 text-slate-950 shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    <Sticker className="w-3.5 h-3.5" />
+                    <span>ملصقات متحركة ✨</span>
+                  </button>
+                </div>
+
+                {emojiStickerTab === 'emojis' ? (
+                  <div className="max-h-48 overflow-y-auto space-y-2 pr-0.5">
+                    {CURATED_EMOJIS.map((group) => (
+                      <div key={group.label} className="space-y-1">
+                        <span className="text-[10px] font-black text-slate-500 block">{group.label}</span>
+                        <div className="grid grid-cols-8 gap-1">
+                          {group.emojis.map((em, i) => (
+                            <button
+                              key={`${group.label}_${i}`}
+                              type="button"
+                              onClick={() => handleInsertEmojiAtCursor(em)}
+                              className="w-8 h-8 rounded-lg hover:bg-indigo-50 flex items-center justify-center text-lg hover:scale-125 active:scale-95 transition-transform"
+                            >
+                              {em}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="max-h-52 overflow-y-auto grid grid-cols-3 gap-1.5 pr-0.5">
+                    {STICKERS_CATALOG.map((stk) => (
+                      <button
+                        key={stk.id}
+                        type="button"
+                        onClick={() => handleSendSticker(stk)}
+                        className={`p-2 rounded-xl border bg-gradient-to-br ${stk.bgGradient} flex flex-col items-center justify-center gap-1 hover:scale-[1.03] active:scale-95 transition`}
+                      >
+                        <span className={`text-2xl ${stk.category === 'animated' ? stk.animationClass : ''}`}>
+                          {stk.emoji}
+                        </span>
+                        <span className="text-[9.5px] font-black truncate max-w-full">{stk.label}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
             {isRecordingVoice ? (
               <div className="flex-1 flex items-center justify-between gap-2 bg-red-50 border border-red-200 rounded-2xl px-3 py-2 animate-in fade-in">
                 <div className="flex items-center gap-2">
@@ -1200,42 +1479,59 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
               </div>
             ) : (
               <>
-                {/* Quick Virtual Gift Button */}
+                {/* Media Sharing Button (Image / Video) */}
                 <button
                   type="button"
-                  onClick={() => setIsGiftModalOpen(true)}
-                  className="p-2.5 rounded-2xl bg-pink-50 hover:bg-pink-100 border border-pink-200 text-pink-600 min-h-[44px] min-w-[44px] flex items-center justify-center active:scale-95 transition-all shadow-xs"
-                  title="إرسال هدية فاخرة"
+                  onClick={() => mediaFileInputRef.current?.click()}
+                  disabled={isUploadingMedia}
+                  className="p-2 rounded-2xl bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-600 min-h-[42px] min-w-[40px] flex items-center justify-center active:scale-95 transition-all shadow-xs shrink-0"
+                  title="إرسال صورة أو فيديو"
                 >
-                  <Gift className="w-5 h-5 text-pink-500" />
+                  <ImageIcon className="w-4 h-4 sm:w-5 sm:h-5" />
+                </button>
+
+                {/* Emoji & Stickers Picker Toggle */}
+                <button
+                  type="button"
+                  onClick={() => setIsEmojiStickerOpen(prev => !prev)}
+                  className={`p-2 rounded-2xl border min-h-[42px] min-w-[40px] flex items-center justify-center active:scale-95 transition-all shadow-xs shrink-0 ${
+                    isEmojiStickerOpen
+                      ? 'bg-amber-100 border-amber-400 text-amber-700'
+                      : 'bg-amber-50 hover:bg-amber-100 border-amber-200 text-amber-600'
+                  }`}
+                  title="الرموز التعبيرية والملصقات"
+                >
+                  <Smile className="w-4 h-4 sm:w-5 sm:h-5" />
                 </button>
 
                 {/* Quick Voice Note Button */}
                 <button
                   type="button"
                   onClick={startVoiceRecording}
-                  className="p-2.5 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-700 hover:text-indigo-600 border border-slate-200 min-h-[44px] min-w-[44px] flex items-center justify-center active:scale-95 transition-all shadow-xs"
+                  className="p-2 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-700 hover:text-indigo-600 border border-slate-200 min-h-[42px] min-w-[40px] flex items-center justify-center active:scale-95 transition-all shadow-xs shrink-0"
                   title="بدء تسجيل صوتي"
                 >
-                  <Mic className="w-5 h-5" />
+                  <Mic className="w-4 h-4 sm:w-5 sm:h-5" />
                 </button>
 
                 {/* Message Input Field */}
-                <form onSubmit={handleSendMessage} className="flex-1 flex items-center">
+                <form onSubmit={handleSendMessage} className="flex-1 min-w-0 flex items-center">
                   <input
+                    ref={chatInputRef}
                     type="text"
                     value={inputText}
                     onChange={(e) => handleInputChange(e.target.value)}
                     placeholder="اكتب رسالة خاصة هنا..."
-                    className="w-full bg-slate-100/90 hover:bg-slate-100 focus:bg-white text-slate-900 placeholder:text-slate-400 border border-slate-200 focus:border-amber-400 rounded-2xl px-4 py-2.5 text-xs sm:text-sm focus:outline-none min-h-[44px] transition-all shadow-inner"
+                    className="w-full min-w-0 bg-slate-100/90 hover:bg-slate-100 focus:bg-white text-slate-900 placeholder:text-slate-400 border border-slate-200 focus:border-amber-400 rounded-2xl px-3.5 py-2.5 text-xs sm:text-sm focus:outline-none min-h-[42px] transition-all shadow-inner"
                   />
                 </form>
 
-                {/* Send Button: Upward arrow per request */}
+                {/* Send Button */}
                 <button
+                  type="button"
                   onClick={() => handleSendMessage()}
                   disabled={!inputText.trim()}
-                  className="p-2.5 rounded-2xl bg-gradient-to-r from-amber-500 via-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 disabled:opacity-40 text-slate-950 font-black shadow-md shadow-amber-500/25 active:scale-95 min-h-[44px] min-w-[44px] flex items-center justify-center transition-all cursor-pointer"
+                  className="p-2.5 rounded-2xl bg-gradient-to-r from-amber-500 via-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 disabled:opacity-40 text-slate-950 font-black shadow-md shadow-amber-500/25 active:scale-95 min-h-[42px] min-w-[42px] flex items-center justify-center transition-all cursor-pointer shrink-0"
                   title="إرسال الرسالة"
                 >
                   <ArrowUp className="w-5 h-5" />
@@ -1394,6 +1690,37 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
           }}
         />
       )}
+
+      {/* Image Lightbox Modal */}
+      {lightboxImageUrl && (
+        <div
+          onClick={() => setLightboxImageUrl(null)}
+          className="fixed inset-0 z-[70] bg-slate-900/90 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in"
+        >
+          <button
+            type="button"
+            onClick={() => setLightboxImageUrl(null)}
+            className="absolute top-4 left-4 p-2 rounded-full bg-white/15 hover:bg-white/25 text-white transition"
+          >
+            <X className="w-5 h-5" />
+          </button>
+          <img
+            src={lightboxImageUrl}
+            alt="معاينة الصورة"
+            onClick={(e) => e.stopPropagation()}
+            className="max-w-full max-h-[88vh] rounded-2xl shadow-2xl object-contain"
+          />
+        </div>
+      )}
+
+      {/* Natural & Custom Chat Wallpapers Modal */}
+      <ChatWallpapersModal
+        isOpen={isWallpapersModalOpen}
+        onClose={() => setIsWallpapersModalOpen(false)}
+        currentUser={currentUser}
+        onUpdateUser={onUpdateUser}
+        onOpenWallet={onOpenWallet}
+      />
 
     </div>
   );

@@ -39,12 +39,17 @@ import {
   Bot,
   Lock,
   Flag,
-  RotateCcw
+  RotateCcw,
+  Share2,
+  Sticker,
+  Unlock,
+  Settings
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { toast } from 'sonner';
 import { Room, Message, User, SpeakerSeat } from '../types/chat';
 import { isUserAdminOrOwner, LUXURY_GIFTS } from '../data/seedData';
+import { STICKERS_CATALOG, StickerItem } from '../data/stickers';
 import { JoinRequestsManagerModal } from './JoinRequestsManagerModal';
 import { ArabicMusicPlayerModal } from './ArabicMusicPlayerModal';
 import { ChatWallpapersModal } from './ChatWallpapersModal';
@@ -65,7 +70,11 @@ import {
   setRoomPinnedMessage,
   subscribeToRoomPinnedMessage,
   PinnedRoomMessage,
-  subscribeToRoomBackgroundTheme
+  subscribeToRoomBackgroundTheme,
+  setRoomLockState,
+  subscribeToRoomLockState,
+  contributeToSharedRoomMission,
+  purgeRoomMessages
 } from '../services/firebase';
 import { sounds } from '../utils/soundEffects';
 import { filterInappropriateText } from '../services/contentFilter';
@@ -79,6 +88,7 @@ interface RoomActiveViewProps {
   onOpenGiftModal: () => void;
   onUpdateSpeakers: (speakers: SpeakerSeat[]) => void;
   onUpdateRoomBackground?: (backgroundTheme: string) => void;
+  onUpdateRoomLock?: (isLocked: boolean) => void;
   onOpenUserProfile: (user: User) => void;
   onOpenOnlineUsers: () => void;
   onUpdateUser?: (user: User) => void;
@@ -194,6 +204,7 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
   onOpenGiftModal,
   onUpdateSpeakers,
   onUpdateRoomBackground,
+  onUpdateRoomLock,
   onOpenUserProfile,
   onOpenOnlineUsers,
   onUpdateUser,
@@ -204,10 +215,7 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
 
   // Top Message Type Filter State: 'all' | 'messages' | 'images' | 'gifts'
   const [messageFilter, setMessageFilter] = useState<'all' | 'messages' | 'images' | 'gifts'>('all');
-
-  // Speakers List Layout Mode: 'grid' vs 'list' (Requirement 9)
-  const [speakerLayoutMode, setSpeakerLayoutMode] = useState<'grid' | 'list'>('grid');
-  const [isSpeakerStageOpen, setIsSpeakerStageOpen] = useState(false);
+  const [showCompactWelcomeBanner, setShowCompactWelcomeBanner] = useState<boolean>(true);
 
   // Message Draft Persistence per room (Requirement 4)
   const draftStorageKey = `arab_chat_draft_${room.id}`;
@@ -307,6 +315,7 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
   const handleMessageDoubleTap = (msg: Message, e: React.MouseEvent | React.TouchEvent) => {
     sounds.playCoinsReward();
     toggleMessageReaction(room.id, msg.id, '❤️', currentUser.id, currentUser.name, msg);
+    contributeToSharedRoomMission('likes', currentUser.id, 1).catch(() => {});
 
     // Spawn floating heart
     let clientX = 150;
@@ -326,13 +335,38 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
     }, 1000);
   };
 
-  // Invite Members notification toast
+  // Invite & Share Room Link
   const [inviteToastOpen, setInviteToastOpen] = useState(false);
   const handleInviteMembers = () => {
     sounds.playCoinsReward();
     navigator.clipboard?.writeText(window.location.origin + '?room=' + room.id);
     setInviteToastOpen(true);
     setTimeout(() => setInviteToastOpen(false), 3000);
+  };
+
+  const handleShareRoom = async () => {
+    sounds.playCoinsReward();
+    const shareUrl = `${window.location.origin}?room=${room.id}`;
+    const shareData = {
+      title: `شات مصر — ${room.title}`,
+      text: `انضم إلينا الآن في ${room.title} على شات مصر 🌸`,
+      url: shareUrl,
+    };
+    if (typeof navigator !== 'undefined' && navigator.share) {
+      try {
+        await navigator.share(shareData);
+        return;
+      } catch {
+        // Fallback to clipboard if user cancels or platform rejects
+      }
+    }
+    try {
+      await navigator.clipboard?.writeText(shareUrl);
+      setInviteToastOpen(true);
+      setTimeout(() => setInviteToastOpen(false), 3000);
+    } catch {
+      toast.info(`رابط الغرفة: ${shareUrl}`);
+    }
   };
 
   // Reaction Users Details Modal
@@ -344,12 +378,12 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
   const [tasbeehCount, setTasbeehCount] = useState(0);
   const [showTasbeeh, setShowTasbeeh] = useState(false);
 
-  // Emoji Picker State
+  // Emoji & Stickers Picker State
   const [isEmojiPickerOpen, setIsEmojiPickerOpen] = useState(false);
-  const [activeEmojiTab, setActiveEmojiTab] = useState<'faces' | 'flags' | 'fun'>('faces');
+  const [activeEmojiTab, setActiveEmojiTab] = useState<'faces' | 'flags' | 'fun' | 'stickers'>('faces');
   const emojiPickerRef = useRef<HTMLDivElement>(null);
 
-  // Arabic Music Library Modal State (100 Songs)
+  // Arabic Music Library Modal State (100 Songs & Live FM)
   const [isMusicModalOpen, setIsMusicModalOpen] = useState(false);
 
   // Message Context Menu & Long-Press Deletion
@@ -388,8 +422,9 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
   const isModerator = room.ownerId === currentUser.id || room.moderators?.includes(currentUser.id) || currentUser.role === 'owner' || currentUser.role === 'admin' || currentUser.role === 'super_admin';
   const [isModeratorPanelOpen, setIsModeratorPanelOpen] = useState(false);
   const [isRoomBgModalOpen, setIsRoomBgModalOpen] = useState(false);
-  const [roomBgCategoryFilter, setRoomBgCategoryFilter] = useState<'all' | 'gradient' | 'solid'>('all');
+  const [roomBgCategoryFilter, setRoomBgCategoryFilter] = useState<'all' | 'nature' | 'gradient' | 'solid'>('all');
   const [liveRoomBackgroundTheme, setLiveRoomBackgroundTheme] = useState<string>(room.backgroundTheme || 'default');
+  const [liveIsLocked, setLiveIsLocked] = useState<boolean>(Boolean(room.isLocked));
   const [newPinText, setNewPinText] = useState('');
   const [pinnedMessage, setPinnedMessage] = useState<PinnedRoomMessage | null>(
     room.pinnedMessage || (room.pinnedAnnouncement ? { id: 'ann_1', senderName: 'المشرف', content: room.pinnedAnnouncement } : null)
@@ -397,7 +432,7 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
   const [bannedUserIds, setBannedUserIds] = useState<string[]>(room.bannedUserIds || []);
   const [dismissedSystemMsgIds, setDismissedSystemMsgIds] = useState<string[]>([]);
 
-  // Subscribe to real-time pinned message & custom background updates for ALL occupants in this room
+  // Subscribe to real-time pinned message, lock status & custom background updates for ALL occupants in this room
   useEffect(() => {
     setPinnedMessage(
       room.pinnedMessage || (room.pinnedAnnouncement ? { id: 'ann_1', senderName: 'المشرف', content: room.pinnedAnnouncement } : null)
@@ -411,9 +446,15 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
       setLiveRoomBackgroundTheme(remoteTheme || 'default');
     });
 
+    setLiveIsLocked(Boolean(room.isLocked));
+    const unsubLock = subscribeToRoomLockState(room.id, (remoteLocked) => {
+      setLiveIsLocked(Boolean(remoteLocked));
+    });
+
     return () => {
       unsubPinned();
       unsubBg();
+      unsubLock();
     };
   }, [room.id]);
 
@@ -422,6 +463,12 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
       setLiveRoomBackgroundTheme(room.backgroundTheme);
     }
   }, [room.backgroundTheme]);
+
+  useEffect(() => {
+    if (typeof room.isLocked === 'boolean' && room.isLocked !== liveIsLocked) {
+      setLiveIsLocked(room.isLocked);
+    }
+  }, [room.isLocked]);
 
   // Swipe detection ref
   const touchStartXRef = useRef<number>(0);
@@ -696,8 +743,52 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
   };
 
   const handleInsertEmoji = (emoji: string) => {
-    handleInputChange(inputText + emoji);
-    inputRef.current?.focus();
+    const el = inputRef.current;
+    if (el && typeof el.selectionStart === 'number' && typeof el.selectionEnd === 'number') {
+      const start = el.selectionStart;
+      const end = el.selectionEnd;
+      const nextVal = inputText.slice(0, start) + emoji + inputText.slice(end);
+      handleInputChange(nextVal);
+      requestAnimationFrame(() => {
+        el.focus();
+        const pos = start + emoji.length;
+        el.setSelectionRange(pos, pos);
+      });
+    } else {
+      handleInputChange(inputText + emoji);
+      inputRef.current?.focus();
+    }
+  };
+
+  const handleSendSticker = (sticker: StickerItem) => {
+    if (currentUser.isBanned || currentUser.isMuted) return;
+    sounds.playMessageSent();
+    onSendMessage({
+      roomId: room.id,
+      senderId: currentUser.id,
+      senderName: currentUser.name,
+      senderAvatar: currentUser.avatar,
+      senderRole: currentUser.role,
+      senderVipBadge: currentUser.vipBadge,
+      badges: currentUser.badges || ['عضو نشط'],
+      type: 'sticker',
+      content: sticker.emoji,
+      text: sticker.label,
+      stickerId: sticker.id,
+      stickerEmoji: sticker.emoji,
+      stickerLabel: sticker.label,
+      stickerAnimation: sticker.animationClass,
+      replyTo: replyingTo ? {
+        id: replyingTo.id,
+        senderName: replyingTo.senderName,
+        content: replyingTo.content || replyingTo.text || '',
+        type: replyingTo.type
+      } : undefined,
+      timestamp: Date.now(),
+      status: 'read'
+    });
+    updateReplyingTo(null);
+    setIsEmojiPickerOpen(false);
   };
 
   // Instant Welcoming Phrase Sender (الجمل الترحيبية)
@@ -1057,6 +1148,40 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
     }
   };
 
+  const handleToggleRoomLock = async () => {
+    if (!isModerator) return;
+    const nextLocked = !liveIsLocked;
+    setLiveIsLocked(nextLocked);
+    sounds.playMicToggle(!nextLocked);
+
+    if (onUpdateRoomLock) {
+      onUpdateRoomLock(nextLocked);
+    } else {
+      await setRoomLockState(room.id, nextLocked, currentUser.id);
+    }
+
+    if (nextLocked) {
+      toast.warning('🔒 تم قفل الغرفة — لن يتمكن أي عضو جديد من الدخول');
+    } else {
+      toast.success('🔓 تم فتح الغرفة — يمكن للأعضاء الجدد الدخول الآن');
+    }
+
+    onSendMessage({
+      roomId: room.id,
+      senderId: currentUser.id,
+      senderName: 'إدارة الغرفة',
+      senderAvatar: currentUser.avatar,
+      senderRole: currentUser.role,
+      senderVipBadge: 'إعدادات الغرفة',
+      type: 'system_welcome',
+      content: nextLocked
+        ? `🔒 قام [${currentUser.name}] بقفل الغرفة — تم إيقاف دخول الأعضاء الجدد مؤقتاً.`
+        : `🔓 قام [${currentUser.name}] بفتح الغرفة — مرحباً بدخول الجميع!`,
+      timestamp: Date.now(),
+      status: 'read'
+    });
+  };
+
   // Strictly text-only room unless created explicitly as voice room with active voice
   const isTextOnly = room.type === 'text' || room.roomType === 'text_only' || !room.isVoiceActive;
   const effectiveRoomBackground = liveRoomBackgroundTheme !== 'default'
@@ -1068,200 +1193,182 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
   return (
     <div style={getRoomContainerStyle(room.id, currentUser.chatWallpaper, effectiveRoomBackground)} className={`relative flex flex-col h-screen w-full bg-[#f6f8fc] overflow-hidden select-none transition-all duration-500 ${isDarkRoomBg ? 'text-white' : 'text-slate-900'}`}>
       
-      {/* 1. ROOM HEADER: Colored Cover Strip + Symmetric Zero-Overflow Header */}
-      <header className={`backdrop-blur-md border-b px-2.5 sm:px-4 py-2 pt-[calc(env(safe-area-inset-top,0px)+0.5rem)] flex flex-col lg:flex-row lg:items-center lg:justify-between gap-2 shrink-0 shadow-xs z-20 ${
+      {/* 1. COMPACT SINGLE-ROW SLIM HEADER (Maximizes Message Viewport) */}
+      <header className={`backdrop-blur-md border-b px-2 sm:px-3 py-1.5 pt-[calc(env(safe-area-inset-top,0px)+0.35rem)] flex items-center justify-between gap-1.5 shrink-0 shadow-xs z-20 ${
         room.id === 'room_egypt'
           ? 'bg-gradient-to-l from-amber-500/15 via-white/95 to-rose-500/15 border-amber-200/90'
           : room.id === 'room_egypt2'
           ? 'bg-gradient-to-l from-sky-500/15 via-white/95 to-teal-500/15 border-sky-200/90'
           : 'bg-gradient-to-l from-emerald-500/15 via-white/95 to-slate-500/10 border-emerald-200/90'
       }`}>
-        
-        {/* Top / Right Row (RTL): Back Button, Room Icon, Room Title & Live Stats */}
-        <div className="flex items-center justify-between gap-2 min-w-0 lg:flex-1">
-          <div className="flex items-center gap-2 min-w-0 flex-1">
-            {/* Back Navigation Button */}
-            <button
-              type="button"
-              onClick={onBack}
-              className="w-9 h-9 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 hover:text-slate-900 border border-slate-200/80 active:scale-95 transition-all shrink-0 flex items-center justify-center"
-              title="الرجوع لقائمة الغرف"
-            >
-              <ArrowRight className="w-4 h-4 sm:w-5 sm:h-5" />
-            </button>
-
-            <span className={`w-9 h-9 rounded-full bg-gradient-to-br ${
-              room.id === 'room_egypt'
-                ? 'from-amber-500 via-orange-600 to-rose-700'
-                : room.id === 'room_egypt2'
-                ? 'from-sky-500 via-blue-600 to-teal-600'
-                : room.iconBg || 'from-emerald-600 to-teal-700'
-            } border-2 border-white shadow-sm flex items-center justify-center text-lg sm:text-xl shrink-0`}>
-              {room.icon}
-            </span>
-
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-1.5 min-w-0">
-                <h2 className="text-xs sm:text-sm font-black text-slate-900 truncate leading-tight">
-                  {room.title}
-                </h2>
-                {room.isPrivate && (
-                  <span className="inline-flex items-center gap-0.5 text-[9.5px] font-black text-indigo-700 bg-indigo-50 border border-indigo-200 px-1.5 py-0.5 rounded-md shrink-0 whitespace-nowrap">
-                    <Lock className="w-2.5 h-2.5" />
-                    <span>خاصة</span>
-                  </span>
-                )}
-                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0"></span>
-              </div>
-
-              <div className="flex items-center gap-1 mt-0.5 overflow-hidden">
-                {/* Compact Online Users in Room Badge */}
-                <button
-                  type="button"
-                  onClick={onOpenOnlineUsers}
-                  className="px-1.5 py-0.5 rounded-md bg-gradient-to-r from-emerald-100 via-teal-100 to-cyan-200 hover:brightness-98 border border-teal-300 text-teal-950 text-[9px] font-black flex items-center gap-1 active:scale-95 transition-all cursor-pointer shrink-0 whitespace-nowrap tabular-nums shadow-2xs"
-                  title="المتصلون الآن في هذه الغرفة"
-                >
-                  <Users className="w-2.5 h-2.5 text-teal-700 shrink-0" />
-                  <span>{Math.max(1, room.activeUsers || 1)} متصل</span>
-                </button>
-
-                {/* Compact Cumulative Visitors Badge */}
-                <div 
-                  className="px-1.5 py-0.5 rounded-md bg-gradient-to-r from-amber-100 via-rose-100 to-orange-100 border border-amber-300 text-amber-950 text-[9px] font-black flex items-center gap-1 shrink-0 whitespace-nowrap tabular-nums shadow-2xs"
-                  title="إجمالي زوار المنصة التراكمي"
-                >
-                  <Eye className="w-2.5 h-2.5 text-rose-600 shrink-0" />
-                  <span>{room.visitorsCount || '15,480'} زائر</span>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Mobile & Tablet Primary Gift Button pinned neatly in top row */}
+        {/* Right (RTL): Back + Room Avatar + Title + Compact Online/Visitors Pills */}
+        <div className="flex items-center gap-1.5 min-w-0 flex-1">
           <button
             type="button"
-            onClick={handleOpenGiftWithReminder}
-            className="lg:hidden h-9 px-2.5 rounded-xl bg-gradient-to-r from-pink-500 to-rose-500 hover:from-pink-600 hover:to-rose-600 text-white font-black text-[11px] flex items-center gap-1 shadow-sm active:scale-95 transition-all shrink-0 whitespace-nowrap"
-            title="إرسال هدية فاخرة"
+            onClick={onBack}
+            className="w-8 h-8 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 active:scale-95 transition-all shrink-0 flex items-center justify-center"
+            title="الرجوع للغرف"
           >
-            <Gift className="w-3.5 h-3.5 shrink-0" />
-            <span>هدية</span>
+            <ArrowRight className="w-4 h-4" />
           </button>
+
+          <span className={`w-8 h-8 rounded-full bg-gradient-to-br ${
+            room.id === 'room_egypt'
+              ? 'from-amber-500 via-orange-600 to-rose-700'
+              : room.id === 'room_egypt2'
+              ? 'from-sky-500 via-blue-600 to-teal-600'
+              : room.iconBg || 'from-emerald-600 to-teal-700'
+          } border-2 border-white shadow-sm flex items-center justify-center text-base shrink-0`}>
+            {room.icon}
+          </span>
+
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-1 min-w-0">
+              <h2 className="text-xs sm:text-sm font-black text-slate-900 truncate leading-tight">
+                {room.title}
+              </h2>
+              {liveIsLocked ? (
+                <span
+                  className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md bg-rose-100 border border-rose-300 text-rose-700 text-[9px] font-black shrink-0"
+                  title="الغرفة مقفلة — يمنع دخول أعضاء جدد"
+                >
+                  <Lock className="w-2.5 h-2.5" />
+                  <span className="hidden sm:inline">مقفلة</span>
+                </span>
+              ) : room.isPrivate ? (
+                <Lock className="w-3 h-3 text-indigo-600 shrink-0" />
+              ) : null}
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+            </div>
+
+            <div className="flex items-center gap-1 mt-0.5 overflow-hidden">
+              <button
+                type="button"
+                onClick={onOpenOnlineUsers}
+                className="px-1.5 py-0.2 rounded bg-emerald-50 border border-emerald-200 text-emerald-800 text-[9px] font-black flex items-center gap-0.5 active:scale-95 shrink-0 tabular-nums"
+                title="المتصلون الآن"
+              >
+                <Users className="w-2.5 h-2.5 text-emerald-600" />
+                <span>{Math.max(1, room.activeUsers || 1)}</span>
+              </button>
+
+              <span
+                className="px-1.5 py-0.2 rounded bg-amber-50 border border-amber-200 text-amber-800 text-[9px] font-black flex items-center gap-0.5 shrink-0 tabular-nums"
+                title="زوار المنصة"
+              >
+                <Eye className="w-2.5 h-2.5 text-rose-500" />
+                <span>{room.visitorsCount || '15,480'}</span>
+              </span>
+            </div>
+          </div>
         </div>
 
-        {/* Action Toolbar: Symmetrical Uniform h-9 Sizing & Clean Horizontal Scroll without clipping */}
-        <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none shrink-0 py-0.5 lg:py-0">
-          {/* Invite Button */}
+        {/* Left (RTL): Compact Integrated Icon Toolbar */}
+        <div className="flex items-center gap-1 overflow-x-auto scrollbar-none shrink-0">
           <button
             type="button"
             onClick={() => {
               sounds.playMessageReceived();
               onOpenOnlineUsers();
             }}
-            className="h-9 px-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-black flex items-center gap-1 shadow-xs active:scale-95 transition-all shrink-0 whitespace-nowrap"
-            title="دعوة المتصلين إلى المجلس"
+            className="h-8 px-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-[10.5px] font-black flex items-center gap-1 active:scale-95 shrink-0"
+            title="المتصلون والدعوة"
           >
-            <Users className="w-3.5 h-3.5 text-white shrink-0" />
-            <span>دعوة</span>
+            <Users className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">دعوة</span>
           </button>
-          
-          {/* 100 Arabic Songs Music Library Button */}
+
+          <button
+            type="button"
+            onClick={handleShareRoom}
+            className="h-8 w-8 sm:w-auto sm:px-2 rounded-xl bg-sky-50 hover:bg-sky-100 border border-sky-200 text-sky-700 text-[10.5px] font-black flex items-center justify-center gap-1 active:scale-95 shrink-0"
+            title="مشاركة رابط الغرفة"
+          >
+            <Share2 className="w-3.5 h-3.5" />
+            <span className="hidden md:inline">مشاركة</span>
+          </button>
+
           <button
             type="button"
             onClick={() => setIsMusicModalOpen(true)}
-            className="h-9 px-2.5 rounded-xl bg-purple-50 hover:bg-purple-100 border border-purple-200 text-purple-700 text-[11px] font-black flex items-center gap-1 shadow-xs active:scale-95 transition-all shrink-0 whitespace-nowrap"
-            title="مكتبة الـ 100 أغنية طربية عربية"
+            className="h-8 w-8 sm:w-auto sm:px-2 rounded-xl bg-purple-50 hover:bg-purple-100 border border-purple-200 text-purple-700 text-[10.5px] font-black flex items-center justify-center gap-1 active:scale-95 shrink-0"
+            title="راديو FM ومكتبة الأغاني"
           >
-            <Music className="w-3.5 h-3.5 text-purple-600 shrink-0" />
-            <span>100 أغنية</span>
+            <Music className="w-3.5 h-3.5" />
+            <span className="hidden md:inline">FM</span>
           </button>
 
-          {/* Customizable Chat Wallpaper Store Button */}
           <button
             type="button"
             onClick={() => setIsWallpapersModalOpen(true)}
-            className="h-9 px-2.5 rounded-xl bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-700 text-[11px] font-black flex items-center gap-1 shadow-xs active:scale-95 transition-all shrink-0 whitespace-nowrap"
-            title="تغيير وشراء خلفيات الدردشة"
+            className="h-8 w-8 sm:w-auto sm:px-2 rounded-xl bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-700 text-[10.5px] font-black flex items-center justify-center gap-1 active:scale-95 shrink-0"
+            title="خلفيات طبيعية وجمالية"
           >
-            <Palette className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-            <span>الخلفيات</span>
+            <Palette className="w-3.5 h-3.5" />
+            <span className="hidden md:inline">خلفيات</span>
           </button>
 
-          {/* Private Room Join Requests Button for Host */}
           {isModerator && room.isPrivate && (
             <button
               type="button"
               onClick={() => setIsJoinRequestsOpen(true)}
-              className="h-9 px-2.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 text-[11px] font-bold flex items-center gap-1.5 active:scale-95 shadow-xs shrink-0 whitespace-nowrap"
-              title="طلبات الانضمام المعلقة"
+              className="h-8 px-2 rounded-xl bg-indigo-50 border border-indigo-200 text-indigo-700 text-[10.5px] font-bold flex items-center gap-1 shrink-0"
+              title="طلبات الانضمام"
             >
-              <Users className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
-              <span>طلبات</span>
-              <span className={`min-w-[18px] h-[18px] px-1 rounded-full text-[9.5px] font-black flex items-center justify-center tabular-nums ${
-                pendingJoinRequests.length > 0
-                  ? 'bg-rose-600 text-white animate-pulse'
-                  : 'bg-indigo-100 text-indigo-700'
-              }`}>
-                {pendingJoinRequests.length}
-              </span>
+              <span>طلبات ({pendingJoinRequests.length})</span>
             </button>
           )}
 
-          {/* Room Background Theme Button (Room Managers only) */}
           {isModerator && (
             <button
               type="button"
               onClick={() => setIsRoomBgModalOpen(true)}
-              className="h-9 px-2.5 rounded-xl bg-gradient-to-r from-indigo-50 to-fuchsia-50 hover:from-indigo-100 hover:to-fuchsia-100 border border-indigo-200 text-indigo-800 text-[11px] font-black flex items-center gap-1.5 shadow-xs active:scale-95 transition-all shrink-0 whitespace-nowrap"
-              title="اختيار لون أو تدرج خلفية الغرفة"
+              className="h-8 w-8 sm:w-auto sm:px-2 rounded-xl bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 text-[10.5px] font-black flex items-center justify-center gap-1 active:scale-95 shrink-0"
+              title="تغيير لون/خلفية الغرفة"
             >
-              <span
-                className="w-3.5 h-3.5 rounded-full border border-slate-300 shadow-2xs shrink-0"
-                style={
-                  activeRoomBgThemeObj
-                    ? activeRoomBgThemeObj.style
-                    : { background: 'linear-gradient(135deg, #6366f1 0%, #ec4899 100%)' }
-                }
-              />
-              <span>خلفية الغرفة</span>
+              <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
+              <span className="hidden lg:inline">لون الغرفة</span>
             </button>
           )}
 
-          {/* Moderator Control Button */}
           {isModerator && (
             <button
               type="button"
               onClick={() => setIsModeratorPanelOpen(true)}
-              className="h-9 px-2.5 rounded-xl bg-amber-50 border border-amber-300 text-amber-800 hover:bg-amber-100 text-[11px] font-black flex items-center gap-1 shadow-xs active:scale-95 transition-all shrink-0 whitespace-nowrap"
-              title="لوحة تحكم المشرف وتثبيت الرسائل"
+              className={`relative h-8 w-8 sm:w-auto sm:px-2 rounded-xl border text-[10.5px] font-black flex items-center justify-center gap-1 active:scale-95 shrink-0 cursor-pointer ${
+                liveIsLocked
+                  ? 'bg-rose-50 border-rose-300 text-rose-800 hover:bg-rose-100'
+                  : 'bg-amber-50 border-amber-300 text-amber-800 hover:bg-amber-100'
+              }`}
+              title="إعدادات الغرفة ولوحة المشرف"
             >
-              <ShieldCheck className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-              <span>المشرف</span>
+              <Settings className={`w-3.5 h-3.5 ${liveIsLocked ? 'text-rose-600' : 'text-amber-600'}`} />
+              <span className="hidden lg:inline">الإعدادات</span>
+              {liveIsLocked && (
+                <span className="w-2 h-2 rounded-full bg-rose-500 border border-white shrink-0" title="الغرفة مقفلة" />
+              )}
             </button>
           )}
 
-          {/* Tasbeeh Drawer Toggle for Religious Room */}
           {room.category === 'religious' && (
             <button
               type="button"
               onClick={() => setShowTasbeeh(!showTasbeeh)}
-              className="h-9 px-2.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-700 text-[11px] font-bold flex items-center gap-1 shrink-0 whitespace-nowrap tabular-nums"
+              className="h-8 px-2 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-700 text-[10.5px] font-bold flex items-center gap-1 shrink-0 tabular-nums"
             >
-              <BookOpen className="w-3.5 h-3.5 shrink-0" />
-              <span>مسبحة ({tasbeehCount})</span>
+              <BookOpen className="w-3.5 h-3.5" />
+              <span>({tasbeehCount})</span>
             </button>
           )}
 
-          {/* Desktop Luxury Gift Button */}
           <button
             type="button"
             onClick={handleOpenGiftWithReminder}
-            className="hidden lg:flex h-9 px-3 rounded-xl bg-gradient-to-r from-pink-500 to-rose-500 hover:from-pink-600 hover:to-rose-600 text-white font-black text-xs items-center gap-1 shadow-sm active:scale-95 transition-all shrink-0 whitespace-nowrap"
+            className="h-8 px-2.5 rounded-xl bg-gradient-to-r from-pink-500 to-rose-500 text-white font-black text-[10.5px] flex items-center gap-1 shadow-xs active:scale-95 shrink-0"
             title="إرسال هدية فاخرة"
           >
-            <Gift className="w-3.5 h-3.5 shrink-0" />
-            <span>هدية 🎁</span>
+            <Gift className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">هدية</span>
           </button>
         </div>
       </header>
@@ -1393,254 +1500,7 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
         </div>
       </div>
 
-      {/* 4.5. Voice stage removed per request: الغاء المجلس الصوتي من الغرف */}
-      {false && isSpeakerStageOpen && (
-        <div className="bg-[#0b1120]/95 border-b border-indigo-900/40 p-2 sm:p-2.5 shrink-0 shadow-md backdrop-blur-md">
-          {/* Top Bar: Title & Grid/List Toggle & Take Seat / Mic Button */}
-          <div className="flex items-center justify-between pb-1.5 border-b border-slate-800/80 mb-2">
-            <div className="flex items-center gap-1.5">
-              <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></div>
-              <span className="text-[11px] font-black text-slate-200 flex items-center gap-1">
-                منصة المتحدثين الصوتية
-              </span>
-              <span className="text-[9px] px-1.5 py-0.2 rounded-full bg-indigo-500/20 text-indigo-300 font-bold">
-                {((room.speakers || []).filter(s => s.user).length) || (isModerator ? 1 : 0)} متحدث
-              </span>
-            </div>
-
-            {/* Toggle Switch: Grid vs List (النمط الشبكي / النمط الرأسي) */}
-            <div className="flex items-center gap-1 bg-slate-900/90 p-0.5 rounded-xl border border-slate-800">
-              <button
-                type="button"
-                onClick={() => {
-                  sounds.playMicToggle(true);
-                  setSpeakerLayoutMode('grid');
-                }}
-                className={`px-2 py-0.5 rounded-lg text-[10px] font-black flex items-center gap-1 transition-all ${
-                  speakerLayoutMode === 'grid'
-                    ? 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow-xs'
-                    : 'text-slate-400 hover:text-white'
-                }`}
-                title="عرض بنمط شبكة (Grid)"
-              >
-                <LayoutGrid className="w-3 h-3" />
-                <span>شبكة</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  sounds.playMicToggle(false);
-                  setSpeakerLayoutMode('list');
-                }}
-                className={`px-2 py-0.5 rounded-lg text-[10px] font-black flex items-center gap-1 transition-all ${
-                  speakerLayoutMode === 'list'
-                    ? 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow-xs'
-                    : 'text-slate-400 hover:text-white'
-                }`}
-                title="عرض بنمط قائمة رأسية (List)"
-              >
-                <List className="w-3 h-3" />
-                <span>قائمة</span>
-              </button>
-            </div>
-          </div>
-
-          {/* Speakers Display: Grid or Vertical List */}
-          {speakerLayoutMode === 'grid' ? (
-            /* GRID LAYOUT: 6 visual seats */
-            <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
-              {Array.from({ length: 6 }).map((_, idx) => {
-                const seatId = idx + 1;
-                const seat = (room.speakers || []).find(s => s.seatId === seatId) || {
-                  seatId,
-                  user: (idx === 0 && isModerator) ? currentUser : null,
-                  isMuted: false,
-                  isTalking: idx === 0 && isModerator,
-                  isVideo: false,
-                };
-                const user = seat.user;
-                const isTalking = seat.isTalking && !seat.isMuted;
-
-                return (
-                  <div
-                    key={seatId}
-                    onClick={() => {
-                      if (user) {
-                        onOpenUserProfile(user);
-                      } else {
-                        sounds.playMicToggle(true);
-                        const updated = [
-                          ...(room.speakers || []).filter(s => s.seatId !== seatId && s.user?.id !== currentUser.id),
-                          { seatId, user: currentUser, isMuted: false, isTalking: true, isVideo: false }
-                        ];
-                        onUpdateSpeakers(updated);
-                        onSendMessage({
-                          roomId: room.id,
-                          senderId: currentUser.id,
-                          senderName: currentUser.name,
-                          senderAvatar: currentUser.avatar,
-                          senderRole: currentUser.role,
-                          senderVipBadge: currentUser.vipBadge,
-                          type: 'system_welcome',
-                          content: `🎤 صعد ${currentUser.name} على المايك #${seatId} في منصة الصوت!`
-                        });
-                      }
-                    }}
-                    className={`relative flex flex-col items-center justify-center p-2 rounded-2xl cursor-pointer transition-all active:scale-95 ${
-                      user
-                        ? 'bg-slate-900/90 border border-slate-700/80 shadow-md hover:border-indigo-500/60'
-                        : 'bg-slate-900/30 border border-dashed border-slate-800 hover:border-indigo-500/40 hover:bg-slate-800/30'
-                    }`}
-                  >
-                    <span className="absolute top-1 left-1.5 text-[8.5px] font-black text-slate-500">
-                      #{seatId}
-                    </span>
-
-                    <div className="relative my-0.5">
-                      {user ? (
-                        <div className="relative">
-                          {isTalking && (
-                            <span className="absolute -inset-1 rounded-full bg-emerald-400/40 animate-ping"></span>
-                          )}
-                          <div className={`w-10 h-10 rounded-full overflow-hidden border-2 bg-gradient-to-tr from-indigo-700 to-purple-600 flex items-center justify-center font-bold text-white text-xs shadow-md ${
-                            isTalking ? 'border-emerald-400 shadow-[0_0_10px_rgba(52,211,153,0.6)]' : 'border-slate-700'
-                          }`}>
-                            {user.avatar ? (
-                              <img src={user.avatar} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                            ) : (
-                              <span>{user.name.charAt(0)}</span>
-                            )}
-                          </div>
-                          <div className={`absolute -bottom-1 -right-1 p-0.5 rounded-full border border-[#080c15] text-[9px] ${
-                            seat.isMuted ? 'bg-red-500 text-white' : 'bg-emerald-500 text-white'
-                          }`}>
-                            {seat.isMuted ? <MicOff className="w-2.5 h-2.5" /> : <Mic className="w-2.5 h-2.5" />}
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="w-10 h-10 rounded-full border border-dashed border-slate-700 flex flex-col items-center justify-center text-slate-500 hover:text-indigo-400">
-                          <Mic className="w-3.5 h-3.5 text-slate-400" />
-                          <span className="text-[7.5px] font-bold">صعود</span>
-                        </div>
-                      )}
-                    </div>
-
-                    <div className="text-center w-full px-0.5 mt-0.5">
-                      {user ? (
-                        <>
-                          <p className="text-[10px] font-bold text-slate-200 truncate">{user.name}</p>
-                          <p className="text-[8.5px] text-amber-400 truncate">
-                            {user.countryFlag} {seatId === 1 ? 'المضيف' : user.vipBadge || 'متحدث'}
-                          </p>
-                        </>
-                      ) : (
-                        <span className="text-[9px] text-slate-500">شاغر</span>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          ) : (
-            /* VERTICAL LIST LAYOUT (Requirement 9) */
-            <div className="space-y-1.5 max-h-48 overflow-y-auto pr-0.5 scrollbar-thin">
-              {Array.from({ length: 6 }).map((_, idx) => {
-                const seatId = idx + 1;
-                const seat = (room.speakers || []).find(s => s.seatId === seatId) || {
-                  seatId,
-                  user: (idx === 0 && isModerator) ? currentUser : null,
-                  isMuted: false,
-                  isTalking: idx === 0 && isModerator,
-                  isVideo: false,
-                };
-                const user = seat.user;
-                const isTalking = seat.isTalking && !seat.isMuted;
-
-                return (
-                  <div
-                    key={seatId}
-                    onClick={() => {
-                      if (user) {
-                        onOpenUserProfile(user);
-                      } else {
-                        sounds.playMicToggle(true);
-                        const updated = [
-                          ...(room.speakers || []).filter(s => s.seatId !== seatId && s.user?.id !== currentUser.id),
-                          { seatId, user: currentUser, isMuted: false, isTalking: true, isVideo: false }
-                        ];
-                        onUpdateSpeakers(updated);
-                        onSendMessage({
-                          roomId: room.id,
-                          senderId: currentUser.id,
-                          senderName: currentUser.name,
-                          senderAvatar: currentUser.avatar,
-                          senderRole: currentUser.role,
-                          senderVipBadge: currentUser.vipBadge,
-                          type: 'system_welcome',
-                          content: `🎤 صعد ${currentUser.name} على المايك #${seatId} في منصة الصوت!`
-                        });
-                      }
-                    }}
-                    className={`flex items-center justify-between p-2 rounded-xl transition-all cursor-pointer active:scale-[0.99] ${
-                      user
-                        ? 'bg-slate-900/80 border border-slate-800 hover:border-indigo-500/50'
-                        : 'bg-slate-900/20 border border-dashed border-slate-800/80 hover:bg-slate-800/40'
-                    }`}
-                  >
-                    {/* Left: Mic status & sound indicator */}
-                    <div className="flex items-center gap-2">
-                      <span className="text-[10px] font-black text-slate-500 w-5">#{seatId}</span>
-                      {user && (
-                        <div className={`p-1 rounded-lg text-xs ${
-                          seat.isMuted ? 'bg-red-500/20 text-red-400' : 'bg-emerald-500/20 text-emerald-400'
-                        }`}>
-                          {seat.isMuted ? <MicOff className="w-3.5 h-3.5" /> : <Mic className="w-3.5 h-3.5" />}
-                        </div>
-                      )}
-                      {isTalking && (
-                        <div className="flex items-center gap-0.5">
-                          <span className="w-1 h-3 bg-emerald-400 rounded-full animate-bounce"></span>
-                          <span className="w-1 h-4 bg-emerald-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></span>
-                          <span className="w-1 h-2 bg-emerald-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></span>
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Right: User info or Empty Seat prompt */}
-                    <div className="flex items-center gap-2.5">
-                      <div className="text-right">
-                        {user ? (
-                          <>
-                            <div className="flex items-center gap-1.5 justify-end">
-                              <span className="text-xs font-black text-white">{user.name}</span>
-                              <span className="text-xs">{user.countryFlag}</span>
-                            </div>
-                            <span className="text-[9.5px] text-amber-400 font-bold block">
-                              {seatId === 1 ? 'المضيف الرسمي' : user.vipBadge || 'متحدث على المنصة'}
-                            </span>
-                          </>
-                        ) : (
-                          <span className="text-xs text-slate-400 font-medium">مقعد شاغر • اضغط للصعود 🎤</span>
-                        )}
-                      </div>
-
-                      <div className="relative">
-                        <div className="w-8 h-8 rounded-full overflow-hidden bg-slate-800 border border-slate-700 flex items-center justify-center text-xs font-bold text-white">
-                          {user?.avatar ? (
-                            <img src={user.avatar} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                          ) : (
-                            <span>{user ? user.name.charAt(0) : '+'}</span>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      )}
+      {/* Speaker Stage removed for clean text-focused public & private rooms */}
 
       {/* 5. Animated Welcome Toast (Modern Light Pill Card) */}
       {welcomeToast.state !== 'hidden' && (
@@ -1689,76 +1549,60 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
 
       {/* 6. Chat Wallpaper & Feed Scroll Area */}
       <div className="relative flex-1 overflow-hidden flex flex-col">
+        {/* Compact Dismissible Welcome Bot Banner */}
+        {showCompactWelcomeBanner && (
+          <div className="bg-emerald-50/95 border-b border-emerald-200 px-3 py-1.5 flex items-center justify-between gap-2 text-slate-900 shrink-0 z-10">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="w-6 h-6 rounded-full bg-white border border-emerald-300 text-emerald-600 flex items-center justify-center shrink-0">
+                <Bot className="w-3.5 h-3.5" />
+              </span>
+              <p className="text-[11px] sm:text-xs font-bold text-slate-800 leading-snug line-clamp-2">
+                أهلاً بك معنا في شات مصر! نورت المجلس 🌸 - شاركنا بتواجدك الراقي
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowCompactWelcomeBanner(false)}
+              className="p-1 rounded-full text-slate-500 hover:text-slate-900 hover:bg-emerald-200/70 transition-colors shrink-0"
+              title="إخفاء رسالة الترحيب"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
+
         {/* Scrollable Messages Feed */}
-        <div className="relative z-10 flex-1 overflow-y-auto px-2.5 sm:px-3.5 py-2 space-y-1.5 scroll-smooth text-right">
+        <div className="relative z-10 flex-1 overflow-y-auto px-2.5 sm:px-3.5 py-1.5 space-y-1 scroll-smooth text-right">
         {displayedMessages.map((msg, idx) => {
           const isMe = msg.senderId === currentUser.id;
           const isPrivateMsg = msg.type === 'private' || msg.isPrivate;
           const uniqueKey = `${msg.id || 'msg'}_${idx}`;
 
-          // Automated System Notice Banner (Soft mint-green strip with dismiss '✕' matching classic Arabic chat style)
+          // Automated System Notice Banner (Compact 1-2 lines with dismiss '✕')
           if (msg.type === 'system_welcome' && msg.senderId === 'system_bot') {
             if (dismissedSystemMsgIds.includes(msg.id)) return null;
             return (
               <motion.div
                 key={uniqueKey}
-                initial={{ opacity: 0, y: 8 }}
+                initial={{ opacity: 0, y: 6 }}
                 animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.22, ease: 'easeOut' }}
-                className="-mx-2.5 sm:-mx-3.5 px-3 py-2.5 my-1.5 bg-emerald-100/95 border-y border-emerald-200/90 text-slate-900 shadow-2xs"
+                transition={{ duration: 0.18, ease: 'easeOut' }}
+                className="px-3 py-1.5 my-1 rounded-2xl bg-emerald-100/90 border border-emerald-200 text-slate-900 flex items-center justify-between gap-2 shadow-2xs"
               >
-                <div className="flex items-start gap-2.5">
-                  <div className="w-8 h-8 rounded-full bg-white border border-emerald-300 text-emerald-600 flex items-center justify-center shadow-2xs shrink-0 mt-0.5">
-                    <Bot className="w-4 h-4" />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-xs font-black text-slate-900">
-                        {msg.senderName || 'النظام الآلي'}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => setDismissedSystemMsgIds(prev => [...prev, msg.id])}
-                        className="p-0.5 rounded-md text-slate-600 hover:text-slate-900 hover:bg-emerald-200/70 transition-colors"
-                        title="إخفاء رسالة النظام"
-                      >
-                        <X className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                    <p className="text-xs sm:text-[13px] leading-relaxed text-slate-900 font-bold whitespace-pre-line mt-0.5">
-                      {filterInappropriateText(msg.content)}
-                    </p>
-                    <div className="pt-1.5 flex flex-wrap items-center gap-1.5">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          onSendMessage({
-                            roomId: room.id,
-                            senderId: currentUser.id,
-                            senderName: currentUser.name,
-                            senderAvatar: currentUser.avatar,
-                            senderRole: currentUser.role,
-                            senderVipBadge: currentUser.vipBadge,
-                            type: 'text',
-                            content: 'السلام عليكم جميعاً! 🌟 سعيد جداً بانضمامي إليكم',
-                            timestamp: Date.now(),
-                            status: 'read',
-                          });
-                        }}
-                        className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[10.5px] font-bold shadow-2xs active:scale-95 transition-all"
-                      >
-                        إلقاء التحية 👋
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setInputText('أهلاً بكم يا أحلى أصدقاء! 💬✨ ')}
-                        className="px-2.5 py-1 rounded-lg bg-white hover:bg-emerald-50 border border-emerald-300 text-emerald-800 text-[10.5px] font-bold active:scale-95 transition-all"
-                      >
-                        ابدأ بمشاركتك ✍️
-                      </button>
-                    </div>
-                  </div>
+                <div className="flex items-center gap-2 min-w-0">
+                  <Bot className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
+                  <p className="text-[11px] sm:text-xs font-bold text-slate-900 line-clamp-2">
+                    {filterInappropriateText(msg.content)}
+                  </p>
                 </div>
+                <button
+                  type="button"
+                  onClick={() => setDismissedSystemMsgIds(prev => [...prev, msg.id])}
+                  className="p-0.5 rounded-md text-slate-500 hover:text-slate-900 hover:bg-emerald-200/70 transition-colors shrink-0"
+                  title="إخفاء رسالة البوت"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
               </motion.div>
             );
           }
@@ -2005,8 +1849,29 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
                   </div>
                 )}
 
-                {/* Voice Note Player OR Classic Inline [Icon] [Colored Name] : [Black Message Text] [Flag] */}
-                {msg.type === 'voice' ? (
+                {/* Voice Note Player OR Sticker OR Classic Inline [Icon] [Colored Name] : [Black Message Text] [Flag] */}
+                {msg.type === 'sticker' ? (
+                  <div className="flex items-center flex-wrap gap-2 py-0.5">
+                    <span
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        openProfileFromMsg(msg);
+                      }}
+                      className={`text-[13px] font-black cursor-pointer hover:underline ${senderStyle.name}`}
+                    >
+                      {isVipSender && <span className="ml-0.5">💎</span>}
+                      {msg.senderName}:
+                    </span>
+                    <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-2xl bg-white/95 border border-slate-200 shadow-xs">
+                      <span className={`text-3xl select-none ${msg.stickerAnimation || ''}`}>
+                        {msg.stickerEmoji || msg.content}
+                      </span>
+                      {msg.stickerLabel && (
+                        <span className="text-[11px] font-black text-indigo-700">{msg.stickerLabel}</span>
+                      )}
+                    </div>
+                  </div>
+                ) : msg.type === 'voice' ? (
                   <div className="flex items-center flex-wrap gap-1.5 py-0.5">
                     <span
                       onClick={(e) => {
@@ -2090,7 +1955,7 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
                       {filterInappropriateText(msg.content)}
                     </span>
 
-                    {/* Inline Trailing Flag / Options Icon (matching screenshot) */}
+                    {/* Inline Trailing Flag / Options Icon */}
                     <button
                       type="button"
                       onClick={(e) => {
@@ -2153,6 +2018,9 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
                           onClick={(e) => {
                             e.stopPropagation();
                             toggleMessageReaction(room.id, msg.id, em, currentUser.id, currentUser.name, msg);
+                            if (em === '❤️') {
+                              contributeToSharedRoomMission('likes', currentUser.id, 1).catch(() => {});
+                            }
                           }}
                           className={`hover:scale-125 active:scale-90 text-[11px] transition-transform px-0.5 rounded-full ${
                             isPicked ? 'bg-indigo-100 ring-1 ring-indigo-300 scale-110' : 'opacity-85 hover:opacity-100'
@@ -2391,10 +2259,10 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
             <span className="text-sm sm:text-base">😊</span>
           </button>
 
-          {/* Compact Popup Emoji Picker Modal (Light Theme) */}
+          {/* Compact Popup Emoji & Stickers Picker Modal */}
           {isEmojiPickerOpen && (
             <div className="absolute bottom-12 left-0 sm:left-auto sm:right-0 z-50 w-72 sm:w-80 bg-white border border-slate-200 rounded-2xl shadow-2xl p-2.5 space-y-2 animate-in slide-in-from-bottom-2">
-              <div className="grid grid-cols-3 gap-1 p-1 bg-slate-100 rounded-xl text-[11px] font-bold">
+              <div className="grid grid-cols-4 gap-1 p-1 bg-slate-100 rounded-xl text-[10.5px] font-bold">
                 <button
                   type="button"
                   onClick={() => setActiveEmojiTab('faces')}
@@ -2402,7 +2270,7 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
                     activeEmojiTab === 'faces' ? 'bg-indigo-600 text-white' : 'text-slate-600 hover:text-slate-900'
                   }`}
                 >
-                  تعبيرات 😊
+                  وجوه 😊
                 </button>
                 <button
                   type="button"
@@ -2422,20 +2290,46 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
                 >
                   تفاعل 🔥
                 </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveEmojiTab('stickers')}
+                  className={`py-1 rounded-lg transition-all flex items-center justify-center gap-0.5 ${
+                    activeEmojiTab === 'stickers' ? 'bg-pink-600 text-white' : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  <Sticker className="w-3 h-3" />
+                  <span>ملصقات</span>
+                </button>
               </div>
 
-              <div className="grid grid-cols-6 sm:grid-cols-8 gap-1.5 max-h-44 overflow-y-auto p-1 scrollbar-none">
-                {EMOJI_CATEGORIES[activeEmojiTab].map((emoji, idx) => (
-                  <button
-                    key={idx}
-                    type="button"
-                    onClick={() => handleInsertEmoji(emoji)}
-                    className="w-8 h-8 rounded-lg hover:bg-slate-100 flex items-center justify-center text-lg hover:scale-125 active:scale-95 transition-transform"
-                  >
-                    {emoji}
-                  </button>
-                ))}
-              </div>
+              {activeEmojiTab === 'stickers' ? (
+                <div className="grid grid-cols-3 gap-1.5 max-h-48 overflow-y-auto p-1 scrollbar-none">
+                  {STICKERS_CATALOG.map((stk) => (
+                    <button
+                      key={stk.id}
+                      type="button"
+                      onClick={() => handleSendSticker(stk)}
+                      className={`p-2 rounded-xl border bg-gradient-to-br ${stk.bgGradient} flex flex-col items-center justify-center gap-0.5 hover:scale-105 active:scale-95 transition-transform shadow-2xs`}
+                    >
+                      <span className={`text-2xl ${stk.animationClass || ''}`}>{stk.emoji}</span>
+                      <span className="text-[9.5px] font-black truncate max-w-full">{stk.label}</span>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <div className="grid grid-cols-6 sm:grid-cols-8 gap-1.5 max-h-44 overflow-y-auto p-1 scrollbar-none">
+                  {EMOJI_CATEGORIES[activeEmojiTab].map((emoji, idx) => (
+                    <button
+                      key={idx}
+                      type="button"
+                      onClick={() => handleInsertEmoji(emoji)}
+                      className="w-8 h-8 rounded-lg hover:bg-slate-100 flex items-center justify-center text-lg hover:scale-125 active:scale-95 transition-transform"
+                    >
+                      {emoji}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -2475,19 +2369,89 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
         isHost={isModerator}
       />
 
-      {/* Moderator Control Modal (Light Theme) */}
+      {/* Room Settings & Moderator Control Modal (Light Theme) */}
       {isModeratorPanelOpen && isModerator && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/45 backdrop-blur-sm p-4 animate-in fade-in">
-          <div className="w-full max-w-sm bg-white border border-amber-300 rounded-2xl shadow-2xl p-4 space-y-3.5 text-slate-900">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/45 backdrop-blur-sm p-4 animate-in fade-in"
+          onClick={() => setIsModeratorPanelOpen(false)}
+        >
+          <div
+            className="w-full max-w-sm bg-white border border-amber-300 rounded-2xl shadow-2xl p-4 space-y-3 text-slate-900 max-h-[88vh] overflow-y-auto"
+            dir="rtl"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="flex items-center justify-between border-b border-slate-200 pb-2.5">
               <div className="flex items-center gap-2">
                 <div className="w-7 h-7 rounded-lg bg-amber-100 text-amber-700 flex items-center justify-center">
-                  <ShieldCheck className="w-4 h-4" />
+                  <Settings className="w-4 h-4" />
                 </div>
-                <h3 className="text-xs font-black text-slate-900">لوحة تحكم المشرفين</h3>
+                <div>
+                  <h3 className="text-xs font-black text-slate-900">إعدادات الغرفة والمشرفين</h3>
+                  <p className="text-[10px] text-slate-500 truncate max-w-[200px]">{room.title}</p>
+                </div>
               </div>
-              <button onClick={() => setIsModeratorPanelOpen(false)} className="text-slate-400 hover:text-slate-800 p-1">
+              <button
+                type="button"
+                onClick={() => setIsModeratorPanelOpen(false)}
+                className="text-slate-400 hover:text-slate-800 p-1 cursor-pointer"
+              >
                 <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Room Lock Setting (Managers Only) */}
+            <div className={`p-3 rounded-xl border transition-colors space-y-2 ${
+              liveIsLocked
+                ? 'bg-rose-50/90 border-rose-200'
+                : 'bg-emerald-50/60 border-emerald-200'
+            }`}>
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
+                    liveIsLocked ? 'bg-rose-100 text-rose-700' : 'bg-emerald-100 text-emerald-700'
+                  }`}>
+                    {liveIsLocked ? <Lock className="w-4 h-4" /> : <Unlock className="w-4 h-4" />}
+                  </div>
+                  <div className="min-w-0 text-right">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-xs font-black text-slate-900">قفل الغرفة</span>
+                      <span className={`px-1.5 py-0.5 rounded text-[9.5px] font-black ${
+                        liveIsLocked
+                          ? 'bg-rose-600 text-white'
+                          : 'bg-emerald-600 text-white'
+                      }`}>
+                        {liveIsLocked ? 'مقفلة' : 'مفتوحة'}
+                      </span>
+                    </div>
+                    <p className="text-[10.5px] text-slate-600 leading-snug mt-0.5">
+                      {liveIsLocked
+                        ? 'الغرفة مقفلة حالياً — يمنع دخول أي عضو جديد.'
+                        : 'الغرفة مفتوحة — يمكن للأعضاء الجدد الدخول الآن.'}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleToggleRoomLock}
+                className={`w-full py-2 px-3 rounded-xl font-black text-xs flex items-center justify-center gap-1.5 transition active:scale-95 cursor-pointer shadow-xs ${
+                  liveIsLocked
+                    ? 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                    : 'bg-rose-600 hover:bg-rose-500 text-white'
+                }`}
+              >
+                {liveIsLocked ? (
+                  <>
+                    <Unlock className="w-3.5 h-3.5" />
+                    <span>فتح الغرفة للأعضاء</span>
+                  </>
+                ) : (
+                  <>
+                    <Lock className="w-3.5 h-3.5" />
+                    <span>قفل الغرفة ومنع الدخول</span>
+                  </>
+                )}
               </button>
             </div>
 
@@ -2598,6 +2562,21 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
                 ))}
               </div>
             </div>
+
+            {/* Purge Room Messages (God Mode / Moderator Clear) */}
+            <button
+              type="button"
+              onClick={async () => {
+                sounds.playMicToggle(false);
+                await purgeRoomMessages(room.id);
+                setIsModeratorPanelOpen(false);
+                toast.success('تم تفريغ جميع رسائل الغرفة بنجاح 🧹');
+              }}
+              className="w-full py-2 px-3 rounded-xl bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 text-xs font-black flex items-center justify-center gap-1.5 active:scale-95 transition"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>تفريغ رسائل الغرفة 🧹</span>
+            </button>
           </div>
         </div>
       )}
@@ -2672,17 +2651,18 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
             </div>
 
             {/* Category Tabs */}
-            <div className="px-3.5 py-2.5 bg-white border-b border-slate-200 flex items-center gap-1.5 shrink-0">
+            <div className="px-3.5 py-2.5 bg-white border-b border-slate-200 flex items-center gap-1.5 overflow-x-auto scrollbar-none shrink-0">
               {[
                 { id: 'all', label: `الكل (${ROOM_BACKGROUND_THEMES.length})` },
+                { id: 'nature', label: 'مناظر طبيعية 🌿' },
                 { id: 'gradient', label: 'تدرجات لونية ✨' },
                 { id: 'solid', label: 'ألوان جذابة 🎨' }
               ].map((tab) => (
                 <button
                   key={tab.id}
                   type="button"
-                  onClick={() => setRoomBgCategoryFilter(tab.id as 'all' | 'gradient' | 'solid')}
-                  className={`px-3 py-1.5 rounded-xl text-[11px] font-black transition-all ${
+                  onClick={() => setRoomBgCategoryFilter(tab.id as 'all' | 'nature' | 'gradient' | 'solid')}
+                  className={`px-3 py-1.5 rounded-xl text-[11px] font-black whitespace-nowrap shrink-0 transition-all ${
                     roomBgCategoryFilter === tab.id
                       ? 'bg-indigo-600 text-white shadow-xs'
                       : 'bg-slate-100 text-slate-600 hover:bg-slate-200 hover:text-slate-900'

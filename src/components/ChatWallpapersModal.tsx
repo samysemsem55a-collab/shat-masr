@@ -31,7 +31,7 @@ export const ChatWallpapersModal: React.FC<ChatWallpapersModalProps> = ({
   onUpdateUser,
   onOpenWallet
 }) => {
-  const [filter, setFilter] = useState<'all' | 'free' | 'premium' | 'unlocked'>('all');
+  const [filter, setFilter] = useState<'all' | 'nature' | 'free' | 'premium' | 'unlocked'>('all');
   const [previewWallpaper, setPreviewWallpaper] = useState<ChatWallpaper | null>(null);
   const [purchasingId, setPurchasingId] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -86,7 +86,8 @@ export const ChatWallpapersModal: React.FC<ChatWallpapersModalProps> = ({
   };
 
   const filteredWallpapers = CHAT_WALLPAPERS.filter((wp) => {
-    const isUnlocked = isOwner || unlockedIds.has(wp.id);
+    const isUnlocked = isOwner || wp.priceCoins === 0 || unlockedIds.has(wp.id);
+    if (filter === 'nature') return wp.id.startsWith('wp_nature_') || wp.tag?.includes('طبيعية');
     if (filter === 'free') return wp.priceCoins === 0;
     if (filter === 'premium') return wp.priceCoins > 0;
     if (filter === 'unlocked') return isUnlocked;
@@ -135,8 +136,18 @@ export const ChatWallpapersModal: React.FC<ChatWallpapersModalProps> = ({
               الكل ({CHAT_WALLPAPERS.length})
             </button>
             <button
+              onClick={() => setFilter('nature')}
+              className={`px-3 py-1.5 rounded-xl transition shrink-0 ${
+                filter === 'nature'
+                  ? 'bg-emerald-600 text-white shadow-sm'
+                  : 'bg-white border border-slate-200 text-emerald-700 hover:text-emerald-800'
+              }`}
+            >
+              مناظر طبيعية 🌿
+            </button>
+            <button
               onClick={() => setFilter('free')}
-              className={`px-3 py-1.5 rounded-xl transition ${
+              className={`px-3 py-1.5 rounded-xl transition shrink-0 ${
                 filter === 'free'
                   ? 'bg-indigo-600 text-white shadow-sm'
                   : 'bg-white border border-slate-200 text-slate-600 hover:text-slate-900'
@@ -230,7 +241,7 @@ export const ChatWallpapersModal: React.FC<ChatWallpapersModalProps> = ({
         {/* Wallpapers Grid View */}
         <div className="p-3 sm:p-4 overflow-y-auto flex-1 grid grid-cols-1 sm:grid-cols-2 gap-3">
           {filteredWallpapers.map((wallpaper) => {
-            const isUnlocked = isOwner || unlockedIds.has(wallpaper.id);
+            const isUnlocked = isOwner || wallpaper.priceCoins === 0 || unlockedIds.has(wallpaper.id);
             const isActive = activeWallpaperId === wallpaper.id;
             const isPurchasing = purchasingId === wallpaper.id;
 

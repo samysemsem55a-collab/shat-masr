@@ -17,6 +17,66 @@ export const CHAT_WALLPAPERS: ChatWallpaper[] = [
     tag: 'الخلفية الرسمية'
   },
   {
+    id: 'wp_nature_nile_sunset',
+    name: 'غروب النيل الساحر 🌅',
+    description: 'منظر طبيعي خلاب لغروب الشمس الذهبي على ضفاف نهر النيل والمراكب الشراعية.',
+    thumbnail: '🌅',
+    style: {
+      backgroundImage: "linear-gradient(to bottom, rgba(15, 23, 42, 0.25), rgba(15, 23, 42, 0.45)), url('/assets/wallpapers/nature_nile_sunset.jpg')",
+      backgroundSize: 'cover',
+      backgroundPosition: 'center',
+      backgroundRepeat: 'no-repeat'
+    },
+    priceCoins: 0,
+    isPremium: false,
+    tag: 'مناظر طبيعية 🌿'
+  },
+  {
+    id: 'wp_nature_green_meadow',
+    name: 'المساحات الخضراء والربيع 🌿',
+    description: 'مروج خضراء هادئة تحت ضوء الصباح المريح للعين.',
+    thumbnail: '🌿',
+    style: {
+      backgroundImage: "linear-gradient(to bottom, rgba(15, 23, 42, 0.22), rgba(15, 23, 42, 0.40)), url('/assets/wallpapers/nature_green_meadow.jpg')",
+      backgroundSize: 'cover',
+      backgroundPosition: 'center',
+      backgroundRepeat: 'no-repeat'
+    },
+    priceCoins: 0,
+    isPremium: false,
+    tag: 'مناظر طبيعية 🌿'
+  },
+  {
+    id: 'wp_nature_clear_sky',
+    name: 'السماء الصافية والغيوم ☁️',
+    description: 'سماء زرقاء صافية وغيوم بيضاء ناعمة تضفي هدوءاً وصفاءً على المحادثة.',
+    thumbnail: '☁️',
+    style: {
+      backgroundImage: "linear-gradient(to bottom, rgba(15, 23, 42, 0.16), rgba(15, 23, 42, 0.34)), url('/assets/wallpapers/nature_clear_sky.jpg')",
+      backgroundSize: 'cover',
+      backgroundPosition: 'center',
+      backgroundRepeat: 'no-repeat'
+    },
+    priceCoins: 0,
+    isPremium: false,
+    tag: 'مناظر طبيعية 🌿'
+  },
+  {
+    id: 'wp_nature_starry_oasis',
+    name: 'سماء الواحة المرصعة بالنجوم 🌌',
+    description: 'أجواء ليلية طبيعية هادئة تحت السماء والنجوم وانعكاس القمر على المياه.',
+    thumbnail: '🌌',
+    style: {
+      backgroundImage: "linear-gradient(to bottom, rgba(8, 12, 21, 0.35), rgba(8, 12, 21, 0.55)), url('/assets/wallpapers/nature_starry_oasis.jpg')",
+      backgroundSize: 'cover',
+      backgroundPosition: 'center',
+      backgroundRepeat: 'no-repeat'
+    },
+    priceCoins: 0,
+    isPremium: false,
+    tag: 'مناظر طبيعية 🌿'
+  },
+  {
     id: 'wp_doodle_custom',
     name: 'نقوش وتطريز الشات الرسمية 💬',
     description: 'الخلفية الكلاسيكية بنقوش ورسومات التطريز الهادئة للمحادثات الخاصة.',
@@ -165,7 +225,7 @@ export function getWallpaperStyleById(wallpaperId?: string): React.CSSProperties
 export interface RoomBackgroundTheme {
   id: string;
   name: string;
-  category: 'default' | 'gradient' | 'solid';
+  category: 'default' | 'nature' | 'gradient' | 'solid';
   previewLabel: string;
   style: React.CSSProperties;
   isDark?: boolean;
@@ -179,6 +239,55 @@ export const ROOM_BACKGROUND_THEMES: RoomBackgroundTheme[] = [
     previewLabel: 'افتراضي',
     style: {},
     isDark: false
+  },
+  // Natural Landscape Backgrounds
+  {
+    id: 'nature_nile_sunset',
+    name: 'غروب النيل الطبيعي 🌅',
+    category: 'nature',
+    previewLabel: 'طبيعة • غروب',
+    style: {
+      backgroundImage: "linear-gradient(to bottom, rgba(15, 23, 42, 0.35), rgba(15, 23, 42, 0.55)), url('/assets/wallpapers/nature_nile_sunset.jpg')",
+      backgroundSize: 'cover',
+      backgroundPosition: 'center'
+    },
+    isDark: true
+  },
+  {
+    id: 'nature_green_meadow',
+    name: 'المروج الخضراء 🌿',
+    category: 'nature',
+    previewLabel: 'طبيعة • أخضر',
+    style: {
+      backgroundImage: "linear-gradient(to bottom, rgba(255, 255, 255, 0.35), rgba(240, 253, 244, 0.5)), url('/assets/wallpapers/nature_green_meadow.jpg')",
+      backgroundSize: 'cover',
+      backgroundPosition: 'center'
+    },
+    isDark: false
+  },
+  {
+    id: 'nature_clear_sky',
+    name: 'السماء الصافية والغيوم ☁️',
+    category: 'nature',
+    previewLabel: 'طبيعة • سماء',
+    style: {
+      backgroundImage: "linear-gradient(to bottom, rgba(255, 255, 255, 0.38), rgba(239, 246, 255, 0.55)), url('/assets/wallpapers/nature_clear_sky.jpg')",
+      backgroundSize: 'cover',
+      backgroundPosition: 'center'
+    },
+    isDark: false
+  },
+  {
+    id: 'nature_starry_oasis',
+    name: 'سماء النجوم والواحة 🌌',
+    category: 'nature',
+    previewLabel: 'طبيعة • ليل',
+    style: {
+      backgroundImage: "linear-gradient(to bottom, rgba(8, 12, 21, 0.4), rgba(8, 12, 21, 0.62)), url('/assets/wallpapers/nature_starry_oasis.jpg')",
+      backgroundSize: 'cover',
+      backgroundPosition: 'center'
+    },
+    isDark: true
   },
   // Attractive Gradients (Light & Luminous)
   {
