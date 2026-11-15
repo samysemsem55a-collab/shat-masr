@@ -34,7 +34,9 @@ export async function initExternalPushNotifications(
   let swRegistration: ServiceWorkerRegistration | undefined;
   if ('serviceWorker' in navigator) {
     try {
-      swRegistration = await navigator.serviceWorker.register('/firebase-messaging-sw.js');
+      const fcmScope = '/firebase-cloud-messaging-push-scope';
+      const existingReg = await navigator.serviceWorker.getRegistration(fcmScope);
+      swRegistration = existingReg || await navigator.serviceWorker.register('/firebase-messaging-sw.js', { scope: fcmScope });
       const activeSw = swRegistration.active || swRegistration.installing || swRegistration.waiting;
       if (activeSw) {
         activeSw.postMessage({ type: 'INIT_FCM_CONFIG', config: firebaseConfig });

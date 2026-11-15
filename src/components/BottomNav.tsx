@@ -15,7 +15,7 @@ interface BottomNavProps {
   unreadChatsCount: number;
 }
 
-export const BottomNav: React.FC<BottomNavProps> = ({
+export const BottomNav: React.FC<BottomNavProps> = React.memo(({
   currentTab,
   onTabChange,
   unreadChatsCount,
@@ -87,4 +87,4 @@ export const BottomNav: React.FC<BottomNavProps> = ({
       </div>
     </nav>
   );
-};
+});

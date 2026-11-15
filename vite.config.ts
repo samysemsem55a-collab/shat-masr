@@ -11,10 +11,11 @@ export default defineConfig(() => {
       react(), 
       tailwindcss(),
       VitePWA({
-        registerType: 'autoUpdate',
+        registerType: 'prompt',
         manifest: false, // Use our explicit public/manifest.json
         workbox: {
           globPatterns: ['**/*.{js,css,html,ico,png,svg,jpg,jpeg,webp}'],
+          globIgnores: ['**/firebase-messaging-sw.js'],
           maximumFileSizeToCacheInBytes: 8 * 1024 * 1024, // 8 MB to allow bundled assets
           navigateFallbackDenylist: [/^\/api/, /^\/ws/],
         },

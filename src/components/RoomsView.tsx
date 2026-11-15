@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Users,
   Eye,
@@ -134,7 +134,47 @@ const ForumPostCommentsSection: React.FC<{
   );
 };
 
-export const RoomsView: React.FC<RoomsViewProps> = ({
+function areForumPostsEqual(a: ForumPost[], b: ForumPost[]): boolean {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    const p1 = a[i];
+    const p2 = b[i];
+    if (
+      p1.id !== p2.id ||
+      p1.text !== p2.text ||
+      p1.likesCount !== p2.likesCount ||
+      p1.commentsCount !== p2.commentsCount ||
+      (p1.likedBy || []).length !== (p2.likedBy || []).length ||
+      p1.authorName !== p2.authorName ||
+      p1.authorAvatar !== p2.authorAvatar
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function areSharedMissionsEqual(a: SharedRoomMission[], b: SharedRoomMission[]): boolean {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    const m1 = a[i];
+    const m2 = b[i];
+    if (
+      m1.id !== m2.id ||
+      m1.currentProgress !== m2.currentProgress ||
+      m1.targetProgress !== m2.targetProgress ||
+      (m1.contributors || []).length !== (m2.contributors || []).length ||
+      (m1.claimedBy || []).length !== (m2.claimedBy || []).length
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
   rooms,
   currentUser,
   onlineUsers,
@@ -157,13 +197,20 @@ export const RoomsView: React.FC<RoomsViewProps> = ({
   const [showMobileMissions, setShowMobileMissions] = useState(false);
 
   // Strict requirement: Keep ONLY غرفة مصر 1 (room_egypt) and غرفة مصر 2 (room_egypt2)
-  const coreEgyptRooms = rooms.filter(r => r.id === 'room_egypt' || r.id === 'room_egypt2');
-  const onlineUserIds = new Set(onlineUsers.map(u => u.id));
+  const coreEgyptRooms = useMemo(
+    () => rooms.filter(r => r.id === 'room_egypt' || r.id === 'room_egypt2'),
+    [rooms]
+  );
+  const onlineUserIds = useMemo(() => new Set(onlineUsers.map(u => u.id)), [onlineUsers]);
   const isOwner = isUserAdminOrOwner(currentUser);
 
   useEffect(() => {
-    const unsubForum = subscribeToForumPosts(setForumPosts);
-    const unsubMissions = subscribeToSharedRoomMissions(setSharedMissions);
+    const unsubForum = subscribeToForumPosts((nextPosts) => {
+      setForumPosts(prev => (areForumPostsEqual(prev, nextPosts) ? prev : nextPosts));
+    });
+    const unsubMissions = subscribeToSharedRoomMissions((nextMissions) => {
+      setSharedMissions(prev => (areSharedMissionsEqual(prev, nextMissions) ? prev : nextMissions));
+    });
     return () => {
       unsubForum();
       unsubMissions();
@@ -761,4 +808,4 @@ export const RoomsView: React.FC<RoomsViewProps> = ({
       </div>
     </div>
   );
-};
+});

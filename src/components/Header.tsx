@@ -42,7 +42,7 @@ interface HeaderProps {
   onOpenMessagesTab?: () => void;
 }
 
-export const Header: React.FC<HeaderProps> = ({
+export const Header: React.FC<HeaderProps> = React.memo(({
   currentUser,
   onOpenWallet,
   onOpenVip,
@@ -507,4 +507,4 @@ export const Header: React.FC<HeaderProps> = ({
       </div>
     </header>
   );
-};
+});

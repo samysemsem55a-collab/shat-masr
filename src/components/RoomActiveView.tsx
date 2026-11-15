@@ -43,7 +43,10 @@ import {
   Share2,
   Sticker,
   Unlock,
-  Settings
+  Settings,
+  MessageCircle,
+  User as UserIcon,
+  UserPlus
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { toast } from 'sonner';
@@ -74,8 +77,10 @@ import {
   setRoomLockState,
   subscribeToRoomLockState,
   contributeToSharedRoomMission,
-  purgeRoomMessages
+  purgeRoomMessages,
+  sendFriendRequest
 } from '../services/firebase';
+import { realtimeSocket } from '../services/realtimeSocket';
 import { sounds } from '../utils/soundEffects';
 import { filterInappropriateText } from '../services/contentFilter';
 
@@ -90,6 +95,8 @@ interface RoomActiveViewProps {
   onUpdateRoomBackground?: (backgroundTheme: string) => void;
   onUpdateRoomLock?: (isLocked: boolean) => void;
   onOpenUserProfile: (user: User) => void;
+  onOpenPrivateChatWith?: (user: User) => void;
+  onSendGiftToUser?: (user: User) => void;
   onOpenOnlineUsers: () => void;
   onUpdateUser?: (user: User) => void;
   onOpenWallet?: () => void;
@@ -206,12 +213,32 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
   onUpdateRoomBackground,
   onUpdateRoomLock,
   onOpenUserProfile,
+  onOpenPrivateChatWith,
+  onSendGiftToUser,
   onOpenOnlineUsers,
   onUpdateUser,
   onOpenWallet,
 }) => {
   // Chat Wallpapers Modal State (Select & Purchase)
   const [isWallpapersModalOpen, setIsWallpapersModalOpen] = useState(false);
+
+  // User Quick Action Mini Popover (on clicking a username in room messages)
+  const [quickUserMenu, setQuickUserMenu] = useState<{
+    user: User;
+    x: number;
+    y: number;
+  } | null>(null);
+  const [sentFriendRequestIds, setSentFriendRequestIds] = useState<Record<string, boolean>>({});
+  const [sendingFriendId, setSendingFriendId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!quickUserMenu) return;
+    const handleEsc = (ev: KeyboardEvent) => {
+      if (ev.key === 'Escape') setQuickUserMenu(null);
+    };
+    window.addEventListener('keydown', handleEsc);
+    return () => window.removeEventListener('keydown', handleEsc);
+  }, [quickUserMenu]);
 
   // Top Message Type Filter State: 'all' | 'messages' | 'images' | 'gifts'
   const [messageFilter, setMessageFilter] = useState<'all' | 'messages' | 'images' | 'gifts'>('all');
@@ -1102,9 +1129,9 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
     setTasbeehCount(prev => prev + 1);
   };
 
-  const openProfileFromMsg = (msg: Message) => {
+  const buildUserFromMsg = (msg: Message): User => {
     const isFromMe = msg.senderId === currentUser.id;
-    onOpenUserProfile({
+    return {
       id: msg.senderId,
       name: msg.senderName,
       username: msg.senderName.replace(/\s+/g, '_').toLowerCase(),
@@ -1129,7 +1156,78 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
       level: isFromMe ? currentUser.level : 1,
       likesReceived: isFromMe ? currentUser.likesReceived : 0,
       giftsReceivedCount: isFromMe ? currentUser.giftsReceivedCount : 0
-    });
+    };
+  };
+
+  const openProfileFromMsg = (msg: Message) => {
+    onOpenUserProfile(buildUserFromMsg(msg));
+  };
+
+  const openUserQuickMenu = (msg: Message, e?: React.MouseEvent | React.KeyboardEvent) => {
+    if (!msg.senderId || msg.senderId === 'system_bot') return;
+    const target = buildUserFromMsg(msg);
+    if (msg.senderId === currentUser.id) {
+      onOpenUserProfile(target);
+      return;
+    }
+
+    let x = typeof window !== 'undefined' ? window.innerWidth / 2 : 180;
+    let y = typeof window !== 'undefined' ? window.innerHeight / 2 : 240;
+
+    if (e && 'clientX' in e && (e.clientX !== 0 || e.clientY !== 0)) {
+      x = e.clientX;
+      y = e.clientY;
+    } else if (e?.currentTarget instanceof HTMLElement) {
+      const rect = e.currentTarget.getBoundingClientRect();
+      x = rect.left + rect.width / 2;
+      y = rect.bottom + 4;
+    }
+
+    sounds.playMessageReceived();
+    setQuickUserMenu({ user: target, x, y });
+  };
+
+  const isTargetAlreadyFriend = (targetId: string): boolean => {
+    try {
+      const raw = localStorage.getItem(`user_friends_${currentUser.id}`);
+      if (!raw) return false;
+      const list = JSON.parse(raw);
+      return Array.isArray(list) && list.some((f: any) => f.friendId === targetId || f.id === targetId);
+    } catch {
+      return false;
+    }
+  };
+
+  const handleQuickAddFriend = async (targetUser: User) => {
+    if (!targetUser.id || targetUser.id === currentUser.id) return;
+    if (isTargetAlreadyFriend(targetUser.id)) {
+      toast.info(`${targetUser.name} موجود بالفعل في قائمة أصدقائك 🤝`);
+      setQuickUserMenu(null);
+      return;
+    }
+    if (sentFriendRequestIds[targetUser.id] || sendingFriendId === targetUser.id) return;
+
+    setSendingFriendId(targetUser.id);
+    sounds.playMessageSent();
+    try {
+      await sendFriendRequest(currentUser, targetUser.id);
+      realtimeSocket.sendFriendRequest({
+        id: `req_${Date.now()}`,
+        senderId: currentUser.id,
+        senderName: currentUser.name,
+        senderAvatar: currentUser.avatar,
+        receiverId: targetUser.id,
+        createdAt: Date.now(),
+        status: 'pending'
+      });
+      setSentFriendRequestIds((prev) => ({ ...prev, [targetUser.id]: true }));
+      toast.success(`تم إرسال طلب صداقة إلى ${targetUser.name} 🤝`);
+      setQuickUserMenu(null);
+    } catch {
+      toast.error('تعذر إرسال طلب الصداقة حالياً، حاول مرة أخرى');
+    } finally {
+      setSendingFriendId(null);
+    }
   };
 
   const handleSelectRoomBackground = (themeId: string) => {
@@ -1762,7 +1860,7 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
             >
               {/* Circular Avatar with Colored Ring */}
               <div 
-                onClick={() => openProfileFromMsg(msg)}
+                onClick={(e) => openUserQuickMenu(msg, e)}
                 className={`w-8 h-8 sm:w-9 sm:h-9 rounded-full overflow-hidden bg-slate-100 border-2 flex items-center justify-center font-black text-xs text-slate-700 shrink-0 mt-0.5 cursor-pointer hover:scale-105 active:scale-95 transition-transform shadow-2xs ${
                   isVipSender
                     ? 'border-amber-400 ring-1 ring-amber-300/60'
@@ -1770,7 +1868,7 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
                     ? 'border-emerald-400'
                     : senderStyle.ring
                 }`}
-                title="عرض الملف الشخصي"
+                title="خيارات التفاعل مع العضو"
               >
                 {msg.senderAvatar ? (
                   <img src={msg.senderAvatar} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
@@ -1852,16 +1950,17 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
                 {/* Voice Note Player OR Sticker OR Classic Inline [Icon] [Colored Name] : [Black Message Text] [Flag] */}
                 {msg.type === 'sticker' ? (
                   <div className="flex items-center flex-wrap gap-2 py-0.5">
-                    <span
+                    <button
+                      type="button"
                       onClick={(e) => {
                         e.stopPropagation();
-                        openProfileFromMsg(msg);
+                        openUserQuickMenu(msg, e);
                       }}
-                      className={`text-[13px] font-black cursor-pointer hover:underline ${senderStyle.name}`}
+                      className={`text-[13px] font-black cursor-pointer hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 rounded ${senderStyle.name}`}
                     >
                       {isVipSender && <span className="ml-0.5">💎</span>}
                       {msg.senderName}:
-                    </span>
+                    </button>
                     <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-2xl bg-white/95 border border-slate-200 shadow-xs">
                       <span className={`text-3xl select-none ${msg.stickerAnimation || ''}`}>
                         {msg.stickerEmoji || msg.content}
@@ -1873,16 +1972,17 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
                   </div>
                 ) : msg.type === 'voice' ? (
                   <div className="flex items-center flex-wrap gap-1.5 py-0.5">
-                    <span
+                    <button
+                      type="button"
                       onClick={(e) => {
                         e.stopPropagation();
-                        openProfileFromMsg(msg);
+                        openUserQuickMenu(msg, e);
                       }}
-                      className={`text-[13px] sm:text-sm font-black cursor-pointer hover:underline ${senderStyle.name}`}
+                      className={`text-[13px] sm:text-sm font-black cursor-pointer hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 rounded ${senderStyle.name}`}
                     >
                       {isVipSender && <span className="ml-0.5">💎</span>}
                       {msg.senderName}
-                    </span>
+                    </button>
                     <span className={`font-bold ${isDarkRoomBg ? 'text-slate-300' : 'text-slate-700'}`}>:</span>
                     <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full bg-white/95 border border-slate-200 shadow-2xs">
                       <button
@@ -1932,15 +2032,16 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
                     )}
 
                     {/* Distinct Colored Username */}
-                    <span
+                    <button
+                      type="button"
                       onClick={(e) => {
                         e.stopPropagation();
-                        openProfileFromMsg(msg);
+                        openUserQuickMenu(msg, e);
                       }}
-                      className={`font-black cursor-pointer hover:underline ${senderStyle.name}`}
+                      className={`font-black cursor-pointer hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 rounded inline ${senderStyle.name}`}
                     >
                       {msg.senderName}
-                    </span>
+                    </button>
 
                     <span className={`font-bold mx-1 ${isDarkRoomBg ? 'text-slate-300' : 'text-slate-700'}`}>:</span>
 
@@ -2904,6 +3005,143 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
           </div>
         </div>
       )}
+
+      {/* User Quick Actions Mini Popover (on clicking a user's name) */}
+      {quickUserMenu && (() => {
+        const vw = typeof window !== 'undefined' ? window.innerWidth : 380;
+        const vh = typeof window !== 'undefined' ? window.innerHeight : 700;
+        const popoverWidth = 224;
+        const popoverHeight = 252;
+        const left = Math.min(Math.max(12, quickUserMenu.x - popoverWidth / 2), vw - popoverWidth - 12);
+        const openAbove = quickUserMenu.y + popoverHeight + 16 > vh;
+        const top = openAbove
+          ? Math.max(12, quickUserMenu.y - popoverHeight - 10)
+          : Math.min(quickUserMenu.y + 10, vh - popoverHeight - 12);
+        const target = quickUserMenu.user;
+        const alreadyFriend = isTargetAlreadyFriend(target.id);
+        const alreadySent = Boolean(sentFriendRequestIds[target.id]);
+        const isSendingReq = sendingFriendId === target.id;
+
+        return (
+          <div
+            className="fixed inset-0 z-50 bg-slate-900/15"
+            dir="rtl"
+            onClick={() => setQuickUserMenu(null)}
+          >
+            <div
+              role="menu"
+              aria-label={`إجراءات سريعة لـ ${target.name}`}
+              onClick={(e) => e.stopPropagation()}
+              style={{ left: `${left}px`, top: `${top}px`, width: `${popoverWidth}px` }}
+              className="fixed bg-white/95 backdrop-blur-md border border-slate-200 rounded-2xl shadow-[0_18px_42px_-10px_rgba(15,23,42,0.28)] p-2 space-y-1.5 text-right animate-in zoom-in-95 duration-150 motion-reduce:animate-none"
+            >
+              {/* Compact User Header */}
+              <div className="flex items-center justify-between gap-2 px-2 py-1.5 border-b border-slate-100">
+                <div className="flex items-center gap-2 min-w-0">
+                  <div className="w-8 h-8 rounded-full overflow-hidden bg-slate-100 border border-slate-200 shrink-0 flex items-center justify-center text-xs font-black text-slate-700">
+                    {target.avatar ? (
+                      <img src={target.avatar} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                    ) : (
+                      <span>{target.name.charAt(0)}</span>
+                    )}
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-xs font-black text-slate-900 truncate">{target.name}</p>
+                    <p className="text-[10.5px] font-medium text-slate-500 truncate">
+                      {target.vipBadge || 'عضو في الغرفة'}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setQuickUserMenu(null)}
+                  aria-label="إغلاق القائمة"
+                  className="p-1 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer shrink-0"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+
+              {/* Quick Actions */}
+              <div className="space-y-1">
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setQuickUserMenu(null);
+                    if (onOpenPrivateChatWith) {
+                      onOpenPrivateChatWith(target);
+                    } else {
+                      onOpenUserProfile(target);
+                    }
+                  }}
+                  className="w-full min-h-[40px] px-3 py-2 rounded-xl hover:bg-sky-50 active:bg-sky-100 text-slate-800 hover:text-sky-800 text-xs font-bold flex items-center gap-2.5 transition-colors cursor-pointer"
+                >
+                  <MessageCircle className="w-4 h-4 text-sky-600 shrink-0" />
+                  <span>مراسلة</span>
+                </button>
+
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setQuickUserMenu(null);
+                    onOpenUserProfile(target);
+                  }}
+                  className="w-full min-h-[40px] px-3 py-2 rounded-xl hover:bg-indigo-50 active:bg-indigo-100 text-slate-800 hover:text-indigo-800 text-xs font-bold flex items-center gap-2.5 transition-colors cursor-pointer"
+                >
+                  <UserIcon className="w-4 h-4 text-indigo-600 shrink-0" />
+                  <span>عرض الملف الشخصي</span>
+                </button>
+
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setQuickUserMenu(null);
+                    if (onSendGiftToUser) {
+                      onSendGiftToUser(target);
+                    } else {
+                      onOpenGiftModal();
+                    }
+                  }}
+                  className="w-full min-h-[40px] px-3 py-2 rounded-xl hover:bg-rose-50 active:bg-rose-100 text-slate-800 hover:text-rose-800 text-xs font-bold flex items-center gap-2.5 transition-colors cursor-pointer"
+                >
+                  <Gift className="w-4 h-4 text-rose-600 shrink-0" />
+                  <span>إرسال هدية</span>
+                </button>
+
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={alreadySent || isSendingReq}
+                  onClick={() => handleQuickAddFriend(target)}
+                  className={`w-full min-h-[40px] px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-2.5 transition-colors ${
+                    alreadyFriend || alreadySent
+                      ? 'bg-emerald-50 text-emerald-700 cursor-default'
+                      : 'hover:bg-emerald-50 active:bg-emerald-100 text-slate-800 hover:text-emerald-800 cursor-pointer'
+                  }`}
+                >
+                  {alreadyFriend || alreadySent ? (
+                    <Check className="w-4 h-4 text-emerald-600 shrink-0" />
+                  ) : (
+                    <UserPlus className="w-4 h-4 text-emerald-600 shrink-0" />
+                  )}
+                  <span>
+                    {alreadyFriend
+                      ? 'أصدقاء بالفعل'
+                      : alreadySent
+                      ? 'تم إرسال طلب الصداقة'
+                      : isSendingReq
+                      ? 'جاري الإرسال...'
+                      : 'إضافة صديق'}
+                  </span>
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Chat Wallpaper Customization & Purchasing Modal */}
       <ChatWallpapersModal

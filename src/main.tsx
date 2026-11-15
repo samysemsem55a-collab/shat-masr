@@ -3,10 +3,16 @@ import App from './App.tsx';
 import './index.css';
 import { registerSW } from 'virtual:pwa-register';
 
-// Register PWA Service Worker in production; clean up any stale dev-sw.js in development
+// Register PWA Service Worker silently in production without ever forcing a page reload
 if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
   if (import.meta.env.PROD) {
-    registerSW({ immediate: true });
+    registerSW({
+      immediate: false,
+      onNeedRefresh() {
+        // Silent background update: never auto-reload or interrupt active Home state
+      },
+      onOfflineReady() {}
+    });
   } else {
     navigator.serviceWorker.getRegistrations?.().then((regs) => {
       regs.forEach((reg) => {

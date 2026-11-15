@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   X, 
   Sparkles, 
@@ -21,6 +21,7 @@ interface LuxuryGiftModalProps {
   speakers: SpeakerSeat[];
   onSendGift: (gift: GiftItem, recipientName: string) => void;
   onOpenWallet: () => void;
+  preselectedRecipient?: User | null;
 }
 
 export const LuxuryGiftModal: React.FC<LuxuryGiftModalProps> = ({
@@ -30,16 +31,35 @@ export const LuxuryGiftModal: React.FC<LuxuryGiftModalProps> = ({
   speakers,
   onSendGift,
   onOpenWallet,
+  preselectedRecipient = null,
 }) => {
   const [selectedGift, setSelectedGift] = useState<GiftItem>(LUXURY_GIFTS[0]);
   const [selectedRecipient, setSelectedRecipient] = useState<string>(
-    speakers.find(s => s.user && s.user.id !== currentUser.id)?.user?.name || 'مضيف المجلس'
+    preselectedRecipient?.name ||
+      speakers.find(s => s.user && s.user.id !== currentUser.id)?.user?.name ||
+      'مضيف المجلس 👑'
   );
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setErrorMsg(null);
+    if (preselectedRecipient?.name && preselectedRecipient.id !== currentUser.id) {
+      setSelectedRecipient(preselectedRecipient.name);
+    } else {
+      setSelectedRecipient(
+        speakers.find(s => s.user && s.user.id !== currentUser.id)?.user?.name || 'مضيف المجلس 👑'
+      );
+    }
+  }, [isOpen, preselectedRecipient?.id, preselectedRecipient?.name, currentUser.id, speakers]);
 
   if (!isOpen) return null;
 
   const isOwner = isUserAdminOrOwner(currentUser);
+  const isPreselectedInSpeakers = Boolean(
+    preselectedRecipient?.name &&
+      speakers.some(s => s.user && s.user.id !== currentUser.id && s.user.name === preselectedRecipient.name)
+  );
 
   const handleSend = () => {
     if (!isOwner && currentUser.coins < selectedGift.cost) {
@@ -128,6 +148,13 @@ export const LuxuryGiftModal: React.FC<LuxuryGiftModalProps> = ({
               onChange={(e) => setSelectedRecipient(e.target.value)}
               className="w-full bg-[#121c32] border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
             >
+              {preselectedRecipient?.name &&
+                preselectedRecipient.id !== currentUser.id &&
+                !isPreselectedInSpeakers && (
+                  <option value={preselectedRecipient.name}>
+                    🎁 {preselectedRecipient.name} ({preselectedRecipient.countryFlag || '🇪🇬'})
+                  </option>
+                )}
               <option value="مضيف المجلس 👑">مضيف المجلس 👑</option>
               {speakers
                 .filter(s => s.user && s.user.id !== currentUser.id)

@@ -37,13 +37,23 @@ export const MusicRadioModal: React.FC<MusicRadioModalProps> = ({
   onClose,
 }) => {
   const [snap, setSnap] = useState<RadioPlayerSnapshot>(() => globalRadioPlayer.getSnapshot());
+  const [timeState, setTimeState] = useState<{ currentTime: number; duration: number }>(() => {
+    const initial = globalRadioPlayer.getSnapshot();
+    return { currentTime: initial.currentTime, duration: initial.duration };
+  });
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedSongCategory, setSelectedSongCategory] = useState<string>('all');
   const [selectedRadioCategory, setSelectedRadioCategory] = useState<string>('all');
 
   useEffect(() => {
-    return globalRadioPlayer.subscribe(setSnap);
-  }, []);
+    if (!isOpen) return;
+    const unsubCore = globalRadioPlayer.subscribe(setSnap);
+    const unsubTime = globalRadioPlayer.subscribeTime(setTimeState);
+    return () => {
+      unsubCore();
+      unsubTime();
+    };
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
@@ -53,12 +63,11 @@ export const MusicRadioModal: React.FC<MusicRadioModalProps> = ({
     activeStation,
     isPlaying,
     isLoading,
-    currentTime,
-    duration,
     volume,
     isMuted,
     playMode
   } = snap;
+  const { currentTime, duration } = timeState;
 
   const formatSeconds = (sec: number) => {
     if (!sec || isNaN(sec) || !isFinite(sec)) return '0:00';

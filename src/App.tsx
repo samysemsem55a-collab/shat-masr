@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Toaster, toast } from 'sonner';
-import { Play, Pause, SkipForward, Radio, Volume2, VolumeX, X } from 'lucide-react';
 import { Header } from './components/Header';
 import { BottomNav, NavTab } from './components/BottomNav';
 import { RoomsView } from './components/RoomsView';
@@ -17,6 +16,7 @@ import { NotificationsModal } from './components/NotificationsModal';
 import { OnlineUsersModal } from './components/OnlineUsersModal';
 import { UserProfileModal } from './components/UserProfileModal';
 import { MusicRadioModal } from './components/MusicRadioModal';
+import { FloatingMiniRadioBar } from './components/FloatingMiniRadioBar';
 import { FriendRequestsModal } from './components/FriendRequestsModal';
 import { AdminControlPanelModal } from './components/AdminControlPanelModal';
 import { DailyMissionsModal } from './components/DailyMissionsModal';
@@ -24,12 +24,13 @@ import { PrivateRoomPromptModal } from './components/PrivateRoomPromptModal';
 import { PhoneAuthModal } from './components/PhoneAuthModal';
 import { WelcomeAuthModal } from './components/WelcomeAuthModal';
 import { CallModal } from './components/CallModal';
+import { PullToRefreshShell } from './components/PullToRefreshShell';
 
 import { User, Room, Message, GiftItem, VipTier, SpeakerSeat, FriendRequest, DailyMission, UnreadSenderSummary } from './types/chat';
 import { INITIAL_ROOMS, getOrCreateUser, isUserAdminOrOwner } from './data/seedData';
 import { sounds } from './utils/soundEffects';
 import { realtimeSocket } from './services/realtimeSocket';
-import { globalRadioPlayer, RadioPlayerSnapshot } from './services/radioPlayer';
+import { globalRadioPlayer } from './services/radioPlayer';
 import {
   initExternalPushNotifications,
   requestPushNotificationPermission,
@@ -53,8 +54,48 @@ import {
   setRoomBackgroundTheme,
   setRoomLockState,
   subscribeToAllRoomLocks,
-  contributeToSharedRoomMission
+  contributeToSharedRoomMission,
+  refreshHomeDataFromFirebase
 } from './services/firebase';
+
+function areUserListsEqual(a: User[], b: User[]): boolean {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    const u1 = a[i];
+    const u2 = b[i];
+    if (
+      u1.id !== u2.id ||
+      u1.name !== u2.name ||
+      u1.avatar !== u2.avatar ||
+      u1.status !== u2.status ||
+      u1.role !== u2.role ||
+      u1.vipBadge !== u2.vipBadge ||
+      Boolean(u1.isBanned) !== Boolean(u2.isBanned) ||
+      Boolean(u1.isMuted) !== Boolean(u2.isMuted)
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+const IGNORED_PROFILE_DIFF_KEYS = new Set(['updatedAt', 'lastSeen', 'joinedAt']);
+
+function hasUserVisibleChange(prev: User, patch: Partial<User>): boolean {
+  for (const [key, val] of Object.entries(patch)) {
+    if (IGNORED_PROFILE_DIFF_KEYS.has(key) || val === undefined) continue;
+    const prevVal = (prev as any)[key];
+    if (Array.isArray(val) && Array.isArray(prevVal)) {
+      if (val.length !== prevVal.length || val.some((v, idx) => v !== prevVal[idx])) {
+        return true;
+      }
+    } else if (prevVal !== val) {
+      return true;
+    }
+  }
+  return false;
+}
 
 export default function App() {
   // 1. Core User State: Guaranteed Unique Per-Device User + Persistent Tab Session ID
@@ -217,6 +258,7 @@ export default function App() {
   const [isWalletOpen, setIsWalletOpen] = useState(false);
   const [isVipOpen, setIsVipOpen] = useState(false);
   const [isGiftModalOpen, setIsGiftModalOpen] = useState(false);
+  const [giftRecipientUser, setGiftRecipientUser] = useState<User | null>(null);
   const [isCreateRoomOpen, setIsCreateRoomOpen] = useState(false);
   const [createRoomType, setCreateRoomType] = useState<'voice' | 'text_only'>('voice');
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
@@ -232,9 +274,8 @@ export default function App() {
     return !hasEntered && !authEmail;
   });
 
-  // Global Persistent FM Radio & Music Player State
-  const [radioSnap, setRadioSnap] = useState<RadioPlayerSnapshot>(() => globalRadioPlayer.getSnapshot());
-  const [miniRadioDismissed, setMiniRadioDismissed] = useState(false);
+  // Global Persistent FM Radio & Music Player Playing Indicator (decoupled from tick/buffer churn)
+  const [isRadioPlaying, setIsRadioPlaying] = useState<boolean>(() => globalRadioPlayer.getSnapshot().isPlaying);
 
   // Incoming Call State (WebRTC)
   const [incomingCall, setIncomingCall] = useState<{
@@ -244,7 +285,9 @@ export default function App() {
   } | null>(null);
 
   useEffect(() => {
-    const unsub = globalRadioPlayer.subscribe((snap) => setRadioSnap(snap));
+    const unsub = globalRadioPlayer.subscribe((snap) => {
+      setIsRadioPlaying((prev) => (prev === snap.isPlaying ? prev : snap.isPlaying));
+    });
     return unsub;
   }, []);
 
@@ -370,61 +413,81 @@ export default function App() {
     return true;
   };
 
+  const currentUserRef = useRef<User>(currentUser);
+  currentUserRef.current = currentUser;
+
+  const globalOnlineUsersRef = useRef<User[]>(globalOnlineUsers);
+  globalOnlineUsersRef.current = globalOnlineUsers;
+
   // Persist User Changes & Sync to Firebase
   useEffect(() => {
     localStorage.setItem('arab_chat_user', JSON.stringify(currentUser));
   }, [currentUser]);
 
-  // Subscribe to real-time User Profile updates from Firebase Realtime Database
+  // Subscribe to real-time User Profile updates from Firebase Realtime Database (silent equality check)
   useEffect(() => {
     const unsub = subscribeToUserProfile(currentUser.id, (profileUpdate) => {
-      setCurrentUser(prev => ({
-        ...prev,
-        ...profileUpdate
-      }));
+      setCurrentUser(prev => {
+        if (!hasUserVisibleChange(prev, profileUpdate)) return prev;
+        return { ...prev, ...profileUpdate };
+      });
     });
     return () => unsub();
   }, [currentUser.id]);
 
-  // 1. Initialize Real-Time WebSocket Connection across all devices
+  // 1. Initialize Real-Time WebSocket Connection across all devices (stable on user ID & sessionId)
   useEffect(() => {
-    realtimeSocket.connect(currentUser);
+    const activeUser = currentUserRef.current;
+    realtimeSocket.connect(activeUser);
 
     // Listen to global presence updates (real connected users via WebSocket)
     const unsubGlobal = realtimeSocket.subscribeToGlobalPresence((liveUsers) => {
       if (liveUsers && liveUsers.length > 0) {
+        const self = currentUserRef.current;
         const map = new Map<string, User>();
-        map.set(currentUser.id, currentUser);
+        map.set(self.id, self);
         liveUsers.forEach(u => {
           if (u && u.id) map.set(u.id, u);
         });
-        setGlobalOnlineUsers(Array.from(map.values()));
+        const nextList = Array.from(map.values());
+        setGlobalOnlineUsers(prev => (areUserListsEqual(prev, nextList) ? prev : nextList));
       }
     });
 
     // Also listen to Firestore global presence (multi-session across browser instances)
-    const unsubFirestorePresence = subscribeToGlobalPresence(currentUser, (liveUsers) => {
+    const unsubFirestorePresence = subscribeToGlobalPresence(activeUser, (liveUsers) => {
       if (liveUsers && liveUsers.length > 0) {
         setGlobalOnlineUsers(prev => {
           const map = new Map<string, User>();
           prev.forEach(u => map.set(u.id, u));
           liveUsers.forEach(u => map.set(u.id, u));
-          return Array.from(map.values());
+          const nextList = Array.from(map.values());
+          return areUserListsEqual(prev, nextList) ? prev : nextList;
         });
       }
     });
 
     // Listen to admin actions (instant VIP, ban, mute, coins)
     const unsubAdmin = realtimeSocket.subscribeToAdminEvents((targetUserId, updates) => {
-      if (targetUserId === currentUser.id) {
-        setCurrentUser(prev => ({ ...prev, ...updates }));
+      if (targetUserId === currentUserRef.current.id) {
+        setCurrentUser(prev => (hasUserVisibleChange(prev, updates) ? { ...prev, ...updates } : prev));
       }
-      setGlobalOnlineUsers(prev => prev.map(u => u.id === targetUserId ? { ...u, ...updates } : u));
+      setGlobalOnlineUsers(prev => {
+        let changed = false;
+        const next = prev.map(u => {
+          if (u.id === targetUserId && hasUserVisibleChange(u, updates)) {
+            changed = true;
+            return { ...u, ...updates };
+          }
+          return u;
+        });
+        return changed ? next : prev;
+      });
     });
 
     // Listen to friend requests in real-time (strictly pending & deduplicated)
     const unsubFriend = realtimeSocket.subscribeToFriendRequests((req) => {
-      if (req.receiverId === currentUser.id && req.status === 'pending') {
+      if (req.receiverId === currentUserRef.current.id && req.status === 'pending') {
         setPendingFriendRequests(prev => {
           if (prev.some(r => r.id === req.id || (r.senderId === req.senderId && r.status === 'pending'))) {
             return prev;
@@ -444,15 +507,19 @@ export default function App() {
       }
     });
 
-    // Listen to room background theme updates across all rooms
+    // Listen to room background theme updates across all rooms (silent no-op if unchanged)
     const unsubRoomBgs = realtimeSocket.subscribeToAllRoomBackgrounds((backgrounds) => {
-      setRooms(prev =>
-        prev.map(r => {
+      setRooms(prev => {
+        let changed = false;
+        const next = prev.map(r => {
           const serverTheme = backgrounds[r.id];
           const normalized = serverTheme && serverTheme !== 'default' ? serverTheme : undefined;
-          return r.backgroundTheme === normalized ? r : { ...r, backgroundTheme: normalized };
-        })
-      );
+          if (r.backgroundTheme === normalized) return r;
+          changed = true;
+          return { ...r, backgroundTheme: normalized };
+        });
+        return changed ? next : prev;
+      });
       setActiveRoom(prev => {
         if (!prev) return prev;
         const serverTheme = backgrounds[prev.id];
@@ -461,14 +528,18 @@ export default function App() {
       });
     });
 
-    // Listen to room lock status across all rooms
+    // Listen to room lock status across all rooms (silent no-op if unchanged)
     const unsubRoomLocks = subscribeToAllRoomLocks((locks) => {
-      setRooms(prev =>
-        prev.map(r => {
+      setRooms(prev => {
+        let changed = false;
+        const next = prev.map(r => {
           const nextLocked = Boolean(locks[r.id]);
-          return Boolean(r.isLocked) === nextLocked ? r : { ...r, isLocked: nextLocked };
-        })
-      );
+          if (Boolean(r.isLocked) === nextLocked) return r;
+          changed = true;
+          return { ...r, isLocked: nextLocked };
+        });
+        return changed ? next : prev;
+      });
       setActiveRoom(prev => {
         if (!prev) return prev;
         const nextLocked = Boolean(locks[prev.id]);
@@ -478,9 +549,10 @@ export default function App() {
 
     // Listen to incoming WebRTC calls targeting current user
     const unsubCalls = realtimeSocket.subscribeToCallSignals((signal) => {
+      const me = currentUserRef.current;
       if (!signal || signal.type !== 'call_offer') return;
-      if (signal.targetUserId && signal.targetUserId !== currentUser.id) return;
-      if (!signal.fromUserId || signal.fromUserId === currentUser.id) return;
+      if (signal.targetUserId && signal.targetUserId !== me.id) return;
+      if (!signal.fromUserId || signal.fromUserId === me.id) return;
 
       sounds.playMessageReceived();
       setIncomingCall({
@@ -523,7 +595,7 @@ export default function App() {
       unsubRoomLocks();
       unsubCalls();
     };
-  }, [currentUser.id, currentUser.sessionId, currentUser.name]);
+  }, [currentUser.id, currentUser.sessionId]);
 
   // Track Cumulative Visitor on each visit/session and sync atomically in real time (never decreases)
   useEffect(() => {
@@ -542,6 +614,7 @@ export default function App() {
       (highestCount) => {
         setCumulativeVisitorsCount((prev) => {
           const next = Math.max(prev, highestCount, 15480);
+          if (next === prev) return prev;
           try {
             localStorage.setItem('shat_masr_cumulative_visitors', String(next));
           } catch {}
@@ -739,9 +812,9 @@ export default function App() {
     );
   }, []);
 
-  const handleOpenIncomingChat = (toastItem: { senderId: string; senderName: string; senderAvatar: string }) => {
+  const handleOpenIncomingChat = useCallback((toastItem: { senderId: string; senderName: string; senderAvatar: string }) => {
     clearUnreadForSender(toastItem.senderId);
-    const existing = globalOnlineUsers.find(u => u.id === toastItem.senderId);
+    const existing = globalOnlineUsersRef.current.find(u => u.id === toastItem.senderId);
     const peer: User = existing || {
       id: toastItem.senderId,
       name: toastItem.senderName,
@@ -771,7 +844,7 @@ export default function App() {
     setIsInsidePrivateChat(true);
     setIsPrivateChatDrawerOpen(true);
     sounds.playMessageReceived();
-  };
+  }, [clearUnreadForSender]);
 
   // Persist Rooms Changes
   useEffect(() => {
@@ -804,9 +877,19 @@ export default function App() {
 
     // Subscribe to server-side room presence (real live users)
     const unsubPresence = realtimeSocket.subscribeToPresence(activeRoom.id, (count, occupants) => {
-      setRoomActiveCount(count);
-      setRoomActiveUsers(occupants);
-      setRooms(prev => prev.map(r => r.id === activeRoom.id ? { ...r, activeUsers: count } : r));
+      setRoomActiveCount(prev => (prev === count ? prev : count));
+      setRoomActiveUsers(prev => (areUserListsEqual(prev, occupants) ? prev : occupants));
+      setRooms(prev => {
+        let changed = false;
+        const next = prev.map(r => {
+          if (r.id === activeRoom.id && r.activeUsers !== count) {
+            changed = true;
+            return { ...r, activeUsers: count };
+          }
+          return r;
+        });
+        return changed ? next : prev;
+      });
     });
 
     const isMatchingMsg = (existing: Message, incoming: Message) => {
@@ -1177,12 +1260,13 @@ export default function App() {
   };
 
   // Enter Room Handler with Room Lock & Private Room Protection
-  const handleSelectRoom = (room: Room) => {
+  const handleSelectRoom = useCallback((room: Room) => {
+    const me = currentUserRef.current;
     const canManageRoom =
-      isUserAdminOrOwner(currentUser) ||
-      room.ownerId === currentUser.id ||
-      room.hostId === currentUser.id ||
-      (room.moderators || []).includes(currentUser.id);
+      isUserAdminOrOwner(me) ||
+      room.ownerId === me.id ||
+      room.hostId === me.id ||
+      (room.moderators || []).includes(me.id);
 
     if (room.isLocked && !canManageRoom) {
       sounds.playMicToggle(false);
@@ -1194,10 +1278,10 @@ export default function App() {
 
     if (room.isPrivate) {
       const isAllowed = 
-        room.ownerId === currentUser.id ||
-        room.hostId === currentUser.id ||
-        (room.allowedUserIds || []).includes(currentUser.id) ||
-        isUserAdminOrOwner(currentUser);
+        room.ownerId === me.id ||
+        room.hostId === me.id ||
+        (room.allowedUserIds || []).includes(me.id) ||
+        isUserAdminOrOwner(me);
 
       if (!isAllowed) {
         setPrivatePromptRoom(room);
@@ -1213,23 +1297,24 @@ export default function App() {
     if (room.type === 'voice' || room.roomType === 'voice' || room.isVoiceActive) {
       updateMissionProgress('join_voice_room', 1);
     }
-  };
+  }, []);
 
   // Direct Avatar Photo Upload Callback with immediate Firebase & WebSocket sync
-  const handleAvatarChanged = (newAvatarUrl: string) => {
+  const handleAvatarChanged = useCallback((newAvatarUrl: string) => {
+    const me = currentUserRef.current;
     const updated: User = {
-      ...currentUser,
+      ...me,
       avatar: newAvatarUrl
     };
     setCurrentUser(updated);
     sounds.playCoinsReward();
-    realtimeSocket.updateAvatar(currentUser.id, newAvatarUrl);
+    realtimeSocket.updateAvatar(me.id, newAvatarUrl);
     syncUserProfileToFirebase(updated);
     toast.success('تم تحديث صورتك الشخصية بنجاح 📸');
 
     // Track Daily Mission: "تحديث الصورة والملف الشخصي"
     updateMissionProgress('update_profile', 1);
-  };
+  }, []);
 
   // Create Room Handler
   const handleOpenCreateVoiceRoom = () => {
@@ -1330,14 +1415,14 @@ export default function App() {
   };
 
   // Open Direct Chat With User (inside Side Drawer without kicking user out of active room)
-  const handleOpenPrivateChatWith = (user: User) => {
+  const handleOpenPrivateChatWith = useCallback((user: User) => {
     clearUnreadForSender(user.id);
     setSelectedProfileUser(null);
     setIsOnlineUsersOpen(false);
     setTargetChatUser(user);
     setIsInsidePrivateChat(true);
     setIsPrivateChatDrawerOpen(true);
-  };
+  }, [clearUnreadForSender]);
 
   // Leave room: Automatically delete private rooms when creator exits (Requirement 7)
   const handleLeaveRoom = (roomToLeave?: Room | null) => {
@@ -1365,9 +1450,124 @@ export default function App() {
   // Logout Confirmation Modal & Safe State Purge
   const [isLogoutModalOpen, setIsLogoutModalOpen] = useState(false);
 
-  const handleLogout = () => {
+  const handleLogout = useCallback(() => {
     setIsLogoutModalOpen(true);
-  };
+  }, []);
+
+  // Stable UI callbacks for frozen Home Page / Header / BottomNav
+  const openWallet = useCallback(() => setIsWalletOpen(true), []);
+  const openVip = useCallback(() => setIsVipOpen(true), []);
+  const openProfileTab = useCallback(() => setCurrentTab('profile'), []);
+  const openNotifications = useCallback(() => setIsNotificationsOpen(true), []);
+  const openOnlineUsers = useCallback(() => setIsOnlineUsersOpen(true), []);
+  const openFriendRequests = useCallback(() => setIsFriendRequestsOpen(true), []);
+  const openAdmin = useCallback(() => setIsAdminOpen(true), []);
+  const openRadio = useCallback(() => setIsRadioModalOpen(true), []);
+  const openMissions = useCallback(() => setIsDailyMissionsOpen(true), []);
+  const handleSendGiftToUser = useCallback((user: User) => {
+    setSelectedProfileUser(null);
+    setGiftRecipientUser(user);
+    setIsGiftModalOpen(true);
+  }, []);
+  const openMessagesDrawer = useCallback(() => {
+    setIsOnlineUsersOpen(false);
+    setIsInsidePrivateChat(false);
+    setTargetChatUser(null);
+    setIsPrivateChatDrawerOpen(true);
+  }, []);
+  const handleClaimSharedRewardCoins = useCallback((coins: number, label?: string) => {
+    const updated = { ...currentUserRef.current, coins: currentUserRef.current.coins + coins };
+    setCurrentUser(updated);
+    syncUserProfileToFirebase(updated);
+    toast.success(`مبروك! تم استلام +${coins} كوينز من ${label} 🎉`);
+  }, []);
+  const handleBottomTabChange = useCallback((tab: NavTab) => {
+    if (tab === 'chat') {
+      setIsOnlineUsersOpen(false);
+      setIsInsidePrivateChat(false);
+      setTargetChatUser(null);
+      setIsPrivateChatDrawerOpen(true);
+      return;
+    }
+    setIsPrivateChatDrawerOpen(false);
+    setIsInsidePrivateChat(false);
+    setTargetChatUser(null);
+    setCurrentTab(tab);
+  }, []);
+
+  const isPullToRefreshEnabled =
+    !activeRoom &&
+    !isPrivateChatDrawerOpen &&
+    !isAdminOpen &&
+    !isWalletOpen &&
+    !isVipOpen &&
+    !isGiftModalOpen &&
+    !isCreateRoomOpen &&
+    !isNotificationsOpen &&
+    !isOnlineUsersOpen &&
+    !isRadioModalOpen &&
+    !selectedProfileUser &&
+    !isPhoneAuthOpen &&
+    !isWelcomeAuthOpen &&
+    !isDailyMissionsOpen &&
+    !isFriendRequestsOpen &&
+    !isPrivatePromptOpen &&
+    !isLogoutModalOpen &&
+    !incomingCall;
+
+  const handlePullToRefresh = useCallback(async () => {
+    const activeUser = currentUserRef.current;
+    realtimeSocket.registerUser(activeUser);
+
+    const [refreshRes] = await Promise.allSettled([
+      refreshHomeDataFromFirebase(activeUser),
+      new Promise<void>((resolve) => setTimeout(resolve, 450))
+    ]);
+
+    if (refreshRes.status === 'fulfilled') {
+      const { visitorsCount, onlineUsers, roomLocks } = refreshRes.value;
+
+      if (typeof visitorsCount === 'number' && visitorsCount > 0) {
+        setCumulativeVisitorsCount((prev) => {
+          const next = Math.max(prev, visitorsCount, 15480);
+          if (next === prev) return prev;
+          try {
+            localStorage.setItem('shat_masr_cumulative_visitors', String(next));
+          } catch {}
+          return next;
+        });
+      }
+
+      if (onlineUsers.length > 0) {
+        setGlobalOnlineUsers((prev) => {
+          const map = new Map<string, User>();
+          prev.forEach((u) => map.set(u.id, u));
+          onlineUsers.forEach((u) => map.set(u.id, u));
+          const nextList = Array.from(map.values());
+          return areUserListsEqual(prev, nextList) ? prev : nextList;
+        });
+      }
+
+      if (roomLocks) {
+        setRooms((prev) => {
+          let changed = false;
+          const next = prev.map((r) => {
+            if (typeof roomLocks[r.id] !== 'boolean' && !r.isLocked) return r;
+            const nextLocked = Boolean(roomLocks[r.id]);
+            if (Boolean(r.isLocked) === nextLocked) return r;
+            changed = true;
+            return { ...r, isLocked: nextLocked };
+          });
+          return changed ? next : prev;
+        });
+      }
+    }
+
+    toast.success('تم تحديث الغرف والبيانات بنجاح ✨', {
+      id: 'pull_refresh_done',
+      duration: 2000
+    });
+  }, []);
 
   const confirmLogout = async () => {
     setIsLogoutModalOpen(false);
@@ -1520,29 +1720,24 @@ export default function App() {
       {!activeRoom && (
         <Header
           currentUser={currentUser}
-          onOpenWallet={() => setIsWalletOpen(true)}
-          onOpenVip={() => setIsVipOpen(true)}
-          onOpenProfile={() => setCurrentTab('profile')}
-          onOpenNotifications={() => setIsNotificationsOpen(true)}
-          onOpenOnlineUsers={() => setIsOnlineUsersOpen(true)}
-          onOpenFriendRequests={() => setIsFriendRequestsOpen(true)}
-          onOpenAdmin={() => setIsAdminOpen(true)}
+          onOpenWallet={openWallet}
+          onOpenVip={openVip}
+          onOpenProfile={openProfileTab}
+          onOpenNotifications={openNotifications}
+          onOpenOnlineUsers={openOnlineUsers}
+          onOpenFriendRequests={openFriendRequests}
+          onOpenAdmin={openAdmin}
           pendingFriendRequestsCount={pendingFriendRequests.length}
           onlineUsersCount={globalOnlineUsers.length}
-          onOpenRadio={() => setIsRadioModalOpen(true)}
-          isRadioPlaying={radioSnap.isPlaying}
+          onOpenRadio={openRadio}
+          isRadioPlaying={isRadioPlaying}
           onAvatarChanged={handleAvatarChanged}
           onLogout={handleLogout}
           unreadMessagesBySender={unreadMessagesBySender}
           totalUnreadMessagesCount={totalUnreadMessagesCount}
           onOpenSenderChat={handleOpenIncomingChat}
           onClearAllUnreadMessages={clearAllUnreadMessages}
-          onOpenMessagesTab={() => {
-            setIsOnlineUsersOpen(false);
-            setIsInsidePrivateChat(false);
-            setTargetChatUser(null);
-            setIsPrivateChatDrawerOpen(true);
-          }}
+          onOpenMessagesTab={openMessagesDrawer}
         />
       )}
 
@@ -1551,7 +1746,7 @@ export default function App() {
         <div className="bg-rose-600 text-white px-4 py-2.5 text-center text-xs font-black flex flex-wrap items-center justify-center gap-2 shadow-lg sticky top-0 z-50 animate-in slide-in-from-top">
           <span>🚫 حسابك محظور حالياً من قِبل إدارة شات مصر والعرب.</span>
           <button
-            onClick={() => setIsAdminOpen(true)}
+            onClick={openAdmin}
             className="px-2.5 py-1 rounded-lg bg-white/20 hover:bg-white/30 text-white text-[11px] font-bold border border-white/30 transition-all"
           >
             فتح لوحة الإدارة لفك الحظر
@@ -1564,7 +1759,7 @@ export default function App() {
         <div className="bg-amber-400 text-slate-950 px-4 py-1.5 text-center text-xs font-black flex items-center justify-center gap-2 shadow sticky top-0 z-50">
           <span>🔇 أنت مكتوم حالياً بواسطة الإدارة، يمكنك الاستماع فقط ولا يمكنك إرسال الرسائل.</span>
           <button
-            onClick={() => setIsAdminOpen(true)}
+            onClick={openAdmin}
             className="px-2 py-0.5 rounded bg-black/15 hover:bg-black/25 text-slate-950 text-[10px] underline font-bold"
           >
             إلغاء الكتم من الإدارة
@@ -1572,117 +1767,112 @@ export default function App() {
         </div>
       )}
 
-      {/* 2. Main View Routing */}
+      {/* 2. Main View Routing: Home Page (RoomsView) remains persistently mounted & frozen to prevent re-mounts/reloads */}
       <main className={activeRoom ? "w-full h-screen overflow-hidden" : "max-w-7xl mx-auto min-h-[calc(100vh-56px)]"}>
-        {activeRoom ? (
-          <RoomActiveView
-            room={{
-              ...activeRoom,
-              activeUsers: roomActiveCount,
-              visitorsCount: cumulativeVisitorsCount.toLocaleString()
-            }}
-            currentUser={currentUser}
-            messages={activeRoomMessages}
-            onBack={() => handleLeaveRoom(activeRoom)}
-            onSendMessage={handleSendMessage}
-            onOpenGiftModal={() => setIsGiftModalOpen(true)}
-            onUpdateSpeakers={handleUpdateSpeakers}
-            onUpdateRoomBackground={(theme) => handleUpdateRoomBackground(activeRoom.id, theme)}
-            onUpdateRoomLock={(locked) => handleUpdateRoomLock(activeRoom.id, locked)}
-            onOpenUserProfile={(u) => setSelectedProfileUser(u)}
-            onOpenOnlineUsers={() => setIsOnlineUsersOpen(true)}
-            onUpdateUser={(updated) => {
-              setCurrentUser((prev) => ({ ...prev, ...updated }));
-              syncUserProfileToFirebase({ ...currentUser, ...updated });
-            }}
-            onOpenWallet={() => {
-              setIsGiftModalOpen(false);
-              setIsWalletOpen(true);
-            }}
-          />
-        ) : (
-          <>
-            {currentTab === 'rooms' && (
-              <RoomsView
-                rooms={rooms}
-                currentUser={currentUser}
-                onlineUsers={globalOnlineUsers}
-                onSelectRoom={handleSelectRoom}
-                onOpenPrivateChatWith={handleOpenPrivateChatWith}
-                onOpenWallet={() => setIsWalletOpen(true)}
-                onOpenVip={() => setIsVipOpen(true)}
-                onOpenMissions={() => setIsDailyMissionsOpen(true)}
-                totalActiveUsersCount={globalOnlineUsers.length}
-                cumulativeVisitorsCount={cumulativeVisitorsCount}
-                onOpenOnlineUsers={() => setIsOnlineUsersOpen(true)}
-                onClaimSharedRewardCoins={(coins, label) => {
-                  const updated = { ...currentUser, coins: currentUser.coins + coins };
-                  setCurrentUser(updated);
-                  syncUserProfileToFirebase(updated);
-                  toast.success(`مبروك! تم استلام +${coins} كوينز من ${label} 🎉`);
-                }}
-              />
-            )}
+        <PullToRefreshShell
+          enabled={isPullToRefreshEnabled}
+          onRefresh={handlePullToRefresh}
+          className={activeRoom ? 'h-full' : ''}
+        >
+          {/* Frozen Home Page Container (always mounted; hidden via CSS when inside a room or on another tab) */}
+          <div className={!activeRoom && currentTab === 'rooms' ? '' : 'hidden'}>
+            <RoomsView
+              rooms={rooms}
+              currentUser={currentUser}
+              onlineUsers={globalOnlineUsers}
+              onSelectRoom={handleSelectRoom}
+              onOpenPrivateChatWith={handleOpenPrivateChatWith}
+              onOpenWallet={openWallet}
+              onOpenVip={openVip}
+              onOpenMissions={openMissions}
+              totalActiveUsersCount={globalOnlineUsers.length}
+              cumulativeVisitorsCount={cumulativeVisitorsCount}
+              onOpenOnlineUsers={openOnlineUsers}
+              onClaimSharedRewardCoins={handleClaimSharedRewardCoins}
+            />
+          </div>
 
-            {currentTab === 'chat' && (
-              <PrivateChatView
-                currentUser={currentUser}
-                onOpenWallet={() => setIsWalletOpen(true)}
-                targetUser={targetChatUser}
-                onClearTargetUser={() => {
-                  setTargetChatUser(null);
-                  setIsInsidePrivateChat(false);
-                }}
-                globalOnlineUsers={globalOnlineUsers}
-                onChatActiveChange={setIsInsidePrivateChat}
-                onUpdateUser={(updated) => {
-                  setCurrentUser((prev) => ({ ...prev, ...updated }));
-                  syncUserProfileToFirebase({ ...currentUser, ...updated });
-                }}
-                onPromptRegister={() => setIsWelcomeAuthOpen(true)}
-                unreadBySender={unreadCountsBySenderId}
-                onMarkSenderRead={clearUnreadForSender}
-              />
-            )}
+          {activeRoom ? (
+            <RoomActiveView
+              room={{
+                ...activeRoom,
+                activeUsers: roomActiveCount,
+                visitorsCount: cumulativeVisitorsCount.toLocaleString()
+              }}
+              currentUser={currentUser}
+              messages={activeRoomMessages}
+              onBack={() => handleLeaveRoom(activeRoom)}
+              onSendMessage={handleSendMessage}
+              onOpenGiftModal={() => {
+                setGiftRecipientUser(null);
+                setIsGiftModalOpen(true);
+              }}
+              onUpdateSpeakers={handleUpdateSpeakers}
+              onUpdateRoomBackground={(theme) => handleUpdateRoomBackground(activeRoom.id, theme)}
+              onUpdateRoomLock={(locked) => handleUpdateRoomLock(activeRoom.id, locked)}
+              onOpenUserProfile={(u) => setSelectedProfileUser(u)}
+              onOpenPrivateChatWith={handleOpenPrivateChatWith}
+              onSendGiftToUser={handleSendGiftToUser}
+              onOpenOnlineUsers={openOnlineUsers}
+              onUpdateUser={(updated) => {
+                setCurrentUser((prev) => ({ ...prev, ...updated }));
+                syncUserProfileToFirebase({ ...currentUser, ...updated });
+              }}
+              onOpenWallet={() => {
+                setIsGiftModalOpen(false);
+                setIsWalletOpen(true);
+              }}
+            />
+          ) : (
+            <>
+              {currentTab === 'chat' && (
+                <PrivateChatView
+                  currentUser={currentUser}
+                  onOpenWallet={openWallet}
+                  targetUser={targetChatUser}
+                  onClearTargetUser={() => {
+                    setTargetChatUser(null);
+                    setIsInsidePrivateChat(false);
+                  }}
+                  globalOnlineUsers={globalOnlineUsers}
+                  onChatActiveChange={setIsInsidePrivateChat}
+                  onUpdateUser={(updated) => {
+                    setCurrentUser((prev) => ({ ...prev, ...updated }));
+                    syncUserProfileToFirebase({ ...currentUser, ...updated });
+                  }}
+                  onPromptRegister={() => setIsWelcomeAuthOpen(true)}
+                  unreadBySender={unreadCountsBySenderId}
+                  onMarkSenderRead={clearUnreadForSender}
+                />
+              )}
 
-            {currentTab === 'games' && (
-              <GamesView
-                currentUser={currentUser}
-                onUpdateCoins={(coins) => handleUpdateUserBalance(coins, currentUser.earningsEgp)}
-                onOpenWallet={() => setIsWalletOpen(true)}
-              />
-            )}
+              {currentTab === 'games' && (
+                <GamesView
+                  currentUser={currentUser}
+                  onUpdateCoins={(coins) => handleUpdateUserBalance(coins, currentUser.earningsEgp)}
+                  onOpenWallet={openWallet}
+                />
+              )}
 
-            {currentTab === 'profile' && (
-              <ProfileView
-                currentUser={currentUser}
-                onUpdateUser={(updated) => setCurrentUser((prev) => ({ ...prev, ...updated }))}
-                onOpenWallet={() => setIsWalletOpen(true)}
-                onOpenVip={() => setIsVipOpen(true)}
-                onLogout={handleLogout}
-              />
-            )}
-          </>
-        )}
+              {currentTab === 'profile' && (
+                <ProfileView
+                  currentUser={currentUser}
+                  onUpdateUser={(updated) => setCurrentUser((prev) => ({ ...prev, ...updated }))}
+                  onOpenWallet={openWallet}
+                  onOpenVip={openVip}
+                  onLogout={handleLogout}
+                />
+              )}
+            </>
+          )}
+        </PullToRefreshShell>
       </main>
 
       {/* 3. Bottom Navigation Bar - Hidden inside active room OR active 1-on-1 private chat */}
       {!activeRoom && !isPrivateChatDrawerOpen && (!isInsidePrivateChat || currentTab !== 'chat') && (
         <BottomNav
           currentTab={isPrivateChatDrawerOpen ? 'chat' : currentTab}
-          onTabChange={(tab) => {
-            if (tab === 'chat') {
-              setIsOnlineUsersOpen(false);
-              setIsInsidePrivateChat(false);
-              setTargetChatUser(null);
-              setIsPrivateChatDrawerOpen(true);
-              return;
-            }
-            setIsPrivateChatDrawerOpen(false);
-            setIsInsidePrivateChat(false);
-            setTargetChatUser(null);
-            setCurrentTab(tab);
-          }}
+          onTabChange={handleBottomTabChange}
           unreadChatsCount={totalUnreadMessagesCount + pendingFriendRequests.length}
         />
       )}
@@ -1698,12 +1888,17 @@ export default function App() {
       {/* 5. Modals */}
       <LuxuryGiftModal
         isOpen={isGiftModalOpen}
-        onClose={() => setIsGiftModalOpen(false)}
+        onClose={() => {
+          setIsGiftModalOpen(false);
+          setGiftRecipientUser(null);
+        }}
         currentUser={currentUser}
         speakers={activeRoom?.speakers || []}
+        preselectedRecipient={giftRecipientUser}
         onSendGift={handleSendGift}
         onOpenWallet={() => {
           setIsGiftModalOpen(false);
+          setGiftRecipientUser(null);
           setIsWalletOpen(true);
         }}
       />
@@ -1803,10 +1998,7 @@ export default function App() {
         currentUser={currentUser}
         onClose={() => setSelectedProfileUser(null)}
         onOpenPrivateChatWith={handleOpenPrivateChatWith}
-        onSendGiftToUser={(u) => {
-          setSelectedProfileUser(null);
-          setIsGiftModalOpen(true);
-        }}
+        onSendGiftToUser={handleSendGiftToUser}
         onAvatarChanged={handleAvatarChanged}
       />
 
@@ -1825,78 +2017,12 @@ export default function App() {
         onClose={() => setIsRadioModalOpen(false)}
       />
 
-      {/* Persistent Global Mini FM Radio Bar */}
-      {!miniRadioDismissed && !isRadioModalOpen && (radioSnap.isPlaying || radioSnap.autoplayBlocked) && (
-        <div
-          dir="rtl"
-          className={`fixed z-40 left-3 sm:left-5 ${
-            activeRoom ? 'bottom-20' : 'bottom-16 sm:bottom-20'
-          } max-w-[92vw] sm:max-w-xs bg-white/95 backdrop-blur-md border border-indigo-200 rounded-2xl px-3 py-1.5 shadow-xl flex items-center gap-2`}
-        >
-          <button
-            type="button"
-            onClick={() => setIsRadioModalOpen(true)}
-            className="w-7 h-7 rounded-xl bg-gradient-to-tr from-indigo-600 to-purple-600 text-white flex items-center justify-center shrink-0"
-            title="فتح مكتبة الأغاني وراديو FM"
-          >
-            <Radio className={`w-3.5 h-3.5 ${radioSnap.isPlaying ? 'animate-pulse' : ''}`} />
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setIsRadioModalOpen(true)}
-            className="flex-1 min-w-0 text-right"
-          >
-            <p className="text-[11px] font-black text-slate-900 truncate">
-              {radioSnap.activeTab === 'radio'
-                ? radioSnap.activeStation?.name || 'راديو شات مصر FM'
-                : radioSnap.activeSong?.title || 'مكتبة الأغاني'}
-            </p>
-            <p className="text-[9.5px] font-bold text-indigo-600 truncate">
-              {radioSnap.isPlaying
-                ? 'يبث الآن مباشرة 🎵'
-                : 'اضغط لتشغيل راديو FM المباشر ▶️'}
-            </p>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => globalRadioPlayer.togglePlay()}
-            className="p-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white active:scale-95 shrink-0"
-            title={radioSnap.isPlaying ? 'إيقاف مؤقت' : 'تشغيل'}
-          >
-            {radioSnap.isPlaying ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
-          </button>
-
-          <button
-            type="button"
-            onClick={() => globalRadioPlayer.next()}
-            className="p-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 active:scale-95 shrink-0"
-            title="التالي"
-          >
-            <SkipForward className="w-3.5 h-3.5" />
-          </button>
-
-          <button
-            type="button"
-            onClick={() => globalRadioPlayer.toggleMute()}
-            className="p-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 active:scale-95 shrink-0 cursor-pointer"
-            title={radioSnap.isMuted ? 'إلغاء الكتم' : 'كتم'}
-          >
-            {radioSnap.isMuted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setMiniRadioDismissed(true)}
-            className="animate-radio-close-glow p-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-300/90 active:scale-95 shrink-0 cursor-pointer transition-colors"
-            title="إغلاق وإخفاء شريط الراديو"
-            aria-label="إغلاق وإخفاء شريط الراديو"
-          >
-            <X className="w-3.5 h-3.5" />
-          </button>
-        </div>
-      )}
+      {/* Persistent Global Mini FM Radio Bar (isolated so radio events never re-render App/Home) */}
+      <FloatingMiniRadioBar
+        isInsideRoom={Boolean(activeRoom)}
+        isRadioModalOpen={isRadioModalOpen}
+        onOpenRadioModal={openRadio}
+      />
 
       {/* Admin Control Panel Modal */}
       <AdminControlPanelModal

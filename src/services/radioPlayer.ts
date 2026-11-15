@@ -55,8 +55,11 @@ export function getSongAudioSource(song: ArabicSong): string {
 class GlobalRadioPlayerService {
   private audio: HTMLAudioElement | null = null;
   private listeners: Set<(snap: RadioPlayerSnapshot) => void> = new Set();
+  private timeListeners: Set<(time: { currentTime: number; duration: number }) => void> = new Set();
   private userPausedManually = false;
   private autoplayAttempted = false;
+  private loadingTimer: ReturnType<typeof setTimeout> | null = null;
+  private lastTimeEmitAt = 0;
 
   private state: RadioPlayerSnapshot = {
     activeTab: 'radio',
@@ -72,6 +75,25 @@ class GlobalRadioPlayerService {
     autoplayBlocked: false
   };
 
+  private clearLoadingTimer() {
+    if (this.loadingTimer) {
+      clearTimeout(this.loadingTimer);
+      this.loadingTimer = null;
+    }
+  }
+
+  private scheduleLoadingIndicator() {
+    this.clearLoadingTimer();
+    this.loadingTimer = setTimeout(() => {
+      if (!this.state.isPlaying && !this.state.autoplayBlocked && !this.userPausedManually) {
+        if (!this.state.isLoading) {
+          this.state = { ...this.state, isLoading: true };
+          this.emit();
+        }
+      }
+    }, 350);
+  }
+
   private ensureAudio() {
     if (typeof window === 'undefined') return null;
     if (!this.audio) {
@@ -80,23 +102,36 @@ class GlobalRadioPlayerService {
       audio.volume = this.state.isMuted ? 0 : this.state.volume;
 
       audio.onplaying = () => {
-        this.state = { ...this.state, isLoading: false, isPlaying: true, autoplayBlocked: false };
-        this.emit();
+        this.clearLoadingTimer();
+        if (!this.state.isPlaying || this.state.isLoading || this.state.autoplayBlocked) {
+          this.state = { ...this.state, isLoading: false, isPlaying: true, autoplayBlocked: false };
+          this.emit();
+        }
       };
       audio.onwaiting = () => {
-        this.state = { ...this.state, isLoading: true };
-        this.emit();
+        // Silent background buffering: never flash loading spinner during live playback
       };
       audio.onpause = () => {
-        this.state = { ...this.state, isPlaying: false, isLoading: false };
-        this.emit();
+        this.clearLoadingTimer();
+        if (this.state.isPlaying || this.state.isLoading) {
+          this.state = { ...this.state, isPlaying: false, isLoading: false };
+          this.emit();
+        }
       };
       audio.ontimeupdate = () => {
         const dur = audio.duration && !isNaN(audio.duration) && isFinite(audio.duration)
           ? audio.duration
           : this.state.duration;
-        this.state = { ...this.state, currentTime: audio.currentTime, duration: dur };
-        this.emit();
+        this.state.currentTime = audio.currentTime;
+        this.state.duration = dur;
+        // Only notify time listeners for song progress, throttled to once per second
+        if (this.state.activeTab === 'songs' && this.timeListeners.size > 0) {
+          const now = Date.now();
+          if (now - this.lastTimeEmitAt >= 900) {
+            this.lastTimeEmitAt = now;
+            this.emitTime();
+          }
+        }
       };
       audio.onended = () => {
         if (this.state.activeTab === 'songs') {
@@ -104,8 +139,11 @@ class GlobalRadioPlayerService {
         }
       };
       audio.onerror = () => {
-        this.state = { ...this.state, isLoading: false, isPlaying: false };
-        this.emit();
+        this.clearLoadingTimer();
+        if (this.state.isLoading || this.state.isPlaying) {
+          this.state = { ...this.state, isLoading: false, isPlaying: false };
+          this.emit();
+        }
       };
 
       this.audio = audio;
@@ -122,6 +160,15 @@ class GlobalRadioPlayerService {
     });
   }
 
+  private emitTime() {
+    const payload = { currentTime: this.state.currentTime, duration: this.state.duration };
+    this.timeListeners.forEach((cb) => {
+      try {
+        cb(payload);
+      } catch {}
+    });
+  }
+
   getSnapshot(): RadioPlayerSnapshot {
     return { ...this.state };
   }
@@ -134,12 +181,22 @@ class GlobalRadioPlayerService {
     };
   }
 
+  subscribeTime(callback: (time: { currentTime: number; duration: number }) => void): () => void {
+    this.timeListeners.add(callback);
+    callback({ currentTime: this.state.currentTime, duration: this.state.duration });
+    return () => {
+      this.timeListeners.delete(callback);
+    };
+  }
+
   setTab(tab: RadioPlayerTab) {
+    if (this.state.activeTab === tab) return;
     this.state = { ...this.state, activeTab: tab };
     this.emit();
   }
 
   setPlayMode(mode: RadioPlayMode) {
+    if (this.state.playMode === mode) return;
     this.state = { ...this.state, playMode: mode };
     this.emit();
   }
@@ -163,11 +220,11 @@ class GlobalRadioPlayerService {
   }
 
   seek(timeSec: number) {
-    this.state = { ...this.state, currentTime: timeSec };
+    this.state.currentTime = timeSec;
     if (this.audio && isFinite(timeSec)) {
       this.audio.currentTime = timeSec;
     }
-    this.emit();
+    this.emitTime();
   }
 
   tryAutoPlayFM() {
@@ -177,27 +234,21 @@ class GlobalRadioPlayerService {
     const audio = this.ensureAudio();
     if (!audio) return;
 
-    this.state = {
-      ...this.state,
-      activeTab: 'radio',
-      isLoading: true
-    };
-    this.emit();
-
+    // Silent background autoplay attempt without flashing any loading spinner
     audio.src = this.state.activeStation.streamUrl;
     audio.play()
       .then(() => {
-        this.state = { ...this.state, isPlaying: true, isLoading: false, autoplayBlocked: false };
+        this.state = { ...this.state, activeTab: 'radio', isPlaying: true, isLoading: false, autoplayBlocked: false };
         this.emit();
       })
       .catch(() => {
-        this.state = { ...this.state, isPlaying: false, isLoading: false, autoplayBlocked: true };
+        this.state = { ...this.state, activeTab: 'radio', isPlaying: false, isLoading: false, autoplayBlocked: true };
         this.emit();
 
         // Resume cleanly on first user pointer gesture if browser blocked initial autoplay
         const resumeOnGesture = () => {
           if (!this.userPausedManually && !this.state.isPlaying && localStorage.getItem('shat_masr_radio_autoplay') !== 'off') {
-            this.playCurrent();
+            this.playCurrent(true);
           }
           window.removeEventListener('pointerdown', resumeOnGesture);
         };
@@ -214,17 +265,21 @@ class GlobalRadioPlayerService {
       activeSong: song,
       currentTime: 0,
       duration: song.durationSeconds || 240,
-      isLoading: true
+      isLoading: false
     };
     this.emit();
+    this.emitTime();
+    this.scheduleLoadingIndicator();
     if (audio) {
       audio.src = getSongAudioSource(song);
       audio.play()
         .then(() => {
+          this.clearLoadingTimer();
           this.state = { ...this.state, isPlaying: true, isLoading: false, autoplayBlocked: false };
           this.emit();
         })
         .catch(() => {
+          this.clearLoadingTimer();
           this.state = { ...this.state, isLoading: false, autoplayBlocked: true };
           this.emit();
         });
@@ -238,24 +293,27 @@ class GlobalRadioPlayerService {
       ...this.state,
       activeTab: 'radio',
       activeStation: station,
-      isLoading: true
+      isLoading: false
     };
     this.emit();
+    this.scheduleLoadingIndicator();
     if (audio) {
       audio.src = station.streamUrl;
       audio.play()
         .then(() => {
+          this.clearLoadingTimer();
           this.state = { ...this.state, isPlaying: true, isLoading: false, autoplayBlocked: false };
           this.emit();
         })
         .catch(() => {
+          this.clearLoadingTimer();
           this.state = { ...this.state, isLoading: false, autoplayBlocked: true };
           this.emit();
         });
     }
   }
 
-  playCurrent() {
+  playCurrent(silent: boolean = false) {
     this.userPausedManually = false;
     localStorage.setItem('shat_masr_radio_autoplay', 'on');
     const audio = this.ensureAudio();
@@ -264,17 +322,20 @@ class GlobalRadioPlayerService {
       this.state.activeTab === 'songs'
         ? getSongAudioSource(this.state.activeSong)
         : this.state.activeStation.streamUrl;
-    this.state = { ...this.state, isLoading: true };
-    this.emit();
+    if (!silent) {
+      this.scheduleLoadingIndicator();
+    }
     if (audio.src !== targetUrl) {
       audio.src = targetUrl;
     }
     audio.play()
       .then(() => {
+        this.clearLoadingTimer();
         this.state = { ...this.state, isPlaying: true, isLoading: false, autoplayBlocked: false };
         this.emit();
       })
       .catch(() => {
+        this.clearLoadingTimer();
         this.state = { ...this.state, isLoading: false, isPlaying: false };
         this.emit();
       });
@@ -282,6 +343,7 @@ class GlobalRadioPlayerService {
 
   pause() {
     this.userPausedManually = true;
+    this.clearLoadingTimer();
     localStorage.setItem('shat_masr_radio_autoplay', 'off');
     if (this.audio) {
       this.audio.pause();

@@ -347,13 +347,23 @@ export function subscribeToGlobalPresence(
 ): () => void {
   const globalKey = 'arab_chat_global_presence';
   const liveUsersMap = new Map<string, User>();
+  let lastPresenceSignature = '';
 
-  // Helper to emit merged live presence
+  // Helper to emit merged live presence only when visible user list/fields actually change
   const emitPresence = () => {
     if (user && user.id && !liveUsersMap.has(user.id)) {
       liveUsersMap.set(user.id, { ...user, isOnline: true });
     }
     const list = Array.from(liveUsersMap.values());
+    const sig = list
+      .map(
+        (u) =>
+          `${u.id}:${u.name || ''}:${u.avatar || ''}:${u.status || ''}:${u.role || ''}:${u.vipBadge || ''}:${u.isBanned ? 1 : 0}:${u.isMuted ? 1 : 0}`
+      )
+      .sort()
+      .join('|');
+    if (sig === lastPresenceSignature) return;
+    lastPresenceSignature = sig;
     try {
       localStorage.setItem(globalKey, JSON.stringify(list));
     } catch {}
@@ -3448,6 +3458,7 @@ export function syncCumulativeVisitorsRealtime(
 ): () => void {
   const BASE = 15480;
   let currentMax = Math.max(BASE, localBaseline || BASE);
+  let lastEmittedMax = 0;
 
   const reportHighest = (candidate: number) => {
     if (typeof candidate !== 'number' || isNaN(candidate)) return;
@@ -3455,6 +3466,8 @@ export function syncCumulativeVisitorsRealtime(
     if (next > currentMax) {
       currentMax = next;
     }
+    if (currentMax === lastEmittedMax) return;
+    lastEmittedMax = currentMax;
     try {
       localStorage.setItem('shat_masr_cumulative_visitors', String(currentMax));
     } catch {}
@@ -3973,11 +3986,23 @@ export function subscribeToForumPosts(
       onUpdate(readLocal());
     }
   };
+  const handleLocalSync = (e: Event) => {
+    const detail = (e as CustomEvent)?.detail;
+    if (detail?.type === 'FORUM_POSTS_CHANGED') {
+      onUpdate(readLocal());
+    }
+  };
   liveChatBus?.addEventListener('message', handleBus);
+  if (typeof window !== 'undefined') {
+    window.addEventListener('shat_masr_sync_event', handleLocalSync);
+  }
 
   return () => {
     if (unsubFirestore) unsubFirestore();
     liveChatBus?.removeEventListener('message', handleBus);
+    if (typeof window !== 'undefined') {
+      window.removeEventListener('shat_masr_sync_event', handleLocalSync);
+    }
   };
 }
 
@@ -4243,11 +4268,23 @@ export function subscribeToSharedRoomMissions(
       onUpdate(getLocal());
     }
   };
+  const handleLocalSync = (e: Event) => {
+    const detail = (e as CustomEvent)?.detail;
+    if (detail?.type === 'SHARED_MISSIONS_CHANGED') {
+      onUpdate(getLocal());
+    }
+  };
   liveChatBus?.addEventListener('message', handleBus);
+  if (typeof window !== 'undefined') {
+    window.addEventListener('shat_masr_sync_event', handleLocalSync);
+  }
 
   return () => {
     if (unsubFirestore) unsubFirestore();
     liveChatBus?.removeEventListener('message', handleBus);
+    if (typeof window !== 'undefined') {
+      window.removeEventListener('shat_masr_sync_event', handleLocalSync);
+    }
   };
 }
 
@@ -4791,6 +4828,228 @@ export function subscribeToAllRoomLocks(
     if (unsubFirestore) unsubFirestore();
     liveChatBus?.removeEventListener('message', handleBroadcast);
   };
+}
+
+// ==========================================
+// 26. IN-PLACE SILENT HOME DATA REFRESH (Pull-to-Refresh)
+// ==========================================
+export interface HomeRefreshResult {
+  visitorsCount: number | null;
+  onlineUsers: User[];
+  roomLocks: Record<string, boolean> | null;
+}
+
+export async function refreshHomeDataFromFirebase(currentUser?: User): Promise<HomeRefreshResult> {
+  const result: HomeRefreshResult = {
+    visitorsCount: null,
+    onlineUsers: [],
+    roomLocks: null
+  };
+
+  const mergedOnlineMap = new Map<string, User>();
+  if (currentUser?.id) {
+    mergedOnlineMap.set(currentUser.id, { ...currentUser, isOnline: true });
+  }
+
+  const tasks: Promise<void>[] = [];
+
+  // 1. REST Presence & Visitors Count (Server authoritative)
+  if (typeof fetch === 'function') {
+    tasks.push(
+      fetch('/api/stats/visitors')
+        .then((r) => (r.ok ? r.json() : null))
+        .then((data) => {
+          if (data && typeof data.count === 'number' && !isNaN(data.count)) {
+            result.visitorsCount = Math.max(result.visitorsCount ?? 0, Math.floor(data.count));
+          }
+        })
+        .catch(() => {})
+    );
+
+    tasks.push(
+      fetch('/api/presence')
+        .then((r) => (r.ok ? r.json() : null))
+        .then((data) => {
+          if (Array.isArray(data?.users)) {
+            data.users.forEach((u: User) => {
+              if (u && u.id) mergedOnlineMap.set(u.id, { ...u, isOnline: true });
+            });
+          }
+        })
+        .catch(() => {})
+    );
+  }
+
+  // 2. Firestore authoritative reads (with handleFirestoreError)
+  if (db) {
+    const fsDb = db;
+
+    // 2a. Cumulative visitors from Firestore stats/visitors
+    tasks.push(
+      (async () => {
+        try {
+          const snap = await getDocFromServer(doc(fsDb, 'stats', 'visitors'));
+          if (snap.exists()) {
+            const val = Number(snap.data()?.totalVisitors);
+            if (!isNaN(val) && val > 0) {
+              result.visitorsCount = Math.max(result.visitorsCount ?? 0, Math.floor(val));
+            }
+          }
+        } catch (err) {
+          handleFirestoreError(err, OperationType.GET, 'stats/visitors');
+        }
+      })()
+    );
+
+    // 2b. Online users from Firestore online_users
+    tasks.push(
+      (async () => {
+        try {
+          if (currentUser?.id) {
+            setDoc(
+              doc(fsDb, 'online_users', currentUser.id),
+              {
+                id: currentUser.id,
+                name: currentUser.name,
+                avatar: currentUser.avatar || '',
+                role: currentUser.role || 'member',
+                vipBadge: currentUser.vipBadge || '',
+                countryFlag: currentUser.countryFlag || '🇪🇬',
+                sessionId: currentUser.sessionId || '',
+                isGuest: !!currentUser.isGuest,
+                status: currentUser.status || 'online',
+                isOnline: true,
+                lastSeen: Date.now(),
+                updatedAt: serverTimestamp()
+              },
+              { merge: true }
+            ).catch(() => {});
+          }
+
+          const snap = await getDocs(collection(fsDb, 'online_users'));
+          const now = Date.now();
+          snap.docs.forEach((docSnap) => {
+            const data = docSnap.data();
+            const lastSeen = data.lastSeen || (data.updatedAt?.toMillis ? data.updatedAt.toMillis() : now);
+            if (now - lastSeen < 180000) {
+              mergedOnlineMap.set(docSnap.id, {
+                id: docSnap.id,
+                name: data.name || 'مستخدم',
+                avatar: data.avatar || '',
+                role: data.role || 'member',
+                vipBadge: data.vipBadge || '',
+                countryFlag: data.countryFlag || '🇪🇬',
+                sessionId: data.sessionId || undefined,
+                isGuest: !!data.isGuest,
+                status: data.status || 'online',
+                isOnline: true
+              } as User);
+            }
+          });
+        } catch (err) {
+          handleFirestoreError(err, OperationType.LIST, 'online_users');
+        }
+      })()
+    );
+
+    // 2c. Forum posts refresh -> BroadcastChannel updates RoomsView in-place
+    tasks.push(
+      (async () => {
+        try {
+          const q = query(collection(fsDb, 'forum_posts'), orderBy('createdAt', 'desc'), limit(60));
+          const snapshot = await getDocs(q);
+          const list: ForumPost[] = snapshot.docs.map((d) => {
+            const data = d.data();
+            return {
+              id: data.id || d.id,
+              authorId: data.authorId || '',
+              authorName: data.authorName || 'عضو',
+              authorAvatar: data.authorAvatar || '',
+              authorGender: data.authorGender || 'male',
+              authorCountryFlag: data.authorCountryFlag || '🇪🇬',
+              authorVipBadge: data.authorVipBadge || '',
+              authorRole: data.authorRole || 'member',
+              text: data.text || '',
+              likedBy: Array.isArray(data.likedBy) ? data.likedBy : [],
+              likesCount: Number(data.likesCount) || (Array.isArray(data.likedBy) ? data.likedBy.length : 0),
+              commentsCount: Number(data.commentsCount) || 0,
+              createdAt: typeof data.createdAt === 'number' ? data.createdAt : Date.now()
+            };
+          });
+          try {
+            localStorage.setItem(LOCAL_FORUM_KEY, JSON.stringify(list.slice(0, 80)));
+          } catch {}
+          liveChatBus?.postMessage({ type: 'FORUM_POSTS_CHANGED' });
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('shat_masr_sync_event', { detail: { type: 'FORUM_POSTS_CHANGED' } }));
+          }
+        } catch (err) {
+          handleFirestoreError(err, OperationType.LIST, 'forum_posts');
+        }
+      })()
+    );
+
+    // 2d. Shared daily room missions refresh -> updates RoomsView in-place
+    tasks.push(
+      (async () => {
+        try {
+          const dateKey = getTodayKey();
+          const localKey = `shat_masr_shared_missions_${dateKey}`;
+          const q = query(collection(fsDb, 'room_daily_missions'), where('dateKey', '==', dateKey));
+          const snap = await getDocs(q);
+          if (!snap.empty) {
+            const list: SharedRoomMission[] = snap.docs.map((d) => d.data() as SharedRoomMission);
+            try {
+              localStorage.setItem(localKey, JSON.stringify(list));
+            } catch {}
+            liveChatBus?.postMessage({ type: 'SHARED_MISSIONS_CHANGED' });
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('shat_masr_sync_event', { detail: { type: 'SHARED_MISSIONS_CHANGED' } }));
+            }
+          }
+        } catch (err) {
+          handleFirestoreError(err, OperationType.LIST, 'room_daily_missions');
+        }
+      })()
+    );
+
+    // 2e. Room locks state from Firestore rooms collection
+    tasks.push(
+      (async () => {
+        try {
+          const snap = await getDocs(collection(fsDb, 'rooms'));
+          const locks: Record<string, boolean> = {};
+          snap.docs.forEach((d) => {
+            const data = d.data();
+            if (typeof data?.isLocked === 'boolean') {
+              if (data.isLocked) {
+                locks[d.id] = true;
+                try {
+                  localStorage.setItem(`room_lock_${d.id}`, 'true');
+                } catch {}
+              } else {
+                try {
+                  localStorage.removeItem(`room_lock_${d.id}`);
+                } catch {}
+              }
+            }
+          });
+          result.roomLocks = locks;
+        } catch (err) {
+          handleFirestoreError(err, OperationType.LIST, 'rooms');
+        }
+      })()
+    );
+  }
+
+  // Race against a 3.5s safety timeout so offline connections settle smoothly
+  await Promise.race([
+    Promise.allSettled(tasks),
+    new Promise<void>((resolve) => setTimeout(resolve, 3500))
+  ]);
+
+  result.onlineUsers = Array.from(mergedOnlineMap.values());
+  return result;
 }
 
 
