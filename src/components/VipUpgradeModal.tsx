@@ -1,13 +1,12 @@
 import React, { useState } from 'react';
-import { 
-  X, 
-  Crown, 
-  Sparkles, 
-  Check, 
+import {
+  X,
+  Crown,
+  Sparkles,
+  Check,
   QrCode,
   Copy,
   ShieldCheck,
-  CheckCircle2,
   AlertCircle,
   Clock,
   Hourglass,
@@ -16,7 +15,7 @@ import {
 import { User, VipTier } from '../types/chat';
 import { VIP_TIERS } from '../data/seedData';
 import { sounds } from '../utils/soundEffects';
-import { submitPaymentRequest, PendingPaymentOrder } from '../services/firebase';
+import { submitPaymentRequest } from '../services/firebase';
 
 interface VipUpgradeModalProps {
   isOpen: boolean;
@@ -31,17 +30,12 @@ export const VipUpgradeModal: React.FC<VipUpgradeModalProps> = ({
   onClose,
   currentUser,
 }) => {
-  const [selectedTier, setSelectedTier] = useState<VipTier>(VIP_TIERS[2]); // Default VIP Gold
+  const [selectedTier, setSelectedTier] = useState<VipTier>(VIP_TIERS[2]);
   const [step, setStep] = useState<'select' | 'payment_form' | 'success'>('select');
-  const paymentMethod = 'instapay' as const;
   const [senderPhone, setSenderPhone] = useState<string>('');
-  const [senderName, setSenderName] = useState<string>('');
-  const [senderReference, setSenderReference] = useState<string>('');
-  const [transferNote, setTransferNote] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [submittedOrderId, setSubmittedOrderId] = useState<string | null>(null);
-
   const [copiedInstapay, setCopiedInstapay] = useState(false);
 
   if (!isOpen) return null;
@@ -58,16 +52,9 @@ export const VipUpgradeModal: React.FC<VipUpgradeModalProps> = ({
     e.preventDefault();
     setFormError(null);
 
-    if (!senderPhone.trim()) {
-      setFormError('يرجى إدخال رقم المحفظة أو الحساب المحوّل منه');
-      return;
-    }
-    if (!senderName.trim()) {
-      setFormError('يرجى إدخال اسم صاحب الحساب أو المحفظة');
-      return;
-    }
-    if (!senderReference.trim()) {
-      setFormError('يرجى إدخال كود العملية أو الرقم المرجعي للتحويل');
+    const cleanedAccount = senderPhone.trim();
+    if (!cleanedAccount) {
+      setFormError('يرجى إدخال رقم المحفظة أو الحساب المُحَوّل منه');
       return;
     }
 
@@ -75,22 +62,22 @@ export const VipUpgradeModal: React.FC<VipUpgradeModalProps> = ({
     try {
       const res = await submitPaymentRequest({
         userId: currentUser.id,
-        userName: currentUser.name,
+        userName: currentUser.name || 'عضو شات مصر',
         type: 'vip',
         itemName: selectedTier.name,
         vipTierId: selectedTier.id,
         amountEgp: selectedTier.priceEgp,
-        paymentMethod: paymentMethod,
-        senderAccountOrPhone: senderPhone.trim(),
-        transactionRef: senderReference.trim(),
-        note: transferNote.trim() || `طلب ترقية عضوية إلى ${selectedTier.name} (${selectedTier.badge})`
+        paymentMethod: 'instapay',
+        senderAccountOrPhone: cleanedAccount,
+        transactionRef: cleanedAccount,
+        note: `طلب ترقية عضوية إلى ${selectedTier.name} (${selectedTier.badge}) من ${cleanedAccount}`
       });
 
       sounds.playCoinsReward();
       setSubmittedOrderId(res.orderId);
       setStep('success');
-    } catch (err: any) {
-      console.error("VIP request submission error:", err);
+    } catch (err) {
+      console.error('VIP request submission error:', err);
       setFormError('حدث خطأ أثناء إرسال الطلب. يرجى المحاولة مجدداً أو التحقق من الاتصال.');
     } finally {
       setIsSubmitting(false);
@@ -98,86 +85,94 @@ export const VipUpgradeModal: React.FC<VipUpgradeModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-slate-950/85 backdrop-blur-md p-0 sm:p-4 animate-in fade-in">
-      <div className="w-full sm:max-w-2xl bg-[#0c1222] border border-amber-400/40 rounded-t-3xl sm:rounded-3xl overflow-hidden shadow-[0_0_45px_rgba(168,85,247,0.2)] flex flex-col max-h-[92vh]">
-        
-        {/* Modal Header */}
-        <div className="p-4 bg-gradient-to-l from-[#1a1033] via-[#261447] to-[#2b1a0e] border-b border-amber-400/25 flex items-center justify-between shrink-0">
+    <div
+      dir="rtl"
+      onClick={onClose}
+      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-slate-900/45 backdrop-blur-sm p-0 sm:p-4 animate-in fade-in"
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="w-full sm:max-w-2xl bg-white border border-slate-200 rounded-t-3xl sm:rounded-3xl overflow-hidden shadow-2xl flex flex-col max-h-[92vh] text-[#1E293B]"
+      >
+        {/* Modal Header (Clean Modern Light Identity matching OnlineUsersModal) */}
+        <div className="p-4 bg-white border-b border-slate-200 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-2.5">
-            <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-amber-400/25 to-purple-500/25 border border-amber-400/45 flex items-center justify-center text-amber-300 shrink-0 shadow-inner">
-              <Crown className="w-5 h-5 fill-amber-400" />
+            <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-emerald-50 to-purple-50 border border-purple-200 flex items-center justify-center text-purple-700 shrink-0 shadow-2xs">
+              <Crown className="w-5 h-5 text-purple-600" />
             </div>
             <div>
-              <h3 className="text-base font-black text-white flex items-center gap-1.5">
-                ترقية الرتب وعضويات VIP الملكية
-                <Sparkles className="w-4 h-4 text-amber-400" />
+              <h3 className="text-base font-black text-[#1E293B] flex items-center gap-1.5">
+                <span>ترقية الرتب وعضويات VIP</span>
+                <Sparkles className="w-4 h-4 text-emerald-600" />
               </h3>
-              <p className="text-xs text-purple-200/85">مراجعة وتدقيق معتمد عبر InstaPay 🛡️</p>
+              <p className="text-xs text-slate-500 font-medium">دفع فوري ومراجعة سريعة عبر InstaPay 🛡️</p>
             </div>
           </div>
 
-          <button onClick={onClose} className="p-1.5 rounded-full text-slate-300 hover:text-white bg-white/10 hover:bg-white/15 transition-colors">
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="إغلاق"
+            className="w-9 h-9 rounded-full text-slate-500 hover:text-[#1E293B] bg-slate-100 hover:bg-slate-200 flex items-center justify-center transition-colors cursor-pointer"
+          >
             <X className="w-4 h-4" />
           </button>
         </div>
 
         {/* Content Body */}
-        <div className="p-4 overflow-y-auto space-y-4 flex-1 bg-gradient-to-b from-[#0c1222] to-[#090d1a]">
-          
+        <div className="p-4 overflow-y-auto space-y-4 flex-1 bg-[#F8FAFC]">
           {/* User's current rank */}
-          <div className="flex items-center justify-between bg-[#131b31] border border-purple-500/30 rounded-2xl p-3 text-xs">
-            <span className="text-slate-300 font-bold">رتبتك الحالية:</span>
-            <span className="font-black text-amber-300 flex items-center gap-1">
-              <Crown className="w-4 h-4 text-amber-400" /> {currentUser.vipBadge || 'عضو نشط'}
+          <div className="flex items-center justify-between bg-white border border-slate-200 rounded-2xl p-3 text-xs shadow-2xs">
+            <span className="text-slate-600 font-bold">رتبتك الحالية:</span>
+            <span className="font-black text-purple-700 flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-purple-50 border border-purple-200">
+              <Crown className="w-3.5 h-3.5 text-purple-600" />
+              <span>{currentUser.vipBadge || 'عضو نشط'}</span>
             </span>
           </div>
 
           {/* STEP 1: SELECT TIER */}
           {step === 'select' && (
             <div className="space-y-4">
-              {/* Payment Info Banner */}
-              <div className="p-3 rounded-2xl bg-indigo-950/40 border border-indigo-700/50 text-indigo-200 text-xs flex items-start gap-2">
-                <ShieldCheck className="w-5 h-5 text-indigo-400 shrink-0 mt-0.5" />
+              <div className="p-3 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-950 text-xs flex items-start gap-2.5">
+                <ShieldCheck className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
                 <div className="space-y-0.5">
-                  <p className="font-bold text-white">نظام الترقية اليدوي الآمن (قيد المراجعة والتدقيق)</p>
-                  <p className="text-[11px] text-slate-300 leading-relaxed">
-                    اختر الباقة المطلوبة ثم قم بإرسال طلب التحويل عبر إنستاباي أو المحافظ الإلكترونية. سيتم تفعيل الترقية ومميزاتها فور تأكيد عملية الدفع من قبل الإدارة.
+                  <p className="font-black text-[#1E293B]">نظام الترقية السريع والآمن</p>
+                  <p className="text-[11px] text-slate-600 leading-relaxed">
+                    اختر الباقة المناسبة ثم حوّل عبر إنستاباي وأدخل رقم حسابك ليتم تفعيل الترقية فوراً بعد المراجعة.
                   </p>
                 </div>
               </div>
 
-              {/* Tiers Cards Grid */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {VIP_TIERS.map((tier) => {
                   const isSelected = selectedTier.id === tier.id;
+                  const isDiamond = tier.id === 'vip_diamond';
                   return (
                     <div
                       key={tier.id}
                       onClick={() => setSelectedTier(tier)}
-                      className={`relative p-4 rounded-2xl border cursor-pointer transition-all ${
+                      className={`relative p-4 rounded-2xl border cursor-pointer transition-all bg-white ${
                         isSelected
-                          ? 'bg-gradient-to-b from-[#17203a] to-[#11172a] border-amber-400 shadow-[0_0_22px_rgba(245,158,11,0.22)] scale-[1.01]'
-                          : 'bg-[#131b31]/80 border-purple-500/25 hover:border-amber-400/50'
+                          ? 'border-purple-600 ring-2 ring-purple-500/20 shadow-md'
+                          : 'border-slate-200 hover:border-emerald-400 shadow-2xs'
                       }`}
                     >
-                      {/* Top Badge */}
-                      <div className="flex items-center justify-between mb-2">
-                        <span className={`text-xs px-2.5 py-0.5 rounded-full font-black border ${tier.badgeBg}`}>
+                      <div className="flex items-center justify-between mb-2 gap-2">
+                        <span className="text-[11px] px-2.5 py-0.5 rounded-full font-black bg-purple-50 border border-purple-200 text-purple-700">
                           {tier.badge}
                         </span>
-                        <span className="text-xs font-black text-amber-300">
-                          {tier.priceEgp} ج.م <span className="text-[10px] text-slate-400">({tier.priceUsd}$)</span>
+                        <span className="text-xs font-black text-emerald-700">
+                          {tier.priceEgp} ج.م <span className="text-[10px] text-slate-400 font-bold">({tier.priceUsd}$)</span>
                         </span>
                       </div>
 
-                      <h4 className="text-sm font-black text-white">{tier.name}</h4>
-                      <p className="text-[11px] text-slate-300/80 mb-3">{tier.tagline}</p>
+                      <h4 className="text-sm font-black text-[#1E293B]">{tier.name}</h4>
+                      <p className="text-[11px] text-slate-500 mb-3">{tier.tagline}</p>
 
-                      {/* Perks List */}
                       <ul className="space-y-1.5 mb-4">
                         {tier.perks.map((perk, pIdx) => (
-                          <li key={pIdx} className="text-[11px] text-slate-200 flex items-start gap-1.5">
-                            <Check className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
+                          <li key={pIdx} className="text-[11px] text-slate-700 flex items-start gap-1.5">
+                            <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0 mt-0.5" />
                             <span>{perk}</span>
                           </li>
                         ))}
@@ -189,16 +184,14 @@ export const VipUpgradeModal: React.FC<VipUpgradeModalProps> = ({
                           e.stopPropagation();
                           handleStartPayment(tier);
                         }}
-                        className={`w-full py-2.5 rounded-xl text-xs font-black flex items-center justify-center gap-1.5 shadow-md active:scale-95 transition-all ${
-                          tier.id === 'vip_diamond'
-                            ? 'bg-gradient-to-r from-amber-400 via-purple-500 to-indigo-600 text-white'
-                            : tier.id === 'vip_silver'
-                            ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white'
-                            : 'bg-gradient-to-r from-amber-500 to-yellow-500 text-slate-950'
+                        className={`w-full py-2.5 rounded-xl text-xs font-black flex items-center justify-center gap-1.5 shadow-sm active:scale-95 transition-all text-white cursor-pointer ${
+                          isDiamond
+                            ? 'bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500'
+                            : 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500'
                         }`}
                       >
                         <Crown className="w-3.5 h-3.5" />
-                        <span>طلب ترقية إلى {tier.name}</span>
+                        <span>ترقية إلى {tier.name}</span>
                       </button>
                     </div>
                   );
@@ -207,211 +200,147 @@ export const VipUpgradeModal: React.FC<VipUpgradeModalProps> = ({
             </div>
           )}
 
-          {/* STEP 2: PAYMENT FORM (InstaPay & E-Wallets) */}
+          {/* STEP 2: SIMPLIFIED PAYMENT FORM (ONLY 2 ITEMS: Official InstaPay Copy + Single Account Input) */}
           {step === 'payment_form' && (
             <div className="space-y-4">
               <button
                 type="button"
                 onClick={() => setStep('select')}
-                className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-white transition-colors"
+                className="flex items-center gap-1.5 text-xs font-bold text-slate-600 hover:text-[#1E293B] transition-colors cursor-pointer"
               >
                 <ArrowRight className="w-4 h-4" />
                 <span>الرجوع لاختيار الباقة</span>
               </button>
 
               {/* Selected Tier Summary */}
-              <div className="p-3.5 rounded-2xl bg-amber-950/30 border border-amber-500/40 flex items-center justify-between">
+              <div className="p-3.5 rounded-2xl bg-white border border-purple-200 flex items-center justify-between shadow-2xs">
                 <div>
-                  <span className="text-[10px] text-amber-400 font-bold block">الباقة المختارة:</span>
-                  <span className="text-sm font-black text-white">{selectedTier.name} ({selectedTier.badge})</span>
+                  <span className="text-[10.5px] text-purple-600 font-bold block">الباقة المختارة:</span>
+                  <span className="text-sm font-black text-[#1E293B]">{selectedTier.name} ({selectedTier.badge})</span>
                 </div>
                 <div className="text-left">
-                  <span className="text-base font-black text-amber-400">{selectedTier.priceEgp} ج.م</span>
+                  <span className="text-base font-black text-emerald-700">{selectedTier.priceEgp} ج.م</span>
                   <span className="text-[10px] text-slate-400 block">({selectedTier.priceUsd}$)</span>
                 </div>
               </div>
 
-              {/* Payment Method (InstaPay Only) */}
-              <div className="p-3 rounded-2xl bg-[#1a1333] border border-purple-500/45 flex items-center justify-between">
-                <div className="flex flex-col gap-0.5">
-                  <span className="text-xs font-black text-white flex items-center gap-1.5">
-                    <QrCode className="w-4 h-4 text-purple-300" />
-                    إنستاباي (InstaPay)
-                  </span>
-                  <span className="text-[10px] text-purple-200">تحويل فوري بدون رسوم — الوسيلة المعتمدة حالياً</span>
+              {/* Field 1: Fixed Official Transfer Account with Copy Button */}
+              <div className="p-4 rounded-2xl bg-white border border-slate-200 space-y-2.5 shadow-2xs">
+                <div className="flex items-center gap-1.5 text-xs font-black text-[#1E293B]">
+                  <QrCode className="w-4 h-4 text-purple-600" />
+                  <span>حساب التحويل الرسمي (InstaPay)</span>
                 </div>
-                <Check className="w-4 h-4 text-amber-400" />
-              </div>
 
-              {/* Transfer Details Card */}
-              <div className="p-3.5 rounded-2xl bg-[#131b31] border border-amber-400/30 space-y-3">
-                <span className="text-xs font-bold text-amber-300 block">
-                  بيانات حساب التحويل الرسمي للإدارة:
-                </span>
-
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between bg-[#090d1a] p-2.5 rounded-xl border border-purple-500/45">
-                    <div>
-                      <span className="text-[10px] text-slate-400 block">عنوان الدفع اللحظي (IPA):</span>
-                      <span className="text-xs sm:text-sm font-mono font-black text-amber-300 select-all">
-                        {INSTAPAY_ADDRESS}
-                      </span>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        navigator.clipboard.writeText(INSTAPAY_ADDRESS);
-                        setCopiedInstapay(true);
-                        setTimeout(() => setCopiedInstapay(false), 2000);
-                      }}
-                      className="px-2.5 py-1.5 rounded-lg bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white text-[11px] font-bold flex items-center gap-1 cursor-pointer"
-                    >
-                      <Copy className="w-3 h-3" />
-                      <span>{copiedInstapay ? 'تم النسخ' : 'نسخ'}</span>
-                    </button>
+                <div className="flex items-center justify-between gap-2 bg-[#F8FAFC] p-3 rounded-xl border border-slate-200">
+                  <div className="min-w-0">
+                    <span className="text-[10px] text-slate-500 block font-bold">عنوان الدفع اللحظي:</span>
+                    <span className="text-xs sm:text-sm font-mono font-black text-purple-700 select-all break-all" dir="ltr">
+                      {INSTAPAY_ADDRESS}
+                    </span>
                   </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard.writeText(INSTAPAY_ADDRESS);
+                      setCopiedInstapay(true);
+                      setTimeout(() => setCopiedInstapay(false), 2000);
+                    }}
+                    className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black flex items-center gap-1.5 shrink-0 shadow-xs active:scale-95 transition cursor-pointer"
+                  >
+                    {copiedInstapay ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                    <span>{copiedInstapay ? 'تم النسخ' : 'نسخ'}</span>
+                  </button>
                 </div>
               </div>
 
-              {/* Form Input fields */}
-              <form onSubmit={handleSubmitVipRequest} className="space-y-3">
+              {/* Field 2: Single Input Field ONLY */}
+              <form onSubmit={handleSubmitVipRequest} className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3.5 shadow-2xs">
                 {formError && (
-                  <div className="p-2.5 rounded-xl bg-rose-950/70 border border-rose-500/50 text-rose-200 text-xs flex items-center gap-2">
-                    <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                  <div className="p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
                     <span>{formError}</span>
                   </div>
                 )}
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-[11px] font-bold text-slate-200 block mb-1">
-                      رقم المحفظة / الحساب المحوّل منه <span className="text-rose-400">*</span>
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      placeholder="مثال: 01012345678 أو IPA"
-                      value={senderPhone}
-                      onChange={(e) => setSenderPhone(e.target.value)}
-                      className="w-full px-3 py-2 rounded-xl bg-[#131b31] border border-purple-500/35 text-white text-xs placeholder:text-slate-500 focus:outline-none focus:border-amber-400"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="text-[11px] font-bold text-slate-200 block mb-1">
-                      اسم صاحب الحساب أو المحفظة <span className="text-rose-400">*</span>
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      placeholder="الاسم المسجل في التحويل"
-                      value={senderName}
-                      onChange={(e) => setSenderName(e.target.value)}
-                      className="w-full px-3 py-2 rounded-xl bg-[#131b31] border border-purple-500/35 text-white text-xs placeholder:text-slate-500 focus:outline-none focus:border-amber-400"
-                    />
-                  </div>
-                </div>
-
                 <div>
-                  <label className="text-[11px] font-bold text-slate-200 block mb-1">
-                    كود العملية أو الرقم المرجعي للتحويل (Reference No) <span className="text-rose-400">*</span>
+                  <label className="text-xs font-black text-[#1E293B] block mb-1.5">
+                    رقم المحفظة / الحساب المُحَوّل منه <span className="text-rose-600">*</span>
                   </label>
                   <input
                     type="text"
                     required
-                    placeholder="رقم العملية من تطبيق InstaPay أو رسالة تأكيد المحفظة"
-                    value={senderReference}
-                    onChange={(e) => setSenderReference(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl bg-[#131b31] border border-purple-500/35 text-white text-xs font-mono placeholder:text-slate-500 focus:outline-none focus:border-amber-400"
+                    placeholder="مثال: 01012345678 أو IPA"
+                    value={senderPhone}
+                    onChange={(e) => setSenderPhone(e.target.value)}
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-[#F8FAFC] border border-slate-200 text-[#1E293B] text-xs sm:text-sm font-medium placeholder:text-slate-400 focus:outline-none focus:border-purple-600 focus:bg-white transition-colors"
                   />
                 </div>
 
-                <div>
-                  <label className="text-[11px] font-bold text-slate-200 block mb-1">
-                    ملاحظات إضافية أو تفاصيل الإيصال (اختياري)
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="مثال: تم التحويل الساعة 5:30 م"
-                    value={transferNote}
-                    onChange={(e) => setTransferNote(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl bg-[#131b31] border border-purple-500/35 text-white text-xs placeholder:text-slate-500 focus:outline-none focus:border-amber-400"
-                  />
-                </div>
-
-                <div className="pt-2">
-                  <button
-                    type="submit"
-                    disabled={isSubmitting}
-                    className="w-full py-3 rounded-2xl bg-gradient-to-r from-amber-400 via-amber-500 to-purple-600 hover:from-amber-300 hover:to-purple-500 text-slate-950 font-black text-xs sm:text-sm flex items-center justify-center gap-2 shadow-lg shadow-amber-500/20 active:scale-95 transition-all disabled:opacity-50 cursor-pointer"
-                  >
-                    {isSubmitting ? (
-                      <>
-                        <Clock className="w-4 h-4 animate-spin" />
-                        <span>جاري تسجيل طلب الترقية وإرساله للمراجعة...</span>
-                      </>
-                    ) : (
-                      <>
-                        <ShieldCheck className="w-4 h-4 text-slate-950" />
-                        <span>تأكيد وإرسال طلب الترقية للمراجعة (معلق - Pending)</span>
-                      </>
-                    )}
-                  </button>
-                  <p className="text-[10px] text-center text-slate-400 mt-2">
-                    🔒 لا يتم الخصم أو التفعيل الفوري. تتم مراجعة التحويل واعتماد الترقية يدوياً لضمان الأمان.
-                  </p>
-                </div>
+                <button
+                  type="submit"
+                  disabled={isSubmitting || !senderPhone.trim()}
+                  className="w-full py-3 rounded-2xl bg-gradient-to-r from-emerald-600 to-purple-600 hover:from-emerald-500 hover:to-purple-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-black text-xs sm:text-sm flex items-center justify-center gap-2 shadow-md active:scale-95 transition-all cursor-pointer"
+                >
+                  {isSubmitting ? (
+                    <>
+                      <Clock className="w-4 h-4 animate-spin" />
+                      <span>جاري إرسال طلب الترقية...</span>
+                    </>
+                  ) : (
+                    <>
+                      <ShieldCheck className="w-4 h-4" />
+                      <span>تأكيد وإرسال طلب الترقية</span>
+                    </>
+                  )}
+                </button>
               </form>
             </div>
           )}
 
           {/* STEP 3: SUCCESS / PENDING STATUS */}
           {step === 'success' && (
-            <div className="p-6 text-center space-y-4 animate-in zoom-in-95">
-              <div className="w-16 h-16 rounded-full bg-amber-500/20 border-2 border-amber-400 flex items-center justify-center mx-auto text-amber-400">
-                <Hourglass className="w-8 h-8 animate-pulse text-amber-400" />
+            <div className="p-6 text-center space-y-4 bg-white border border-slate-200 rounded-2xl shadow-2xs animate-in zoom-in-95">
+              <div className="w-16 h-16 rounded-full bg-emerald-50 border-2 border-emerald-500 flex items-center justify-center mx-auto text-emerald-600">
+                <Hourglass className="w-8 h-8 animate-pulse" />
               </div>
 
               <div>
-                <h4 className="text-base font-black text-white">
+                <h4 className="text-base font-black text-[#1E293B]">
                   تم تسجيل طلب ترقية {selectedTier.name} بنجاح!
                 </h4>
-                <p className="text-xs text-amber-300 font-bold mt-1">
-                  حالة الطلب: قيد المراجعة والتدقيق (Pending) ⏳
+                <p className="text-xs text-emerald-700 font-bold mt-1">
+                  حالة الطلب: قيد المراجعة والتدقيق ⏳
                 </p>
-                <p className="text-xs text-slate-300 mt-2 leading-relaxed max-w-md mx-auto">
-                  تم إرسال تفاصيل التحويل لإدارة المنصة برقم مرجعي <span className="text-white font-mono font-bold">#{senderReference}</span> (طلب {submittedOrderId}). 
-                  سيتم تفعيل رتبتك الملكية وإضافة شارة الـ VIP فور مراجعة العملية.
+                <p className="text-xs text-slate-600 mt-2 leading-relaxed max-w-md mx-auto">
+                  رقم الطلب <span className="text-[#1E293B] font-mono font-bold">#{submittedOrderId}</span>. سيتم تفعيل رتبتك الملكية فور التحقق من التحويل.
                 </p>
               </div>
 
-              <div className="p-3 bg-slate-900 border border-slate-800 rounded-xl max-w-sm mx-auto text-right text-xs space-y-1">
-                <div className="flex justify-between text-slate-400">
+              <div className="p-3.5 bg-[#F8FAFC] border border-slate-200 rounded-xl max-w-sm mx-auto text-right text-xs space-y-1.5">
+                <div className="flex justify-between text-slate-600">
                   <span>المبلغ المطلوب:</span>
-                  <span className="text-white font-bold">{selectedTier.priceEgp} ج.م</span>
+                  <span className="text-[#1E293B] font-black">{selectedTier.priceEgp} ج.م</span>
                 </div>
-                <div className="flex justify-between text-slate-400">
+                <div className="flex justify-between text-slate-600">
                   <span>وسيلة الدفع:</span>
-                  <span className="text-purple-300 font-bold">InstaPay</span>
+                  <span className="text-purple-700 font-black">InstaPay</span>
                 </div>
-                <div className="flex justify-between text-slate-400">
-                  <span>الحساب المحول منه:</span>
-                  <span className="text-slate-200 font-mono">{senderPhone}</span>
+                <div className="flex justify-between text-slate-600">
+                  <span>الحساب المحوّل منه:</span>
+                  <span className="text-[#1E293B] font-mono font-bold">{senderPhone}</span>
                 </div>
               </div>
 
               <button
                 type="button"
                 onClick={onClose}
-                className="px-6 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold transition"
+                className="px-6 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black transition cursor-pointer"
               >
-                حسناً، فهمت
+                حسناً، إغلاق
               </button>
             </div>
           )}
-
         </div>
-
       </div>
     </div>
   );

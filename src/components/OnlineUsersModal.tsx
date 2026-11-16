@@ -242,6 +242,11 @@ export const OnlineUsersModal: React.FC<OnlineUsersModalProps> = ({
                         <Star className="w-2.5 h-2.5 fill-amber-400 text-amber-500" />
                         {user.ratingPoints || 0}
                       </span>
+                      {(user.gender || typeof user.age === 'number') && (
+                        <span className="text-[9px] text-slate-500 font-semibold shrink-0">
+                          • {user.gender === 'female' ? 'أنثى' : 'ذكر'}{typeof user.age === 'number' ? ` (${user.age})` : ''}
+                        </span>
+                      )}
                       {rankMeta.isPrivileged && (
                         <span className={`px-1 py-0.2 rounded border text-[8.5px] font-black truncate ${rankMeta.badgeClass}`}>
                           {rankMeta.label}

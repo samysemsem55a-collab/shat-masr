@@ -866,6 +866,15 @@ wss.on('connection', (ws: WebSocket) => {
                 convId,
                 message
               });
+              if (message.senderId) {
+                sendToUser(targetId, {
+                  type: 'PRIVATE_TYPING_UPDATE',
+                  senderId: message.senderId,
+                  senderName: message.senderName || '',
+                  targetUserId: targetId,
+                  isTyping: false
+                });
+              }
             }
             if (recipientSessionId) {
               sendToUser(recipientSessionId, {
@@ -873,6 +882,15 @@ wss.on('connection', (ws: WebSocket) => {
                 convId,
                 message
               });
+              if (message.senderId) {
+                sendToUser(recipientSessionId, {
+                  type: 'PRIVATE_TYPING_UPDATE',
+                  senderId: message.senderId,
+                  senderName: message.senderName || '',
+                  targetUserId: recipientSessionId,
+                  isTyping: false
+                });
+              }
             }
             if (message.senderId) {
               sendToUser(message.senderId, {
@@ -1006,15 +1024,20 @@ wss.on('connection', (ws: WebSocket) => {
         }
 
         case 'PRIVATE_TYPING': {
-          const { senderId, senderName, targetUserId, isTyping } = payload;
+          const { senderId, senderName, targetUserId, targetSessionId, isTyping } = payload || {};
           if (senderId && targetUserId) {
-            broadcastToAll({
+            const typingEvent = {
               type: 'PRIVATE_TYPING_UPDATE',
               senderId,
               senderName,
               targetUserId,
               isTyping: !!isTyping
-            });
+            };
+            const deliveredPrimary = sendToUser(targetUserId, typingEvent);
+            const deliveredSession = targetSessionId ? sendToUser(targetSessionId, typingEvent) : false;
+            if (!deliveredPrimary && !deliveredSession) {
+              broadcastToAll(typingEvent, ws);
+            }
           }
           break;
         }

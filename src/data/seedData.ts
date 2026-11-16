@@ -20,18 +20,18 @@ export const BADGES_CATALOG: BadgeDefinition[] = [
 
 export const CURRENT_USER: User = {
   id: 'usr_me',
-  name: 'ضيف عربي',
-  username: 'arab_guest',
-  avatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=shat_masr_guest',
-  bio: 'مرحباً بكم في شات مصر والعرب 🇪🇬 🌸',
+  name: '',
+  username: '',
+  avatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=shat_masr_member',
+  bio: 'عضو في شات مصر والعرب 🇪🇬',
   country: 'مصر',
   countryFlag: '🇪🇬',
   role: 'member',
-  coins: 0, // Starts at 0 per requirement
+  coins: 100,
   earningsEgp: 0,
   earningsUsd: 0,
-  vipBadge: 'عضو نشط',
-  badges: ['عضو نشط'],
+  vipBadge: '',
+  badges: [],
   ratingPoints: 0,
   frameStyle: 'border-slate-700',
   profileWallpaper: '',
@@ -40,6 +40,7 @@ export const CURRENT_USER: User = {
   status: 'online',
   joinedAt: new Date().toISOString().split('T')[0],
   gender: 'male',
+  age: undefined,
   level: 1,
   likesReceived: 0,
   giftsReceivedCount: 0
@@ -49,13 +50,11 @@ export const PRIMARY_OWNER_EMAIL = 'samielsayed555@gmail.com';
 
 export function isUserAdminOrOwner(user?: (User & { email?: string }) | null): boolean {
   if (!user) return false;
-  
-  // Strictly restricted to primary owner email: samielsayed555@gmail.com
+
   if (user.email && user.email.toLowerCase() === PRIMARY_OWNER_EMAIL.toLowerCase()) {
     return true;
   }
-  
-  // Check if verified primary owner email exists in localStorage
+
   if (typeof window !== 'undefined') {
     const savedEmail = localStorage.getItem('arab_chat_auth_email') || '';
     if (savedEmail.toLowerCase() === PRIMARY_OWNER_EMAIL.toLowerCase()) {
@@ -66,14 +65,35 @@ export function isUserAdminOrOwner(user?: (User & { email?: string }) | null): b
   return false;
 }
 
+export function hasCompletedMandatoryProfile(user?: Partial<User> | null): boolean {
+  if (!user) return false;
+  if (isUserAdminOrOwner(user as User)) return true;
+  if (user.email || user.isEmailVerified || user.isPhoneVerified) return true;
+
+  const trimmedName = (user.name || '').trim();
+  const hasRealName = Boolean(trimmedName) && !trimmedName.startsWith('زائر_') && trimmedName !== 'ضيف عربي';
+  const hasValidAge = typeof user.age === 'number' && !isNaN(user.age) && user.age >= 13 && user.age <= 99;
+  const hasValidGender = user.gender === 'male' || user.gender === 'female';
+
+  if (typeof window !== 'undefined') {
+    const hasEntered = Boolean(
+      localStorage.getItem('shat_masr_has_entered') || localStorage.getItem('arab_chat_has_entered')
+    );
+    return hasEntered && hasRealName && hasValidAge && hasValidGender;
+  }
+
+  return hasRealName && hasValidAge && hasValidGender;
+}
+
+/**
+ * Determines whether a user is NOT verified via Google / Phone / Owner account
+ * (used to gate exclusive member features like Audio/Video Calls while allowing public chat).
+ */
 export function isGuestUser(user?: Partial<User> | null): boolean {
   if (!user) return true;
   if (isUserAdminOrOwner(user as User)) return false;
   if (user.email || user.isEmailVerified || user.isPhoneVerified) return false;
-  if (user.role === 'guest' || user.isGuest === true) return true;
-  if (user.id && (user.id.startsWith('guest_') || user.id.startsWith('visitor_') || user.id === 'usr_me')) return true;
-  if (user.vipBadge && user.vipBadge.includes('زائر')) return true;
-  return false;
+  return true;
 }
 
 export function getOrCreateUser(): User {
@@ -87,20 +107,23 @@ export function getOrCreateUser(): User {
     const idKey = queryUser ? `arab_chat_userId_${queryUser}` : 'arab_chat_userId';
     const userKey = queryUser ? `arab_chat_user_${queryUser}` : 'arab_chat_user';
 
-    // 1. Check existing saved user first to preserve registered Firebase UID & stable profile
     const saved = localStorage.getItem(userKey);
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
         if (parsed && typeof parsed === 'object' && parsed.id && parsed.id !== 'usr_me') {
-          if (parsed.email || parsed.isEmailVerified || parsed.isPhoneVerified || isUserAdminOrOwner(parsed)) {
-            parsed.isGuest = false;
-            if (parsed.role === 'guest') {
-              parsed.role = isUserAdminOrOwner(parsed) ? 'owner' : 'member';
-            }
-            if (typeof parsed.vipBadge === 'string' && parsed.vipBadge.includes('زائر')) {
-              parsed.vipBadge = parsed.role === 'owner' ? 'المالك 👑' : 'عضو مسجل ✨';
-            }
+          if (typeof parsed.name === 'string' && parsed.name.trim().startsWith('زائر_')) {
+            parsed.name = '';
+          }
+          if (parsed.role === 'guest') {
+            parsed.role = isUserAdminOrOwner(parsed) ? 'owner' : 'member';
+          }
+          parsed.isGuest = false;
+          if (typeof parsed.vipBadge === 'string' && parsed.vipBadge.includes('زائر')) {
+            parsed.vipBadge = parsed.role === 'owner' ? 'المالك 👑' : '';
+          }
+          if (Array.isArray(parsed.badges)) {
+            parsed.badges = parsed.badges.filter((b: string) => !String(b).includes('زائر'));
           }
           localStorage.setItem(idKey, parsed.id);
           if (queryName && parsed.name !== queryName) {
@@ -112,33 +135,26 @@ export function getOrCreateUser(): User {
       } catch {}
     }
 
-    // 2. Check for stable guest_id or registered userId
-    let savedId = localStorage.getItem(idKey) || localStorage.getItem('arab_chat_guest_id');
-    if (!savedId) {
-      savedId = `guest_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-      localStorage.setItem('arab_chat_guest_id', savedId);
+    let savedId = localStorage.getItem(idKey);
+    if (!savedId || savedId.startsWith('guest_')) {
+      savedId = `usr_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
       localStorage.setItem(idKey, savedId);
     }
 
-    const displayNum = savedId.slice(-4);
-    const defaultName = queryName || (queryUser ? `مستخدم ${queryUser}` : `زائر_${displayNum}`);
-    const newUser: User = {
+    return {
       ...CURRENT_USER,
       id: savedId,
-      name: defaultName,
-      username: `guest_${displayNum}`,
-      role: 'guest',
-      isGuest: true,
-      vipBadge: 'عضو زائر 🌟',
-      badges: ['عضو زائر 🌟'],
-      avatar: `https://api.dicebear.com/7.x/bottts/svg?seed=${savedId}`,
-      coins: 100, // Welcome gift coins
+      name: queryName || '',
+      username: `member_${savedId.slice(-4)}`,
+      role: 'member',
+      isGuest: false,
+      vipBadge: '',
+      badges: [],
+      avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${savedId}`,
+      coins: 100,
     };
-
-    localStorage.setItem(userKey, JSON.stringify(newUser));
-    return newUser;
   } catch {
-    return { ...CURRENT_USER, role: 'guest', isGuest: true };
+    return { ...CURRENT_USER, role: 'member', isGuest: false };
   }
 }
 

@@ -272,9 +272,11 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
   const [playingVoiceId, setPlayingVoiceId] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Live Typing Indicator via WebSocket
+  // Live Typing Indicator via Real-time WebSocket
   const [isPeerTyping, setIsPeerTyping] = useState<boolean>(false);
   const typingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastPrivateTypingEmitRef = useRef<number>(0);
+  const peerTypingSafetyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (!activeContact) {
@@ -282,23 +284,54 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
       return;
     }
     const unsub = realtimeSocket.subscribeToPrivateTyping(activeContact.id, (isTyping) => {
+      if (peerTypingSafetyTimerRef.current) {
+        clearTimeout(peerTypingSafetyTimerRef.current);
+        peerTypingSafetyTimerRef.current = null;
+      }
       setIsPeerTyping(isTyping);
       if (isTyping) {
+        peerTypingSafetyTimerRef.current = setTimeout(() => {
+          setIsPeerTyping(false);
+        }, 5000);
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
       }
     });
 
     return () => {
       unsub();
+      if (peerTypingSafetyTimerRef.current) {
+        clearTimeout(peerTypingSafetyTimerRef.current);
+        peerTypingSafetyTimerRef.current = null;
+      }
       setIsPeerTyping(false);
     };
   }, [activeContact?.id]);
 
+  // Clear peer typing immediately when a fresh message from the active peer arrives
+  useEffect(() => {
+    if (!activeContact || messages.length === 0) return;
+    const latest = messages[messages.length - 1];
+    if (latest && latest.senderId === activeContact.id && Date.now() - (latest.timestamp || 0) < 10000) {
+      if (peerTypingSafetyTimerRef.current) {
+        clearTimeout(peerTypingSafetyTimerRef.current);
+        peerTypingSafetyTimerRef.current = null;
+      }
+      setIsPeerTyping(false);
+    }
+  }, [messages, activeContact?.id]);
+
   useEffect(() => {
     return () => {
       if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+      lastPrivateTypingEmitRef.current = 0;
       if (activeContact) {
-        realtimeSocket.sendPrivateTyping(currentUser.id, currentUser.name, activeContact.id, false);
+        realtimeSocket.sendPrivateTyping(
+          currentUser.id,
+          currentUser.name,
+          activeContact.id,
+          false,
+          getActivePeerSessionId()
+        );
       }
     };
   }, [activeContact?.id, currentUser.id]);
@@ -307,16 +340,23 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
     setInputText(val);
     if (!activeContact) return;
 
+    const peerSessionId = getActivePeerSessionId();
     if (val.trim().length > 0) {
-      realtimeSocket.sendPrivateTyping(currentUser.id, currentUser.name, activeContact.id, true);
+      const now = Date.now();
+      if (now - lastPrivateTypingEmitRef.current >= 1500) {
+        lastPrivateTypingEmitRef.current = now;
+        realtimeSocket.sendPrivateTyping(currentUser.id, currentUser.name, activeContact.id, true, peerSessionId);
+      }
 
       if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
       typingTimerRef.current = setTimeout(() => {
-        realtimeSocket.sendPrivateTyping(currentUser.id, currentUser.name, activeContact.id, false);
+        lastPrivateTypingEmitRef.current = 0;
+        realtimeSocket.sendPrivateTyping(currentUser.id, currentUser.name, activeContact.id, false, peerSessionId);
       }, 3000);
     } else {
       if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
-      realtimeSocket.sendPrivateTyping(currentUser.id, currentUser.name, activeContact.id, false);
+      lastPrivateTypingEmitRef.current = 0;
+      realtimeSocket.sendPrivateTyping(currentUser.id, currentUser.name, activeContact.id, false, peerSessionId);
     }
   };
 
@@ -520,7 +560,8 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
     if (!inputText.trim() || !activeContact) return;
 
     if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
-    realtimeSocket.sendPrivateTyping(currentUser.id, currentUser.name, activeContact.id, false);
+    lastPrivateTypingEmitRef.current = 0;
+    realtimeSocket.sendPrivateTyping(currentUser.id, currentUser.name, activeContact.id, false, getActivePeerSessionId());
 
     sounds.playMessageSent();
     const content = inputText.trim();
@@ -1093,7 +1134,7 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                 </h3>
                 {isPeerTyping ? (
                   <span className="text-[10px] sm:text-[11px] text-amber-600 font-bold flex items-center gap-1.5 animate-pulse truncate">
-                    <span>يكتب الآن...</span>
+                    <span>جاري الكتابة...</span>
                     <span className="flex items-center gap-0.5 shrink-0">
                       <span className="w-1 h-1 rounded-full bg-amber-500 animate-bounce" style={{ animationDelay: '0ms' }}></span>
                       <span className="w-1 h-1 rounded-full bg-amber-500 animate-bounce" style={{ animationDelay: '150ms' }}></span>
@@ -1411,7 +1452,7 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                 </div>
                 <div className="bg-white border border-amber-300/80 rounded-2xl rounded-tl-none px-3.5 py-2 flex items-center gap-2 shadow-md">
                   <span className="text-xs font-bold text-slate-800">
-                    {activeContact.name} يكتب الآن
+                    {activeContact.name} جاري الكتابة...
                   </span>
                   <div className="flex items-center gap-1">
                     <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-bounce" style={{ animationDelay: '0ms' }}></span>

@@ -19,6 +19,7 @@ import {
   Reply, 
   Users, 
   ShieldCheck, 
+  ShieldAlert,
   Music,
   Smile,
   Heart,
@@ -261,6 +262,15 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
   const [messageFilter, setMessageFilter] = useState<'all' | 'messages' | 'images' | 'gifts'>('all');
   const [showCompactWelcomeBanner, setShowCompactWelcomeBanner] = useState<boolean>(true);
 
+  // Auto-hide the room conduct warning banner after 5 seconds (5000ms)
+  useEffect(() => {
+    setShowCompactWelcomeBanner(true);
+    const hideBannerTimer = setTimeout(() => {
+      setShowCompactWelcomeBanner(false);
+    }, 5000);
+    return () => clearTimeout(hideBannerTimer);
+  }, [room.id]);
+
   // Message Draft Persistence per room (Requirement 4)
   const draftStorageKey = `arab_chat_draft_${room.id}`;
   const [inputText, setInputText] = useState(() => {
@@ -475,6 +485,30 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
   );
   const [bannedUserIds, setBannedUserIds] = useState<string[]>(room.bannedUserIds || []);
   const [dismissedSystemMsgIds, setDismissedSystemMsgIds] = useState<string[]>([]);
+  const scheduledSystemDismissRef = useRef<Set<string>>(new Set());
+
+  // Automatically dismiss system_welcome / bot banners 5 seconds after appearing
+  useEffect(() => {
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    messages.forEach((m) => {
+      if (m.type === 'system_welcome' && m.id && !scheduledSystemDismissRef.current.has(m.id)) {
+        scheduledSystemDismissRef.current.add(m.id);
+        const ageMs = typeof m.createdAt === 'number' ? Date.now() - m.createdAt : 0;
+        if (ageMs >= 5000) {
+          setDismissedSystemMsgIds((prev) => (prev.includes(m.id) ? prev : [...prev, m.id]));
+        } else {
+          const delay = Math.max(200, 5000 - Math.max(0, ageMs));
+          const t = setTimeout(() => {
+            setDismissedSystemMsgIds((prev) => (prev.includes(m.id) ? prev : [...prev, m.id]));
+          }, delay);
+          timers.push(t);
+        }
+      }
+    });
+    return () => {
+      timers.forEach((t) => clearTimeout(t));
+    };
+  }, [messages]);
 
   // Subscribe to real-time pinned message, lock status & custom background updates for ALL occupants in this room
   useEffect(() => {
@@ -538,7 +572,6 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
       user: targetUser,
       state: 'initial'
     });
-    try { sounds.playMessageReceived(); } catch {}
 
     // 1. Smooth Fade-in & Slide-up animation
     const enterTimer = setTimeout(() => {
@@ -688,7 +721,9 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
             ? prev.filter((u) => u.id !== latestMsg.senderId)
             : prev
         );
-        sounds.playMessageReceived();
+        if (latestMsg.type !== 'system_welcome' && latestMsg.senderId !== 'system_bot') {
+          sounds.playMessageReceived();
+        }
         const isIncomingPrivate = latestMsg.type === 'private' || Boolean(latestMsg.isPrivate);
         const isIncomingGift =
           latestMsg.type === 'gift' ||
@@ -1633,22 +1668,22 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
 
       {/* 6. Chat Wallpaper & Feed Scroll Area */}
       <div className="relative flex-1 overflow-hidden flex flex-col">
-        {/* Compact Dismissible Welcome Bot Banner */}
+        {/* Temporary Calm Conduct Warning Banner (Auto-hides after 5 seconds) */}
         {showCompactWelcomeBanner && (
-          <div className="bg-emerald-50/95 border-b border-emerald-200 px-3 py-1.5 flex items-center justify-between gap-2 text-slate-900 shrink-0 z-10">
+          <div className="bg-amber-50/95 border-b border-amber-200/90 px-3 py-2 flex items-center justify-between gap-2 text-amber-950 shrink-0 z-10 animate-in fade-in">
             <div className="flex items-center gap-2 min-w-0">
-              <span className="w-6 h-6 rounded-full bg-white border border-emerald-300 text-emerald-600 flex items-center justify-center shrink-0">
-                <Bot className="w-3.5 h-3.5" />
+              <span className="w-6 h-6 rounded-full bg-white border border-amber-300 text-amber-600 flex items-center justify-center shrink-0">
+                <ShieldAlert className="w-3.5 h-3.5" />
               </span>
-              <p className="text-[11px] sm:text-xs font-bold text-slate-800 leading-snug line-clamp-2">
-                أهلاً بك معنا في شات مصر! نورت المجلس 🌸 - شاركنا بتواجدك الراقي
+              <p className="text-[11px] sm:text-xs font-bold text-amber-950 leading-snug line-clamp-2">
+                تنبيه إداري: نرحب بكم في شات مصر — يُرجى الالتزام بقواعد الآداب العامة واحترام جميع الأعضاء.
               </p>
             </div>
             <button
               type="button"
               onClick={() => setShowCompactWelcomeBanner(false)}
-              className="p-1 rounded-full text-slate-500 hover:text-slate-900 hover:bg-emerald-200/70 transition-colors shrink-0"
-              title="إخفاء رسالة الترحيب"
+              className="p-1 rounded-full text-amber-700 hover:text-amber-950 hover:bg-amber-200/60 transition-colors shrink-0 cursor-pointer"
+              title="إخفاء التنبيه"
             >
               <X className="w-3.5 h-3.5" />
             </button>
@@ -1662,7 +1697,7 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
           const isPrivateMsg = msg.type === 'private' || msg.isPrivate;
           const uniqueKey = `${msg.id || 'msg'}_${idx}`;
 
-          // Automated System Notice Banner (Compact 1-2 lines with dismiss '✕')
+          // Automated System Conduct Notice Banner (Auto-hides after 5 seconds)
           if (msg.type === 'system_welcome' && msg.senderId === 'system_bot') {
             if (dismissedSystemMsgIds.includes(msg.id)) return null;
             return (
@@ -1671,19 +1706,19 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
                 initial={{ opacity: 0, y: 6 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.18, ease: 'easeOut' }}
-                className="px-3 py-1.5 my-1 rounded-2xl bg-emerald-100/90 border border-emerald-200 text-slate-900 flex items-center justify-between gap-2 shadow-2xs"
+                className="px-3 py-1.5 my-1 rounded-2xl bg-amber-50/95 border border-amber-200 text-amber-950 flex items-center justify-between gap-2 shadow-2xs"
               >
                 <div className="flex items-center gap-2 min-w-0">
-                  <Bot className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
-                  <p className="text-[11px] sm:text-xs font-bold text-slate-900 line-clamp-2">
+                  <ShieldAlert className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                  <p className="text-[11px] sm:text-xs font-bold text-amber-950 line-clamp-2">
                     {filterInappropriateText(msg.content)}
                   </p>
                 </div>
                 <button
                   type="button"
                   onClick={() => setDismissedSystemMsgIds(prev => [...prev, msg.id])}
-                  className="p-0.5 rounded-md text-slate-500 hover:text-slate-900 hover:bg-emerald-200/70 transition-colors shrink-0"
-                  title="إخفاء رسالة البوت"
+                  className="p-0.5 rounded-md text-amber-700 hover:text-amber-950 hover:bg-amber-200/60 transition-colors shrink-0 cursor-pointer"
+                  title="إخفاء التنبيه"
                 >
                   <X className="w-3.5 h-3.5" />
                 </button>
@@ -1691,8 +1726,9 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
             );
           }
 
-          // Standard system notice banner (Light crisp banner)
+          // Standard temporary join notice banner (Auto-hides after 5 seconds)
           if (msg.type === 'system_welcome') {
+            if (dismissedSystemMsgIds.includes(msg.id)) return null;
             return (
               <motion.div 
                 key={uniqueKey} 
@@ -1701,8 +1737,8 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
                 transition={{ duration: 0.2 }}
                 className="flex justify-center my-1"
               >
-                <div className="max-w-[90%] px-3 py-1 rounded-full bg-white/90 border border-indigo-200 text-indigo-700 text-[10px] sm:text-[11px] font-bold flex items-center gap-1.5 shadow-xs backdrop-blur-sm truncate">
-                  <Sparkles className="w-3 h-3 text-amber-500 shrink-0" />
+                <div className="max-w-[90%] px-3 py-1 rounded-full bg-amber-50/95 border border-amber-200 text-amber-900 text-[10px] sm:text-[11px] font-bold flex items-center gap-1.5 shadow-xs backdrop-blur-sm truncate">
+                  <ShieldAlert className="w-3 h-3 text-amber-600 shrink-0" />
                   <span className="truncate">{filterInappropriateText(msg.content)}</span>
                 </div>
               </motion.div>

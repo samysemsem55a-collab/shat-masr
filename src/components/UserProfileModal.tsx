@@ -248,12 +248,20 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
               <span className="text-xs text-slate-500 font-normal">(@{user.username || 'user'})</span>
             </div>
 
-            <div className="flex items-center justify-center gap-2 text-xs text-slate-500 mt-1">
+            <div className="flex items-center justify-center gap-2 text-xs text-slate-500 mt-1 flex-wrap">
               <span className={isAvailable ? 'text-emerald-600 font-bold' : 'text-slate-500'}>
                 ● {statusLabel}
               </span>
               <span>•</span>
               <span>{user.country || 'مصر'}</span>
+              {(user.gender || typeof user.age === 'number') && (
+                <>
+                  <span>•</span>
+                  <span className="font-semibold text-slate-600">
+                    {user.gender === 'female' ? 'أنثى' : 'ذكر'}{typeof user.age === 'number' ? `، ${user.age} سنة` : ''}
+                  </span>
+                </>
+              )}
             </div>
           </div>
 

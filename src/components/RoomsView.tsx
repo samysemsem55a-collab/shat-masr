@@ -68,24 +68,29 @@ function formatRelativeArabicTime(ts: number): string {
   return `منذ ${diffDay} يوم`;
 }
 
-const ForumPostCommentsSection: React.FC<{
-  postId: string;
+const ForumCommentsModal: React.FC<{
+  post: ForumPost | null;
   currentUser: User;
-}> = ({ postId, currentUser }) => {
+  onClose: () => void;
+}> = ({ post, currentUser, onClose }) => {
   const [comments, setComments] = useState<ForumComment[]>([]);
   const [commentText, setCommentText] = useState('');
   const [isSending, setIsSending] = useState(false);
 
   useEffect(() => {
-    return subscribeToForumComments(postId, setComments);
-  }, [postId]);
+    if (!post?.id) return;
+    setComments([]);
+    return subscribeToForumComments(post.id, setComments);
+  }, [post?.id]);
+
+  if (!post) return null;
 
   const handleAddComment = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!commentText.trim() || isSending) return;
     setIsSending(true);
     try {
-      await addForumComment(postId, currentUser, commentText);
+      await addForumComment(post.id, currentUser, commentText);
       setCommentText('');
       sounds.playMessageSent();
       contributeToSharedRoomMission('forum', currentUser.id, 1);
@@ -95,49 +100,273 @@ const ForumPostCommentsSection: React.FC<{
   };
 
   return (
-    <div className="mt-2.5 pt-2.5 border-t border-slate-100 space-y-2 animate-in fade-in">
-      {comments.length > 0 ? (
-        <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
-          {comments.map((c) => (
-            <div key={c.id} className="flex items-start gap-2 bg-slate-50 rounded-xl p-2 border border-slate-100">
-              <div className="w-6 h-6 rounded-full overflow-hidden bg-indigo-100 text-indigo-700 font-bold text-[10px] flex items-center justify-center shrink-0">
-                {c.authorAvatar ? (
-                  <img src={c.authorAvatar} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                ) : (
-                  <span>{c.authorName.charAt(0)}</span>
-                )}
-              </div>
-              <div className="flex-1 min-w-0 text-right">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-[11px] font-black text-slate-900 truncate">{c.authorName}</span>
-                  <span className="text-[9.5px] text-slate-400 shrink-0">{formatRelativeArabicTime(c.createdAt)}</span>
-                </div>
-                <p className="text-[11.5px] text-slate-700 leading-snug mt-0.5 break-words">{c.text}</p>
-              </div>
+    <div
+      dir="rtl"
+      onClick={onClose}
+      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-slate-900/45 backdrop-blur-sm p-0 sm:p-4 animate-in fade-in"
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="w-full sm:max-w-lg bg-white border border-slate-200 rounded-t-3xl sm:rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh] text-[#1E293B]"
+      >
+        {/* Header */}
+        <div className="p-4 bg-white border-b border-slate-200 flex items-center justify-between shrink-0">
+          <div className="flex items-center gap-2">
+            <div className="w-9 h-9 rounded-xl bg-indigo-50 border border-indigo-200 text-indigo-600 flex items-center justify-center">
+              <MessageCircle className="w-4 h-4" />
             </div>
-          ))}
+            <div>
+              <h3 className="text-sm font-black text-[#1E293B]">التعليقات على منشور {post.authorName}</h3>
+              <p className="text-[11px] text-slate-500">{comments.length} تعليق</p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="إغلاق"
+            className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-600 flex items-center justify-center transition cursor-pointer"
+          >
+            <X className="w-4 h-4" />
+          </button>
         </div>
-      ) : (
-        <p className="text-[11px] text-slate-400 text-center py-1">كن أول من يعلق على هذا المنشور 💬</p>
-      )}
 
-      <form onSubmit={handleAddComment} className="flex items-center gap-1.5">
-        <input
-          type="text"
-          value={commentText}
-          onChange={(e) => setCommentText(e.target.value)}
-          placeholder="أضف تعليقاً راقياً..."
-          className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-indigo-400"
-        />
-        <button
-          type="submit"
-          disabled={!commentText.trim() || isSending}
-          className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-black flex items-center gap-1 transition cursor-pointer"
-        >
-          <Send className="w-3 h-3" />
-          <span>إرسال</span>
-        </button>
-      </form>
+        {/* Original Post Snippet */}
+        <div className="px-4 py-2.5 bg-[#F8FAFC] border-b border-slate-200 shrink-0">
+          <p className="text-xs text-slate-700 line-clamp-2 leading-relaxed">{post.text}</p>
+        </div>
+
+        {/* Comments List */}
+        <div className="p-4 overflow-y-auto flex-1 space-y-2.5 bg-[#F8FAFC]">
+          {comments.length > 0 ? (
+            comments.map((c) => (
+              <div key={c.id} className="flex items-start gap-2.5 bg-white rounded-2xl p-3 border border-slate-200 shadow-2xs">
+                <div className="w-8 h-8 rounded-full overflow-hidden bg-indigo-100 text-indigo-700 font-bold text-xs flex items-center justify-center shrink-0 border border-slate-200">
+                  {c.authorAvatar ? (
+                    <img src={c.authorAvatar} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                  ) : (
+                    <span>{(c.authorName || 'ع').charAt(0)}</span>
+                  )}
+                </div>
+                <div className="flex-1 min-w-0 text-right">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-black text-[#1E293B] truncate">{c.authorName}</span>
+                    <span className="text-[10px] text-slate-400 shrink-0">{formatRelativeArabicTime(c.createdAt)}</span>
+                  </div>
+                  <p className="text-xs text-slate-700 leading-relaxed mt-1 break-words">{c.text}</p>
+                </div>
+              </div>
+            ))
+          ) : (
+            <div className="text-center py-8 space-y-1.5">
+              <div className="text-2xl">💬</div>
+              <p className="text-xs font-bold text-slate-600">لا توجد تعليقات حتى الآن</p>
+              <p className="text-[11px] text-slate-400">كن أول من يضيف تعليقاً راقياً على هذا المنشور!</p>
+            </div>
+          )}
+        </div>
+
+        {/* Add Comment Input */}
+        <form onSubmit={handleAddComment} className="p-3 bg-white border-t border-slate-200 flex items-center gap-2 shrink-0">
+          <input
+            type="text"
+            value={commentText}
+            onChange={(e) => setCommentText(e.target.value)}
+            placeholder="اكتب تعليقك هنا..."
+            autoFocus
+            className="flex-1 bg-[#F8FAFC] border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs sm:text-sm text-[#1E293B] placeholder:text-slate-400 focus:outline-none focus:border-indigo-500 focus:bg-white"
+          />
+          <button
+            type="submit"
+            disabled={!commentText.trim() || isSending}
+            className="px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-black flex items-center gap-1.5 transition cursor-pointer shrink-0"
+          >
+            <Send className="w-3.5 h-3.5" />
+            <span>{isSending ? 'جاري الإرسال...' : 'إرسال'}</span>
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+};
+
+const ForumLikesModal: React.FC<{
+  post: ForumPost | null;
+  currentUser: User;
+  onlineUsers: User[];
+  onClose: () => void;
+  onToggleLike: (post: ForumPost) => void;
+  onOpenPrivateChatWith: (user: User) => void;
+}> = ({ post, currentUser, onlineUsers, onClose, onToggleLike, onOpenPrivateChatWith }) => {
+  if (!post) return null;
+
+  const likedIds = Array.from(new Set(post.likedBy || []));
+  const isLikedByMe = likedIds.includes(currentUser.id);
+
+  const resolvedLikers = likedIds.map((uid) => {
+    const stored = post.likedUsers?.[uid];
+    const online = onlineUsers.find((u) => u.id === uid);
+    const selfMatch = uid === currentUser.id ? currentUser : null;
+    const base = stored || online || selfMatch;
+
+    return {
+      id: uid,
+      name: base?.name || 'عضو شات مصر',
+      avatar: base?.avatar || '',
+      countryFlag: (base as any)?.countryFlag || '🇪🇬',
+      role: (base?.role || 'member') as User['role'],
+      vipBadge: base?.vipBadge || '',
+      gender: (base?.gender || 'male') as 'male' | 'female',
+      fullUser: online || selfMatch || null,
+    };
+  });
+
+  return (
+    <div
+      dir="rtl"
+      onClick={onClose}
+      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-slate-900/45 backdrop-blur-sm p-0 sm:p-4 animate-in fade-in"
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="w-full sm:max-w-md bg-white border border-slate-200 rounded-t-3xl sm:rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[80vh] text-[#1E293B]"
+      >
+        {/* Header */}
+        <div className="p-4 bg-white border-b border-slate-200 flex items-center justify-between shrink-0">
+          <div className="flex items-center gap-2">
+            <div className="w-9 h-9 rounded-xl bg-rose-50 border border-rose-200 text-rose-600 flex items-center justify-center">
+              <Heart className="w-4 h-4 fill-rose-500 text-rose-500" />
+            </div>
+            <div>
+              <h3 className="text-sm font-black text-[#1E293B]">المعجبون بالمنشور</h3>
+              <p className="text-[11px] text-slate-500">{Math.max(likedIds.length, post.likesCount || 0)} إعجاب</p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="إغلاق"
+            className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-600 flex items-center justify-center transition cursor-pointer"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* Likers List */}
+        <div className="p-3 overflow-y-auto flex-1 space-y-2 bg-[#F8FAFC]">
+          {resolvedLikers.length > 0 ? (
+            resolvedLikers.map((liker) => {
+              const rankMeta = getRankDisplayMeta(liker.role, liker.vipBadge);
+              const isMe = liker.id === currentUser.id;
+              return (
+                <div
+                  key={liker.id}
+                  className="p-2.5 rounded-2xl bg-white border border-slate-200 flex items-center justify-between gap-2 shadow-2xs"
+                >
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <AvatarWithFrame
+                      user={{
+                        id: liker.id,
+                        name: liker.name,
+                        avatar: liker.avatar,
+                        role: liker.role,
+                        vipBadge: liker.vipBadge,
+                      }}
+                      size="sm"
+                    />
+                    <div className="min-w-0 text-right">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className={`text-xs font-black truncate ${rankMeta.nameColorClass}`}>
+                          {liker.name}
+                        </span>
+                        <span className="text-xs">{liker.countryFlag}</span>
+                      </div>
+                      {rankMeta.isPrivileged ? (
+                        <span className={`inline-block mt-0.5 text-[9.5px] px-1.5 py-0.2 rounded border font-black ${rankMeta.badgeClass}`}>
+                          {rankMeta.label}
+                        </span>
+                      ) : (
+                        <span className="text-[10px] text-slate-400 font-medium">
+                          {liker.gender === 'female' ? 'عضوة 👩' : 'عضو 👨'}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {!isMe ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onClose();
+                        onOpenPrivateChatWith(
+                          liker.fullUser || {
+                            id: liker.id,
+                            name: liker.name,
+                            username: liker.name.toLowerCase().replace(/\s+/g, '_'),
+                            avatar: liker.avatar,
+                            bio: 'عضو في منتدى شات مصر',
+                            country: 'مصر',
+                            countryFlag: liker.countryFlag || '🇪🇬',
+                            role: liker.role,
+                            coins: 0,
+                            earningsEgp: 0,
+                            earningsUsd: 0,
+                            vipBadge: liker.vipBadge || '',
+                            frameStyle: 'border-slate-300',
+                            profileWallpaper: '',
+                            fontPreference: 'cairo',
+                            isOnline: true,
+                            status: 'online',
+                            joinedAt: '',
+                            gender: liker.gender,
+                            level: 1,
+                            likesReceived: 0,
+                            giftsReceivedCount: 0,
+                          }
+                        );
+                      }}
+                      className="px-2.5 py-1.5 rounded-xl bg-emerald-50 hover:bg-emerald-600 text-emerald-700 hover:text-white border border-emerald-200 text-[11px] font-black transition cursor-pointer shrink-0"
+                    >
+                      مراسلة ✉️
+                    </button>
+                  ) : (
+                    <span className="px-2 py-0.5 rounded-full bg-indigo-50 border border-indigo-200 text-indigo-700 text-[10px] font-bold">
+                      أنت
+                    </span>
+                  )}
+                </div>
+              );
+            })
+          ) : (
+            <div className="text-center py-8 space-y-2">
+              <div className="text-2xl">❤️</div>
+              <p className="text-xs font-bold text-slate-600">لا توجد إعجابات على هذا المنشور بعد</p>
+              <button
+                type="button"
+                onClick={() => onToggleLike(post)}
+                className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-black transition cursor-pointer"
+              >
+                كن أول المعجبين ❤️
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Footer quick toggle like */}
+        <div className="p-3 bg-white border-t border-slate-200 flex items-center justify-between gap-2 shrink-0">
+          <button
+            type="button"
+            onClick={() => onToggleLike(post)}
+            className={`flex-1 py-2.5 rounded-xl text-xs font-black flex items-center justify-center gap-1.5 transition cursor-pointer ${
+              isLikedByMe
+                ? 'bg-rose-100 text-rose-700 border border-rose-200'
+                : 'bg-rose-600 hover:bg-rose-500 text-white'
+            }`}
+          >
+            <Heart className={`w-3.5 h-3.5 ${isLikedByMe ? 'fill-rose-500 text-rose-500' : 'text-white'}`} />
+            <span>{isLikedByMe ? 'إلغاء إعجابي' : 'إعجاب بالمنشور'}</span>
+          </button>
+        </div>
+      </div>
     </div>
   );
 };
@@ -154,6 +383,7 @@ function areForumPostsEqual(a: ForumPost[], b: ForumPost[]): boolean {
       p1.likesCount !== p2.likesCount ||
       p1.commentsCount !== p2.commentsCount ||
       (p1.likedBy || []).length !== (p2.likedBy || []).length ||
+      Object.keys(p1.likedUsers || {}).length !== Object.keys(p2.likedUsers || {}).length ||
       p1.authorName !== p2.authorName ||
       p1.authorAvatar !== p2.authorAvatar ||
       Boolean(p1.isPinned) !== Boolean(p2.isPinned) ||
@@ -204,10 +434,20 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
   const [postImageUrl, setPostImageUrl] = useState<string>('');
   const [isPublishing, setIsPublishing] = useState(false);
   const [forumFilter, setForumFilter] = useState<'trend' | 'all' | 'male' | 'female' | 'online'>('trend');
-  const [expandedCommentPostId, setExpandedCommentPostId] = useState<string | null>(null);
+  const [commentsModalPostId, setCommentsModalPostId] = useState<string | null>(null);
+  const [likesModalPostId, setLikesModalPostId] = useState<string | null>(null);
   const [sharedMissions, setSharedMissions] = useState<SharedRoomMission[]>([]);
   const [showMobileMissions, setShowMobileMissions] = useState(false);
   const forumImageInputRef = React.useRef<HTMLInputElement>(null);
+
+  const activeCommentsPost = useMemo(
+    () => forumPosts.find((p) => p.id === commentsModalPostId) || null,
+    [forumPosts, commentsModalPostId]
+  );
+  const activeLikesPost = useMemo(
+    () => forumPosts.find((p) => p.id === likesModalPostId) || null,
+    [forumPosts, likesModalPostId]
+  );
 
   // Strict requirement: Keep ONLY غرفة مصر 1 (room_egypt) and غرفة مصر 2 (room_egypt2)
   const coreEgyptRooms = useMemo(
@@ -294,7 +534,7 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
   const handleToggleLike = async (post: ForumPost) => {
     const liked = (post.likedBy || []).includes(currentUser.id);
     sounds.playCoinsReward();
-    await toggleForumPostLike(post.id, currentUser.id, liked);
+    await toggleForumPostLike(post.id, currentUser.id, liked, currentUser);
     if (!liked) {
       contributeToSharedRoomMission('likes', currentUser.id, 1);
     }
@@ -717,7 +957,6 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
               {filteredPosts.map((post) => {
                 const isPostAuthorOnline = onlineUserIds.has(post.authorId) || post.authorId === currentUser.id;
                 const isLikedByMe = (post.likedBy || []).includes(currentUser.id);
-                const isCommentsOpen = expandedCommentPostId === post.id;
                 const canDelete = isOwner || post.authorId === currentUser.id;
                 const authorRankMeta = getRankDisplayMeta(post.authorRole, post.authorVipBadge);
 
@@ -842,31 +1081,39 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
                       </div>
                     )}
 
-                    {/* Post Action Buttons: إعجاب ❤️ | تعليق 💬 | مراسلة خاصة ✉️ */}
+                    {/* Post Action Buttons: إعجاب ❤️ | قائمة المعجبين | تعليق 💬 | مراسلة خاصة ✉️ */}
                     <div className="mt-2.5 flex items-center justify-between gap-2 pt-1">
                       <div className="flex items-center gap-1.5">
-                        <button
-                          type="button"
-                          onClick={() => handleToggleLike(post)}
-                          className={`px-3 py-1.5 rounded-xl text-xs font-black flex items-center gap-1.5 transition active:scale-95 cursor-pointer ${
+                        <div
+                          className={`inline-flex items-center rounded-xl text-xs font-black border overflow-hidden ${
                             isLikedByMe
-                              ? 'bg-rose-100 text-rose-700 border border-rose-200'
-                              : 'bg-slate-100 hover:bg-rose-50 text-slate-700 hover:text-rose-700 border border-slate-200'
+                              ? 'bg-rose-100 text-rose-700 border-rose-200'
+                              : 'bg-slate-100 text-slate-700 border-slate-200'
                           }`}
                         >
-                          <Heart className={`w-3.5 h-3.5 ${isLikedByMe ? 'fill-rose-500 text-rose-500' : ''}`} />
-                          <span>إعجاب</span>
-                          <span className="tabular-nums">({post.likesCount || 0})</span>
-                        </button>
+                          <button
+                            type="button"
+                            onClick={() => handleToggleLike(post)}
+                            title={isLikedByMe ? 'إلغاء الإعجاب' : 'أعجبني'}
+                            className="px-2.5 py-1.5 hover:bg-rose-200/50 active:scale-95 transition flex items-center cursor-pointer"
+                          >
+                            <Heart className={`w-3.5 h-3.5 ${isLikedByMe ? 'fill-rose-500 text-rose-500' : ''}`} />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setLikesModalPostId(post.id)}
+                            title="عرض قائمة المعجبين"
+                            className="pr-1 pl-2.5 py-1.5 border-r border-slate-200/80 hover:bg-rose-200/40 active:scale-95 transition flex items-center gap-1 cursor-pointer"
+                          >
+                            <span>إعجاب</span>
+                            <span className="tabular-nums">({post.likesCount || 0})</span>
+                          </button>
+                        </div>
 
                         <button
                           type="button"
-                          onClick={() => setExpandedCommentPostId(isCommentsOpen ? null : post.id)}
-                          className={`px-3 py-1.5 rounded-xl text-xs font-black flex items-center gap-1.5 transition active:scale-95 cursor-pointer ${
-                            isCommentsOpen
-                              ? 'bg-indigo-100 text-indigo-700 border border-indigo-200'
-                              : 'bg-slate-100 hover:bg-indigo-50 text-slate-700 hover:text-indigo-700 border border-slate-200'
-                          }`}
+                          onClick={() => setCommentsModalPostId(post.id)}
+                          className="px-3 py-1.5 rounded-xl text-xs font-black flex items-center gap-1.5 transition active:scale-95 cursor-pointer bg-slate-100 hover:bg-indigo-50 text-slate-700 hover:text-indigo-700 border border-slate-200"
                         >
                           <MessageCircle className="w-3.5 h-3.5" />
                           <span>تعليق</span>
@@ -885,8 +1132,6 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
                         </button>
                       )}
                     </div>
-
-                    {isCommentsOpen && <ForumPostCommentsSection postId={post.id} currentUser={currentUser} />}
                   </div>
                 );
               })}
@@ -974,6 +1219,23 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
           </div>
         </aside>
       </div>
+
+      {/* Forum Likes List Modal */}
+      <ForumLikesModal
+        post={activeLikesPost}
+        currentUser={currentUser}
+        onlineUsers={onlineUsers}
+        onClose={() => setLikesModalPostId(null)}
+        onToggleLike={handleToggleLike}
+        onOpenPrivateChatWith={onOpenPrivateChatWith}
+      />
+
+      {/* Forum Comments Modal */}
+      <ForumCommentsModal
+        post={activeCommentsPost}
+        currentUser={currentUser}
+        onClose={() => setCommentsModalPostId(null)}
+      />
     </div>
   );
 });

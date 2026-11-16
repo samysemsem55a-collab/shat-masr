@@ -29,6 +29,7 @@ export interface User {
   status: 'online' | 'busy' | 'dnd' | 'away' | 'in_mic' | 'offline';
   joinedAt: string;
   gender: 'male' | 'female';
+  age?: number;
   level: number;
   likesReceived: number;
   giftsReceivedCount: number;
@@ -244,6 +245,16 @@ export interface ForumComment {
   createdAt: number;
 }
 
+export interface ForumLikeUserSummary {
+  id: string;
+  name: string;
+  avatar: string;
+  countryFlag?: string;
+  role?: UserRole;
+  vipBadge?: string;
+  gender?: 'male' | 'female';
+}
+
 export interface ForumPost {
   id: string;
   authorId: string;
@@ -259,6 +270,7 @@ export interface ForumPost {
   pinnedAt?: number;
   pinnedBy?: string;
   likedBy: string[];
+  likedUsers?: Record<string, ForumLikeUserSummary>;
   likesCount: number;
   commentsCount: number;
   createdAt: number;

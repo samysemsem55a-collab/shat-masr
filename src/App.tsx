@@ -33,7 +33,7 @@ import {
 } from './services/consentService';
 
 import { User, Room, Message, GiftItem, VipTier, SpeakerSeat, FriendRequest, DailyMission, UnreadSenderSummary } from './types/chat';
-import { INITIAL_ROOMS, getOrCreateUser, isUserAdminOrOwner } from './data/seedData';
+import { INITIAL_ROOMS, getOrCreateUser, isUserAdminOrOwner, hasCompletedMandatoryProfile } from './data/seedData';
 import { sounds } from './utils/soundEffects';
 import { realtimeSocket } from './services/realtimeSocket';
 import { globalRadioPlayer } from './services/radioPlayer';
@@ -274,12 +274,11 @@ export default function App() {
   const [isLeaderboardOpen, setIsLeaderboardOpen] = useState(false);
   const [incomingConsentRequest, setIncomingConsentRequest] = useState<ConsentRequestPayload | null>(null);
   const [isPhoneAuthOpen, setIsPhoneAuthOpen] = useState(false);
-  const [isWelcomeAuthOpen, setIsWelcomeAuthOpen] = useState<boolean>(() => {
-    if (typeof window === 'undefined') return false;
-    const hasEntered = localStorage.getItem('shat_masr_has_entered') || localStorage.getItem('arab_chat_has_entered');
-    const authEmail = localStorage.getItem('arab_chat_auth_email');
-    return !hasEntered && !authEmail;
-  });
+  const isProfileReady = hasCompletedMandatoryProfile(currentUser);
+  const [isWelcomeAuthOpen, setIsWelcomeAuthOpen] = useState<boolean>(() => !hasCompletedMandatoryProfile(currentUser));
+  const [authModalMode, setAuthModalMode] = useState<'onboarding' | 'exclusive_auth'>(() =>
+    hasCompletedMandatoryProfile(currentUser) ? 'exclusive_auth' : 'onboarding'
+  );
 
   // Global Persistent FM Radio & Music Player Playing Indicator (decoupled from tick/buffer churn)
   const [isRadioPlaying, setIsRadioPlaying] = useState<boolean>(() => globalRadioPlayer.getSnapshot().isPlaying);
@@ -426,13 +425,16 @@ export default function App() {
   const globalOnlineUsersRef = useRef<User[]>(globalOnlineUsers);
   globalOnlineUsersRef.current = globalOnlineUsers;
 
-  // Persist User Changes & Sync to Firebase
+  // Persist User Changes & Sync to Firebase only after mandatory onboarding completes
   useEffect(() => {
-    localStorage.setItem('arab_chat_user', JSON.stringify(currentUser));
+    if (hasCompletedMandatoryProfile(currentUser)) {
+      localStorage.setItem('arab_chat_user', JSON.stringify(currentUser));
+    }
   }, [currentUser]);
 
   // Subscribe to real-time User Profile updates from Firebase Realtime Database (silent equality check)
   useEffect(() => {
+    if (!isProfileReady) return;
     const unsub = subscribeToUserProfile(currentUser.id, (profileUpdate) => {
       setCurrentUser(prev => {
         if (!hasUserVisibleChange(prev, profileUpdate)) return prev;
@@ -440,10 +442,11 @@ export default function App() {
       });
     });
     return () => unsub();
-  }, [currentUser.id]);
+  }, [currentUser.id, isProfileReady]);
 
-  // 1. Initialize Real-Time WebSocket Connection across all devices (stable on user ID & sessionId)
+  // 1. Initialize Real-Time WebSocket Connection across all devices (gated until mandatory profile complete)
   useEffect(() => {
+    if (!isProfileReady) return;
     const activeUser = currentUserRef.current;
     realtimeSocket.connect(activeUser);
 
@@ -602,7 +605,7 @@ export default function App() {
       unsubRoomLocks();
       unsubCalls();
     };
-  }, [currentUser.id, currentUser.sessionId]);
+  }, [currentUser.id, currentUser.sessionId, isProfileReady]);
 
   // Track Cumulative Visitor on each visit/session and sync atomically in real time (never decreases)
   useEffect(() => {
@@ -858,13 +861,14 @@ export default function App() {
     localStorage.setItem('arab_chat_rooms', JSON.stringify(rooms));
   }, [rooms]);
 
-  // Subscribe to real friend requests
+  // Subscribe to real friend requests once user profile is ready
   useEffect(() => {
+    if (!isProfileReady || !currentUser.id) return;
     const unsub = subscribeToFriendRequests(currentUser.id, (reqs) => {
       setPendingFriendRequests(reqs.filter(r => r.status === 'pending'));
     });
     return () => unsub();
-  }, [currentUser.id]);
+  }, [currentUser.id, isProfileReady]);
 
   // Track already-processed first-entry welcome checks in current session
   const welcomedPublicRoomKeysRef = useRef<Set<string>>(new Set());
@@ -1033,16 +1037,16 @@ export default function App() {
           if (!isFirstEntry || isCancelled) return;
           welcomeBotTimer = setTimeout(() => {
             if (isCancelled) return;
-            const welcomeText = 'أهلاً بك معنا في شات مصر! نورت المجلس 🌸 - شاركنا بتواجدك الراقي';
+            const welcomeText = 'تنبيه إداري: نرحب بكم في شات مصر — يُرجى الالتزام بقواعد الآداب العامة واحترام جميع الأعضاء.';
             const botMsg: Message = {
               id: `bot_welcome_${activeRoom.id}_${currentUser.id}`,
               roomId: activeRoom.id,
               senderId: 'system_bot',
-              senderName: 'بوت شات مصر',
+              senderName: 'إدارة شات مصر',
               senderAvatar: '',
               senderRole: 'super_admin',
-              senderVipBadge: 'بوت النظام 🤖',
-              badges: ['بوت الترحيب الرسمي'],
+              senderVipBadge: 'تنبيه إداري ⚠️',
+              badges: ['تنبيه إداري'],
               type: 'system_welcome',
               isPrivate: false,
               content: welcomeText,
@@ -1060,8 +1064,7 @@ export default function App() {
             sendFirestoreMessage(activeRoom.id, botMsg).catch((err) => {
               console.warn('Welcome bot message write notice:', err);
             });
-            sounds.playMessageReceived();
-          }, 550);
+          }, 450);
         })
         .catch(() => {});
     }
@@ -1081,13 +1084,13 @@ export default function App() {
 
   // Listen for incoming consent requests (Audio Call / Video Call / Send Image)
   useEffect(() => {
-    if (!currentUser.id) return;
+    if (!isProfileReady || !currentUser.id) return;
     const unsub = subscribeToIncomingConsentRequests(currentUser.id, (req) => {
       sounds.playMessageReceived();
       setIncomingConsentRequest(req);
     });
     return () => unsub();
-  }, [currentUser.id]);
+  }, [currentUser.id, isProfileReady]);
 
   // Listen for real-time WebSocket Luxury & Interactive Fullscreen Gift broadcasts in active room
   useEffect(() => {
@@ -1330,7 +1333,6 @@ export default function App() {
     }
 
     setActiveRoom(room);
-    sounds.playMessageReceived();
 
     // Track Daily Mission: "دخول مجلس صوتي"
     if (room.type === 'voice' || room.roomType === 'voice' || room.isVoiceActive) {
@@ -1548,9 +1550,11 @@ export default function App() {
     localStorage.removeItem('arab_chat_guest_id');
     localStorage.removeItem('arab_chat_auth_email');
     localStorage.removeItem('arab_chat_auth_phone');
-    sounds.playMessageSent();
-    const guestUser = getOrCreateUser();
-    setCurrentUser(guestUser);
+    localStorage.removeItem('shat_masr_has_entered');
+    localStorage.removeItem('arab_chat_has_entered');
+    const nextUser = getOrCreateUser();
+    setCurrentUser(nextUser);
+    setAuthModalMode('onboarding');
     setIsWelcomeAuthOpen(true);
   };
 
@@ -1664,6 +1668,33 @@ export default function App() {
       : currentUser.fontPreference === 'tajawal'
       ? 'font-["Tajawal"]'
       : 'font-["Cairo"]';
+
+  const openExclusiveAuthModal = useCallback(() => {
+    setAuthModalMode('exclusive_auth');
+    setIsWelcomeAuthOpen(true);
+  }, []);
+
+  // Mandatory Registration Gate: prevent seeing chat or online users until Name + Age + Gender (or Google Login) is completed
+  if (!isProfileReady) {
+    return (
+      <div className={`min-h-screen original-app-bg text-slate-900 ${fontClass}`}>
+        <Toaster position="top-center" dir="rtl" richColors />
+        <WelcomeAuthModal
+          isOpen={true}
+          allowClose={false}
+          onClose={() => {}}
+          currentUser={currentUser}
+          onUserAuthenticated={(u) => {
+            localStorage.setItem('shat_masr_has_entered', 'true');
+            handleSwitchUser(u);
+            setIsWelcomeAuthOpen(false);
+            globalRadioPlayer.tryAutoPlayFM();
+            requestPushNotificationPermission().catch(() => {});
+          }}
+        />
+      </div>
+    );
+  }
 
   return (
     <div className={`min-h-screen original-app-bg text-slate-900 ${fontClass}`}>
@@ -1805,7 +1836,7 @@ export default function App() {
                     setCurrentUser((prev) => ({ ...prev, ...updated }));
                     syncUserProfileToFirebase({ ...currentUser, ...updated });
                   }}
-                  onPromptRegister={() => setIsWelcomeAuthOpen(true)}
+                  onPromptRegister={openExclusiveAuthModal}
                   unreadBySender={unreadCountsBySenderId}
                   onMarkSenderRead={clearUnreadForSender}
                 />
@@ -1945,7 +1976,7 @@ export default function App() {
               }}
               onPromptRegister={() => {
                 setIsPrivateChatDrawerOpen(false);
-                setIsWelcomeAuthOpen(true);
+                openExclusiveAuthModal();
               }}
               unreadBySender={unreadCountsBySenderId}
               unreadMessagesBySender={unreadMessagesBySender}
@@ -2056,27 +2087,37 @@ export default function App() {
           incomingSignal={incomingCall.signal}
           onPromptRegister={() => {
             setIncomingCall(null);
-            setIsWelcomeAuthOpen(true);
+            openExclusiveAuthModal();
           }}
         />
       )}
 
-      {/* Welcome & Authentication Modal for Google and Guest mode on first entrance */}
+      {/* Dismissible Exclusive Features Auth Modal (Mandatory X Close Button) */}
       <WelcomeAuthModal
         isOpen={isWelcomeAuthOpen}
+        allowClose={authModalMode === 'exclusive_auth'}
         onClose={() => {
-          localStorage.setItem('shat_masr_has_entered', 'true');
           setIsWelcomeAuthOpen(false);
-          globalRadioPlayer.tryAutoPlayFM();
-          requestPushNotificationPermission().catch(() => {});
         }}
         currentUser={currentUser}
+        onOpenPhoneAuth={() => setIsPhoneAuthOpen(true)}
         onUserAuthenticated={(u) => {
           localStorage.setItem('shat_masr_has_entered', 'true');
           handleSwitchUser(u);
           setIsWelcomeAuthOpen(false);
           globalRadioPlayer.tryAutoPlayFM();
           requestPushNotificationPermission().catch(() => {});
+        }}
+      />
+
+      {/* Phone OTP Authentication Modal */}
+      <PhoneAuthModal
+        isOpen={isPhoneAuthOpen}
+        onClose={() => setIsPhoneAuthOpen(false)}
+        currentUser={currentUser}
+        onUserVerified={(verifiedUser) => {
+          localStorage.setItem('shat_masr_has_entered', 'true');
+          handleSwitchUser(verifiedUser);
         }}
       />
 

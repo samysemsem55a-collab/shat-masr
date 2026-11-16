@@ -21,7 +21,8 @@ import {
   deleteDoc,
   where,
   arrayUnion,
-  arrayRemove
+  arrayRemove,
+  deleteField
 } from 'firebase/firestore';
 import {
   getStorage,
@@ -42,14 +43,12 @@ import {
   update,
   get,
   remove,
-  runTransaction,
   Database,
   query as rtdbQuery,
   limitToLast
 } from 'firebase/database';
 import { 
   getAuth, 
-  signInAnonymously, 
   onAuthStateChanged, 
   Auth,
   RecaptchaVerifier,
@@ -59,7 +58,7 @@ import {
   signInWithPopup,
   signOut
 } from 'firebase/auth';
-import { Message, User, FriendRequest, Friend, ForumPost, ForumComment, SharedRoomMission, UserReport } from '../types/chat';
+import { Message, User, FriendRequest, Friend, ForumPost, ForumComment, ForumLikeUserSummary, SharedRoomMission, UserReport } from '../types/chat';
 import { PRIMARY_OWNER_EMAIL } from '../data/seedData';
 import firebaseConfigJson from '../../firebase-applet-config.json';
 
@@ -139,7 +138,7 @@ try {
     db = initializeFirestore(
       app,
       {
-        experimentalAutoDetectLongPolling: true,
+        experimentalForceLongPolling: true,
         ignoreUndefinedProperties: true
       },
       dbId || undefined
@@ -163,16 +162,7 @@ try {
   try {
     auth = getAuth(app);
     onAuthStateChanged(auth, (user) => {
-      if (user) {
-        currentAuthUid = user.uid;
-      }
-    });
-    signInAnonymously(auth).then((cred) => {
-      if (cred && cred.user) {
-        currentAuthUid = cred.user.uid;
-      }
-    }).catch((authErr) => {
-      console.warn("Firebase Auth anonymous login notice:", authErr);
+      currentAuthUid = user ? user.uid : null;
     });
   } catch (err) {
     console.warn("Firebase Auth init notice:", err);
@@ -208,6 +198,7 @@ export async function testConnection() {
   } catch (error) {
     if (error instanceof Error && error.message.includes('the client is offline')) {
       console.warn("Please check your Firebase configuration.");
+      enableNetwork(db).catch(() => {});
     }
   }
 }
@@ -467,6 +458,8 @@ export function subscribeToGlobalPresence(
         profileBanner: user.profileBanner || '',
         favoriteMusicUrl: user.favoriteMusicUrl || '',
         countryFlag: user.countryFlag || '🇪🇬',
+        gender: user.gender || 'male',
+        ...(typeof user.age === 'number' ? { age: user.age } : {}),
         sessionId: user.sessionId || '',
         isGuest: !!user.isGuest,
         status: user.status || 'online',
@@ -510,7 +503,7 @@ export function subscribeToGlobalPresence(
             liveUsersMap.set(docSnap.id, {
               ...liveUsersMap.get(docSnap.id),
               id: docSnap.id,
-              name: data.name || 'مستخدم',
+              name: data.name || 'عضو',
               avatar: data.avatar || '',
               role: data.role || 'member',
               vipBadge: data.vipBadge || '',
@@ -519,6 +512,8 @@ export function subscribeToGlobalPresence(
               profileBanner: data.profileBanner || '',
               favoriteMusicUrl: data.favoriteMusicUrl || '',
               countryFlag: data.countryFlag || '🇪🇬',
+              gender: data.gender || 'male',
+              ...(typeof data.age === 'number' ? { age: data.age } : {}),
               sessionId: data.sessionId || undefined,
               isGuest: !!data.isGuest,
               status: data.status || 'online',
@@ -986,6 +981,8 @@ export async function syncUserProfileToFirebase(user: User): Promise<void> {
     bio: user.bio,
     country: user.country,
     countryFlag: user.countryFlag,
+    gender: user.gender || 'male',
+    ...(typeof user.age === 'number' ? { age: user.age } : {}),
     role: user.role,
     vipBadge: user.vipBadge,
     coins: user.coins,
@@ -1023,6 +1020,8 @@ export async function syncUserProfileToFirebase(user: User): Promise<void> {
         avatar: profilePayload.avatar,
         role: profilePayload.role,
         vipBadge: profilePayload.vipBadge,
+        gender: profilePayload.gender,
+        ...(typeof user.age === 'number' ? { age: user.age } : {}),
         lastSeen: Date.now()
       }).catch(() => {});
     } catch (e) {
@@ -1039,6 +1038,9 @@ export async function syncUserProfileToFirebase(user: User): Promise<void> {
         id: user.id,
         name: user.name,
         avatar: user.avatar || '',
+        countryFlag: user.countryFlag || '🇪🇬',
+        gender: profilePayload.gender,
+        ...(typeof user.age === 'number' ? { age: user.age } : {}),
         role: profilePayload.role,
         vipBadge: profilePayload.vipBadge,
         badges: profilePayload.badges,
@@ -1146,6 +1148,8 @@ export function subscribeToAllUsers(
             avatar: data.avatar || '',
             countryFlag: data.countryFlag || '🇪🇬',
             country: data.country || 'مصر',
+            gender: data.gender || 'male',
+            ...(typeof data.age === 'number' ? { age: data.age } : {}),
             role: data.role || 'member',
             vipBadge: data.vipBadge || '',
             coins: Number(data.coins) || 0,
@@ -1350,11 +1354,11 @@ export async function submitPaymentRequest(order: {
     amountEgp: order.amountEgp,
     type: order.type,
     itemName: order.itemName,
-    coins: order.coinsAmount,
-    vipTierId: order.vipTierId,
+    ...(typeof order.coinsAmount === 'number' ? { coins: order.coinsAmount } : {}),
+    ...(order.vipTierId ? { vipTierId: order.vipTierId } : {}),
     paymentMethod: order.paymentMethod,
     senderAccountOrPhone: order.senderAccountOrPhone,
-    transactionRef: order.transactionRef,
+    transactionRef: order.transactionRef || order.senderAccountOrPhone,
     note: order.note || `${order.type === 'coins' ? 'شحن كوينز' : 'ترقية VIP'}: ${order.itemName} بمبلغ ${order.amountEgp} ج.م عبر ${order.paymentMethod === 'instapay' ? 'InstaPay' : 'المحفظة الإلكترونية'}`,
     status: 'pending',
     timestamp: now
@@ -3147,7 +3151,7 @@ export function subscribeToUserRecentDirectChats(
 }
 
 // ==========================================
-// 15. TYPING INDICATOR (WebSocket + Realtime Database & Broadcast)
+// 15. TYPING INDICATOR (Real-time Socket + Cross-tab Broadcast)
 // ==========================================
 export async function setRoomTyping(
   roomId: string,
@@ -3156,22 +3160,6 @@ export async function setRoomTyping(
 ): Promise<void> {
   if (user?.id) {
     realtimeSocket.sendRoomTyping(roomId, user.id, user.name, isTyping);
-  }
-
-  if (rtdb && user.id) {
-    try {
-      const typingRef = ref(rtdb, `typing/${roomId}/${user.id}`);
-      if (isTyping) {
-        await set(typingRef, {
-          id: user.id,
-          name: user.name,
-          timestamp: Date.now()
-        });
-        onDisconnect(typingRef).remove();
-      } else {
-        await set(typingRef, null);
-      }
-    } catch {}
   }
 
   liveChatBus?.postMessage({
@@ -3187,7 +3175,7 @@ export function subscribeToRoomTyping(
   currentUserId: string,
   onTypingUsers: (users: { id: string; name: string }[]) => void
 ): () => void {
-  const typingMap = new Map<string, { id: string; name: string; timestamp: number; source: 'rtdb' | 'realtime' }>();
+  const typingMap = new Map<string, { id: string; name: string; timestamp: number }>();
 
   const emitTyping = () => {
     const now = Date.now();
@@ -3202,43 +3190,11 @@ export function subscribeToRoomTyping(
     onTypingUsers(list);
   };
 
-  let unsubRtdb: (() => void) | null = null;
-  if (rtdb) {
-    try {
-      const typingRef = ref(rtdb, `typing/${roomId}`);
-      unsubRtdb = onValue(typingRef, (snapshot) => {
-        const val = snapshot.val();
-        const activeRtdbIds = new Set<string>();
-        if (val) {
-          const active = Object.values(val) as { id: string; name: string; timestamp: number }[];
-          active.forEach(u => {
-            if (u && u.id && u.id !== currentUserId) {
-              activeRtdbIds.add(u.id);
-              typingMap.set(u.id, {
-                id: u.id,
-                name: u.name,
-                timestamp: u.timestamp || Date.now(),
-                source: 'rtdb'
-              });
-            }
-          });
-        }
-        // Clear any RTDB-sourced entries that have stopped typing
-        typingMap.forEach((entry, id) => {
-          if (entry.source === 'rtdb' && !activeRtdbIds.has(id)) {
-            typingMap.delete(id);
-          }
-        });
-        emitTyping();
-      });
-    } catch {}
-  }
-
   // Real-time WebSocket typing presence
   const unsubSocketTyping = realtimeSocket.subscribeToRoomTyping(roomId, (uid, uName, isTyping) => {
     if (uid && uid !== currentUserId) {
       if (isTyping) {
-        typingMap.set(uid, { id: uid, name: uName || 'مستخدم', timestamp: Date.now(), source: 'realtime' });
+        typingMap.set(uid, { id: uid, name: uName || 'مستخدم', timestamp: Date.now() });
       } else {
         typingMap.delete(uid);
       }
@@ -3251,7 +3207,7 @@ export function subscribeToRoomTyping(
       const u = e.data.user;
       if (u && u.id !== currentUserId) {
         if (e.data.isTyping) {
-          typingMap.set(u.id, { id: u.id, name: u.name, timestamp: Date.now(), source: 'realtime' });
+          typingMap.set(u.id, { id: u.id, name: u.name, timestamp: Date.now() });
         } else {
           typingMap.delete(u.id);
         }
@@ -3265,7 +3221,6 @@ export function subscribeToRoomTyping(
 
   return () => {
     clearInterval(sweepInterval);
-    if (unsubRtdb) unsubRtdb();
     unsubSocketTyping();
     liveChatBus?.removeEventListener('message', handleBroadcast);
   };
@@ -3705,33 +3660,22 @@ export function syncCumulativeVisitorsRealtime(
     } catch {}
   }
 
-  // 4. Firebase RTDB atomic runTransaction + real-time onValue listener
+  // 4. Firebase RTDB real-time read listener (authoritative increment happens via Firestore + REST/WS)
   let unsubRtdb: (() => void) | null = null;
   if (rtdb) {
     try {
       const visitorsRef = ref(rtdb, 'platform_stats/cumulative_visitors');
-      unsubRtdb = onValue(visitorsRef, (snapshot) => {
-        const remoteVal = snapshot.val();
-        if (typeof remoteVal === 'number' && !isNaN(remoteVal)) {
-          reportHighest(remoteVal);
-          realtimeSocket.syncCumulativeVisitorsCount(Math.max(currentMax, remoteVal));
-        }
-      });
-
-      runTransaction(visitorsRef, (existingVal) => {
-        const existingNum =
-          typeof existingVal === 'number' && !isNaN(existingVal) ? existingVal : BASE;
-        const floor = Math.max(existingNum, currentMax, BASE);
-        return shouldIncrementThisSession ? floor + 1 : floor;
-      })
-        .then((result) => {
-          const committedVal = result?.snapshot?.val();
-          if (typeof committedVal === 'number' && !isNaN(committedVal)) {
-            reportHighest(committedVal);
-            realtimeSocket.syncCumulativeVisitorsCount(committedVal);
+      unsubRtdb = onValue(
+        visitorsRef,
+        (snapshot) => {
+          const remoteVal = snapshot.val();
+          if (typeof remoteVal === 'number' && !isNaN(remoteVal)) {
+            reportHighest(remoteVal);
+            realtimeSocket.syncCumulativeVisitorsCount(Math.max(currentMax, remoteVal));
           }
-        })
-        .catch(() => {});
+        },
+        () => {}
+      );
     } catch {}
   }
 
@@ -4122,6 +4066,7 @@ export function subscribeToForumPosts(
               pinnedAt: typeof data.pinnedAt === 'number' ? data.pinnedAt : undefined,
               pinnedBy: data.pinnedBy || undefined,
               likedBy: Array.isArray(data.likedBy) ? data.likedBy : [],
+              likedUsers: data.likedUsers && typeof data.likedUsers === 'object' ? data.likedUsers : {},
               likesCount: Number(data.likesCount) || (Array.isArray(data.likedBy) ? data.likedBy.length : 0),
               commentsCount: Number(data.commentsCount) || 0,
               createdAt: typeof data.createdAt === 'number' ? data.createdAt : Date.now()
@@ -4244,7 +4189,24 @@ export async function toggleForumPostPin(
   }
 }
 
-export async function toggleForumPostLike(postId: string, userId: string, currentlyLiked: boolean): Promise<void> {
+export async function toggleForumPostLike(
+  postId: string,
+  userId: string,
+  currentlyLiked: boolean,
+  likerUser?: User
+): Promise<void> {
+  const likerSummary: ForumLikeUserSummary | null = likerUser
+    ? {
+        id: likerUser.id,
+        name: likerUser.name || 'عضو شات مصر',
+        avatar: likerUser.avatar || '',
+        countryFlag: likerUser.countryFlag || '🇪🇬',
+        role: likerUser.role || 'member',
+        vipBadge: likerUser.vipBadge || '',
+        gender: likerUser.gender || 'male'
+      }
+    : null;
+
   try {
     const raw = localStorage.getItem(LOCAL_FORUM_KEY);
     if (raw) {
@@ -4252,10 +4214,18 @@ export async function toggleForumPostLike(postId: string, userId: string, curren
       const updated = list.map((p) => {
         if (p.id !== postId) return p;
         const setIds = new Set(p.likedBy || []);
-        if (currentlyLiked) setIds.delete(userId);
-        else setIds.add(userId);
+        const nextLikedUsers = { ...(p.likedUsers || {}) };
+        if (currentlyLiked) {
+          setIds.delete(userId);
+          delete nextLikedUsers[userId];
+        } else {
+          setIds.add(userId);
+          if (likerSummary) {
+            nextLikedUsers[userId] = likerSummary;
+          }
+        }
         const likedBy = Array.from(setIds);
-        return { ...p, likedBy, likesCount: likedBy.length };
+        return { ...p, likedBy, likedUsers: nextLikedUsers, likesCount: likedBy.length };
       });
       localStorage.setItem(LOCAL_FORUM_KEY, JSON.stringify(updated));
     }
@@ -4264,10 +4234,16 @@ export async function toggleForumPostLike(postId: string, userId: string, curren
 
   if (db) {
     try {
-      await updateDoc(doc(db, 'forum_posts', postId), {
+      const updatePayload: Record<string, any> = {
         likedBy: currentlyLiked ? arrayRemove(userId) : arrayUnion(userId),
         likesCount: increment(currentlyLiked ? -1 : 1)
-      });
+      };
+      if (currentlyLiked) {
+        updatePayload[`likedUsers.${userId}`] = deleteField();
+      } else if (likerSummary) {
+        updatePayload[`likedUsers.${userId}`] = likerSummary;
+      }
+      await updateDoc(doc(db, 'forum_posts', postId), updatePayload);
     } catch (err) {
       handleFirestoreError(err, OperationType.UPDATE, `forum_posts/${postId}`);
     }

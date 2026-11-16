@@ -271,7 +271,15 @@ class RealtimeSocketManager {
       }
 
       case 'PRIVATE_TYPING_UPDATE': {
-        const { senderId, senderName, isTyping } = action;
+        const { senderId, senderName, targetUserId, isTyping } = action;
+        if (
+          targetUserId &&
+          this.currentUser &&
+          targetUserId !== this.currentUser.id &&
+          targetUserId !== this.currentUser.sessionId
+        ) {
+          break;
+        }
         const listeners = this.privateTypingListeners.get(senderId);
         if (listeners) {
           listeners.forEach(cb => cb(!!isTyping, senderName || ''));
@@ -702,8 +710,14 @@ class RealtimeSocketManager {
   }
 
   // Private Chat Realtime Typing Indicator via WebSocket
-  sendPrivateTyping(senderId: string, senderName: string, targetUserId: string, isTyping: boolean) {
-    this.send('PRIVATE_TYPING', { senderId, senderName, targetUserId, isTyping });
+  sendPrivateTyping(
+    senderId: string,
+    senderName: string,
+    targetUserId: string,
+    isTyping: boolean,
+    targetSessionId?: string
+  ) {
+    this.send('PRIVATE_TYPING', { senderId, senderName, targetUserId, targetSessionId, isTyping });
 
     // Local BroadcastChannel fallback for multi-tab testing
     if (typeof window !== 'undefined') {
@@ -734,6 +748,15 @@ class RealtimeSocketManager {
         bus = new BroadcastChannel('arab_egypt_chat_bus');
         bus.onmessage = (e) => {
           if (e.data?.type === 'PRIVATE_TYPING_BROADCAST' && e.data.senderId === targetUserId) {
+            const recipientId = e.data.targetUserId;
+            if (
+              recipientId &&
+              this.currentUser &&
+              recipientId !== this.currentUser.id &&
+              recipientId !== this.currentUser.sessionId
+            ) {
+              return;
+            }
             callback(!!e.data.isTyping, e.data.senderName || '');
           }
         };
