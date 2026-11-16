@@ -16,13 +16,18 @@ import {
   Gift,
   Flame,
   MessageSquare,
-  Lock
+  Lock,
+  Pin,
+  Image as ImageIcon,
+  X,
+  Trophy
 } from 'lucide-react';
 import { Room, User, ForumPost, ForumComment, SharedRoomMission } from '../types/chat';
 import {
   subscribeToForumPosts,
   createForumPost,
   toggleForumPostLike,
+  toggleForumPostPin,
   subscribeToForumComments,
   addForumComment,
   deleteForumPost,
@@ -31,6 +36,8 @@ import {
   claimSharedMissionReward
 } from '../services/firebase';
 import { isUserAdminOrOwner } from '../data/seedData';
+import { getRankDisplayMeta } from '../utils/userRanks';
+import { AvatarWithFrame } from './AvatarWithFrame';
 import { sounds } from '../utils/soundEffects';
 import { toast } from 'sonner';
 
@@ -42,6 +49,7 @@ interface RoomsViewProps {
   onOpenPrivateChatWith: (user: User) => void;
   onOpenWallet: () => void;
   onOpenVip: () => void;
+  onOpenLeaderboard?: () => void;
   onOpenMissions?: () => void;
   onClaimSharedRewardCoins?: (coins: number, label?: string) => void;
   totalActiveUsersCount?: number;
@@ -147,7 +155,9 @@ function areForumPostsEqual(a: ForumPost[], b: ForumPost[]): boolean {
       p1.commentsCount !== p2.commentsCount ||
       (p1.likedBy || []).length !== (p2.likedBy || []).length ||
       p1.authorName !== p2.authorName ||
-      p1.authorAvatar !== p2.authorAvatar
+      p1.authorAvatar !== p2.authorAvatar ||
+      Boolean(p1.isPinned) !== Boolean(p2.isPinned) ||
+      p1.imageUrl !== p2.imageUrl
     ) {
       return false;
     }
@@ -182,6 +192,7 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
   onOpenPrivateChatWith,
   onOpenWallet,
   onOpenVip,
+  onOpenLeaderboard,
   onOpenMissions,
   onClaimSharedRewardCoins,
   totalActiveUsersCount = 1,
@@ -190,11 +201,13 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
 }) => {
   const [forumPosts, setForumPosts] = useState<ForumPost[]>([]);
   const [postText, setPostText] = useState('');
+  const [postImageUrl, setPostImageUrl] = useState<string>('');
   const [isPublishing, setIsPublishing] = useState(false);
-  const [forumFilter, setForumFilter] = useState<'all' | 'male' | 'female' | 'online'>('all');
+  const [forumFilter, setForumFilter] = useState<'trend' | 'all' | 'male' | 'female' | 'online'>('trend');
   const [expandedCommentPostId, setExpandedCommentPostId] = useState<string | null>(null);
   const [sharedMissions, setSharedMissions] = useState<SharedRoomMission[]>([]);
   const [showMobileMissions, setShowMobileMissions] = useState(false);
+  const forumImageInputRef = React.useRef<HTMLInputElement>(null);
 
   // Strict requirement: Keep ONLY غرفة مصر 1 (room_egypt) and غرفة مصر 2 (room_egypt2)
   const coreEgyptRooms = useMemo(
@@ -202,7 +215,7 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
     [rooms]
   );
   const onlineUserIds = useMemo(() => new Set(onlineUsers.map(u => u.id)), [onlineUsers]);
-  const isOwner = isUserAdminOrOwner(currentUser);
+  const isOwner = isUserAdminOrOwner(currentUser) || currentUser.role === 'admin' || currentUser.role === 'super_admin';
 
   useEffect(() => {
     const unsubForum = subscribeToForumPosts((nextPosts) => {
@@ -217,23 +230,65 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
     };
   }, []);
 
+  const handleSelectForumImage = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      toast.error('يرجى اختيار ملف صورة صالح');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        const maxDim = 960;
+        let { width, height } = img;
+        if (width > maxDim || height > maxDim) {
+          const ratio = Math.min(maxDim / width, maxDim / height);
+          width = Math.round(width * ratio);
+          height = Math.round(height * ratio);
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx?.drawImage(img, 0, 0, width, height);
+        setPostImageUrl(canvas.toDataURL('image/jpeg', 0.8));
+      };
+      if (typeof reader.result === 'string') {
+        img.src = reader.result;
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
   const handlePublishPost = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!postText.trim() || isPublishing) return;
+    if ((!postText.trim() && !postImageUrl) || isPublishing) return;
     if (currentUser.isBanned || currentUser.isMuted) {
       toast.error('حسابك مقيد حالياً من النشر');
       return;
     }
     setIsPublishing(true);
     try {
-      await createForumPost(currentUser, postText);
+      await createForumPost(currentUser, postText.trim() || '📸 مشاركة صورة', postImageUrl || undefined);
       setPostText('');
+      setPostImageUrl('');
       sounds.playMessageSent();
       contributeToSharedRoomMission('forum', currentUser.id, 1);
       toast.success('تم نشر مشاركتك في منتدى التعارف بنجاح ✨');
     } finally {
       setIsPublishing(false);
     }
+  };
+
+  const handleTogglePin = async (post: ForumPost) => {
+    if (!isOwner) return;
+    const nextPinned = !post.isPinned;
+    await toggleForumPostPin(post.id, nextPinned, currentUser.name);
+    sounds.playMessageSent();
+    toast.success(nextPinned ? 'تم تثبيت المنشور في أعلى المنتدى 📌' : 'تم إلغاء تثبيت المنشور');
   };
 
   const handleToggleLike = async (post: ForumPost) => {
@@ -256,12 +311,29 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
     toast.success(`مبروك! تم استلام جائزة المهمة الجماعية (+${mission.rewardCoins} كوينز) 🎉`);
   };
 
-  const filteredPosts = forumPosts.filter((post) => {
-    if (forumFilter === 'male') return post.authorGender === 'male';
-    if (forumFilter === 'female') return post.authorGender === 'female';
-    if (forumFilter === 'online') return onlineUserIds.has(post.authorId) || post.authorId === currentUser.id;
-    return true;
-  });
+  const filteredPosts = useMemo(() => {
+    const base = forumPosts.filter((post) => {
+      if (forumFilter === 'male') return post.authorGender === 'male';
+      if (forumFilter === 'female') return post.authorGender === 'female';
+      if (forumFilter === 'online') return onlineUserIds.has(post.authorId) || post.authorId === currentUser.id;
+      return true;
+    });
+
+    return [...base].sort((a, b) => {
+      const aPinned = Boolean(a.isPinned);
+      const bPinned = Boolean(b.isPinned);
+      if (aPinned !== bPinned) return aPinned ? -1 : 1;
+      if (aPinned && bPinned) {
+        return (b.pinnedAt || b.createdAt) - (a.pinnedAt || a.createdAt);
+      }
+      if (forumFilter === 'trend') {
+        const aScore = (a.likesCount || 0) + (a.commentsCount || 0);
+        const bScore = (b.likesCount || 0) + (b.commentsCount || 0);
+        if (bScore !== aScore) return bScore - aScore;
+      }
+      return (b.createdAt || 0) - (a.createdAt || 0);
+    });
+  }, [forumPosts, forumFilter, onlineUserIds, currentUser.id]);
 
   return (
     <div className="pb-24 pt-2.5 px-2.5 sm:px-4 max-w-6xl mx-auto space-y-3" dir="rtl">
@@ -312,12 +384,23 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
           <Coins className="w-4 h-4 text-amber-600" />
         </button>
 
-        {/* Quick VIP & Missions */}
+        {/* Quick VIP, Leaderboard & Missions */}
         <div className="flex items-center gap-1.5">
+          {onOpenLeaderboard && (
+            <button
+              type="button"
+              onClick={onOpenLeaderboard}
+              className="flex-1 h-full px-2 py-2 rounded-xl bg-gradient-to-r from-amber-50 to-yellow-50 hover:from-amber-100 hover:to-yellow-100 border border-amber-200 text-amber-800 font-black text-xs flex items-center justify-center gap-1 transition active:scale-95 cursor-pointer"
+              title="قائمة الكبار - التوب 10"
+            >
+              <Trophy className="w-3.5 h-3.5 text-amber-600" />
+              <span>الكبار</span>
+            </button>
+          )}
           <button
             type="button"
             onClick={onOpenVip}
-            className="flex-1 h-full px-2.5 py-2 rounded-xl bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 font-black text-xs flex items-center justify-center gap-1 transition active:scale-95 cursor-pointer"
+            className="flex-1 h-full px-2 py-2 rounded-xl bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 font-black text-xs flex items-center justify-center gap-1 transition active:scale-95 cursor-pointer"
           >
             <Crown className="w-3.5 h-3.5 text-amber-500 fill-amber-400" />
             <span>VIP</span>
@@ -326,7 +409,7 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
             <button
               type="button"
               onClick={onOpenMissions}
-              className="flex-1 h-full px-2.5 py-2 rounded-xl bg-purple-50 hover:bg-purple-100 border border-purple-200 text-purple-700 font-black text-xs flex items-center justify-center gap-1 transition active:scale-95 cursor-pointer"
+              className="flex-1 h-full px-2 py-2 rounded-xl bg-purple-50 hover:bg-purple-100 border border-purple-200 text-purple-700 font-black text-xs flex items-center justify-center gap-1 transition active:scale-95 cursor-pointer"
             >
               <Target className="w-3.5 h-3.5 text-purple-600" />
               <span>مهامي</span>
@@ -354,7 +437,7 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
           </button>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
           {coreEgyptRooms.map((room) => {
             const isEgypt1 = room.id === 'room_egypt';
             const gradientTheme = isEgypt1
@@ -374,7 +457,7 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
               <div
                 key={room.id}
                 onClick={() => onSelectRoom(room)}
-                className={`group relative cursor-pointer overflow-hidden rounded-2xl bg-gradient-to-br ${gradientTheme} border p-4 sm:p-5 min-h-[152px] sm:min-h-[172px] text-white shadow-md hover:shadow-xl hover:brightness-105 active:scale-[0.99] transition-all flex flex-col justify-between gap-3`}
+                className={`group relative cursor-pointer overflow-hidden rounded-2xl bg-gradient-to-br ${gradientTheme} border p-3 sm:p-3.5 min-h-[108px] sm:min-h-[120px] text-white shadow-sm hover:shadow-lg hover:brightness-105 active:scale-[0.99] transition-all flex flex-col justify-between gap-2`}
               >
                 {/* Atmospheric Cover Image Layer */}
                 <div
@@ -392,40 +475,38 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
                 />
 
                 {/* Top Cover Header: Icon + Title + Live Counter */}
-                <div className="relative z-10 flex items-start justify-between gap-3">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-2xl bg-white/20 backdrop-blur-sm border border-white/40 flex items-center justify-center shrink-0 shadow-sm">
-                      {isEgypt1 ? <MessageSquare className="w-6 h-6 sm:w-7 sm:h-7 text-white" /> : <Flame className="w-6 h-6 sm:w-7 sm:h-7 text-white" />}
+                <div className="relative z-10 flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-white/20 backdrop-blur-sm border border-white/40 flex items-center justify-center shrink-0 shadow-sm">
+                      {isEgypt1 ? <MessageSquare className="w-4 h-4 sm:w-5 sm:h-5 text-white" /> : <Flame className="w-4 h-4 sm:w-5 sm:h-5 text-white" />}
                     </div>
                     <div className="min-w-0 text-right">
                       <div className="flex items-center gap-1.5 min-w-0">
-                        <h3 className="text-sm sm:text-base font-black truncate drop-shadow-xs">{room.title}</h3>
+                        <h3 className="text-xs sm:text-sm font-black truncate drop-shadow-xs">{room.title}</h3>
                         {room.isLocked && (
                           <span
-                            className="inline-flex items-center justify-center w-5 h-5 rounded-md bg-rose-500/40 border border-rose-200/80 text-amber-100 shrink-0 shadow-2xs"
+                            className="inline-flex items-center justify-center w-4 h-4 rounded-md bg-rose-500/40 border border-rose-200/80 text-amber-100 shrink-0"
                             title="الغرفة مقفلة حالياً"
-                            aria-label="الغرفة مقفلة"
                           >
-                            <Lock className="w-3 h-3" />
+                            <Lock className="w-2.5 h-2.5" />
                           </span>
                         )}
                       </div>
-                      <span className="inline-flex items-center gap-1 mt-1 px-2 py-0.5 rounded-full bg-black/25 backdrop-blur-xs border border-white/20 text-[10px] font-black">
-                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-300 animate-pulse"></span>
-                        <span>{Math.max(1, room.activeUsers || 1)} عضو متصل الآن</span>
-                      </span>
+                      <p className="text-[10.5px] text-white/90 font-medium truncate">
+                        {room.isLocked ? '🔒 مقفلة مؤقتاً من الإدارة' : room.description}
+                      </p>
                     </div>
                   </div>
+
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-black/30 backdrop-blur-xs border border-white/20 text-[10px] font-black shrink-0">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-300 animate-pulse"></span>
+                    <span>{Math.max(1, room.activeUsers || 1)} متصل</span>
+                  </span>
                 </div>
 
-                {/* Middle Cover Description */}
-                <p className="relative z-10 text-xs sm:text-[13px] text-white/95 font-medium leading-relaxed line-clamp-2 text-right">
-                  {room.isLocked ? '🔒 هذه الغرفة مقفلة مؤقتاً من قِبل الإدارة.' : room.description}
-                </p>
-
-                {/* Bottom Cover Footer & Prominent Enter Button */}
+                {/* Bottom Cover Footer & Compact Enter Button */}
                 <div className="relative z-10 flex items-center justify-between gap-2 pt-1 border-t border-white/15">
-                  <span className="text-[10.5px] font-bold text-white/85 truncate">
+                  <span className="text-[10px] font-bold text-white/85 truncate">
                     {room.isLocked ? 'دخول المديرين فقط' : isEgypt1 ? '🇪🇬 تجمع المصريين الرئيسي' : '✨ سهر وتعارف على مدار الساعة'}
                   </span>
 
@@ -435,7 +516,7 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
                       e.stopPropagation();
                       onSelectRoom(room);
                     }}
-                    className={`px-3.5 py-2 rounded-xl font-black text-xs flex items-center gap-1.5 shrink-0 shadow-md transition-transform group-hover:scale-[1.02] cursor-pointer ${
+                    className={`px-3 py-1.5 rounded-xl font-black text-[11px] flex items-center gap-1 shrink-0 shadow-sm transition-transform group-hover:scale-[1.02] cursor-pointer ${
                       room.isLocked && !canManageThisRoom
                         ? 'bg-white/95 text-rose-700'
                         : `bg-white ${ctaColor}`
@@ -443,13 +524,13 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
                   >
                     {room.isLocked && !canManageThisRoom ? (
                       <>
-                        <Lock className="w-3.5 h-3.5" />
+                        <Lock className="w-3 h-3" />
                         <span>مقفلة</span>
                       </>
                     ) : (
                       <>
                         <span>دخول الغرفة</span>
-                        {room.isLocked ? <Lock className="w-3.5 h-3.5" /> : <ArrowLeft className="w-3.5 h-3.5" />}
+                        {room.isLocked ? <Lock className="w-3 h-3" /> : <ArrowLeft className="w-3 h-3" />}
                       </>
                     )}
                   </button>
@@ -507,69 +588,120 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
         
         {/* Main Column: منتدى التعارف والتواصل الاجتماعي */}
         <div className="lg:col-span-8 space-y-3">
-          {/* Forum Header & Composer */}
-          <div className="bg-white border border-slate-200 rounded-2xl p-3 sm:p-4 shadow-sm space-y-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div>
-                <h1 className="text-sm sm:text-base font-black text-slate-900 flex items-center gap-1.5">
-                  <Sparkles className="w-4 h-4 text-rose-500" />
-                  <span>منتدى التعارف والتواصل الاجتماعي الراقى</span>
-                </h1>
-                <p className="text-[11px] text-slate-500 mt-0.5">
-                  شارك خاطرة تعارف، رحّب بالأعضاء، أو ابدأ محادثة خاصة فورية مع المتواجدين 🌸
-                </p>
+          {/* Forum Header & Composer with Compact Matching Cover */}
+          <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
+            {/* Compact Matching Forum Cover Banner */}
+            <div className="relative overflow-hidden bg-gradient-to-br from-[#312e81]/95 via-[#7c2d12]/90 to-[#b45309]/95 px-3.5 py-2.5 text-white border-b border-amber-300/30">
+              <div
+                aria-hidden="true"
+                style={{
+                  backgroundImage: "url('/assets/wallpapers/nature_nile_sunset.jpg')",
+                  backgroundSize: 'cover',
+                  backgroundPosition: 'center'
+                }}
+                className="absolute inset-0 opacity-20 pointer-events-none"
+              />
+              <div className="relative z-10 flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h1 className="text-xs sm:text-sm font-black flex items-center gap-1.5 drop-shadow-xs">
+                    <Sparkles className="w-4 h-4 text-amber-300" />
+                    <span>منتدى التعارف والتواصل الاجتماعي الراقي</span>
+                  </h1>
+                  <p className="text-[10.5px] text-white/90 mt-0.5">
+                    شارك خاطرة تعارف، صورة لطيفة، أو ابدأ محادثة خاصة فورية 🌸
+                  </p>
+                </div>
+                <span className="px-2.5 py-0.5 rounded-full bg-black/25 border border-white/25 text-white text-[10px] font-black">
+                  {filteredPosts.length} مشاركة
+                </span>
               </div>
-              <span className="px-2.5 py-1 rounded-full bg-rose-50 border border-rose-200 text-rose-700 text-[10.5px] font-black">
-                {filteredPosts.length} مشاركة
-              </span>
             </div>
 
-            {/* Post Composer */}
-            <form onSubmit={handlePublishPost} className="space-y-2">
-              <textarea
-                rows={2}
-                value={postText}
-                onChange={(e) => setPostText(e.target.value)}
-                placeholder="اكتب منشور تعارف، تحية، أو خاطرة جميلة ليراها الجميع..."
-                className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs sm:text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-indigo-500 resize-none"
+            <div className="p-3 sm:p-3.5 space-y-2.5">
+              {/* Hidden image input for forum posts */}
+              <input
+                ref={forumImageInputRef}
+                type="file"
+                accept="image/*"
+                onChange={handleSelectForumImage}
+                className="hidden"
               />
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-1.5 text-[11px] text-slate-500">
-                  <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
-                  <span>ينشر باسم: <strong className="text-slate-800">{currentUser.name}</strong></span>
-                </div>
-                <button
-                  type="submit"
-                  disabled={!postText.trim() || isPublishing}
-                  className="px-4 py-2 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 disabled:opacity-50 text-white text-xs font-black flex items-center gap-1.5 shadow-sm active:scale-95 transition-all cursor-pointer"
-                >
-                  <Send className="w-3.5 h-3.5" />
-                  <span>{isPublishing ? 'جاري النشر...' : 'نشر في المنتدى'}</span>
-                </button>
-              </div>
-            </form>
 
-            {/* Simple Filter Buttons: الكل | الشباب | البنات | المتواجدون الآن */}
-            <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 pt-1 border-t border-slate-100 text-xs font-bold">
-              {[
-                { id: 'all', label: 'الكل 🌟' },
-                { id: 'male', label: 'الشباب 👨' },
-                { id: 'female', label: 'البنات 👩' },
-                { id: 'online', label: 'المتواجدون الآن 🟢' }
-              ].map((tab) => (
-                <button
-                  key={tab.id}
-                  type="button"
-                  onClick={() => setForumFilter(tab.id as any)}
-                  className={`px-3 py-1.5 rounded-xl whitespace-nowrap transition-all cursor-pointer ${
-                    forumFilter === tab.id
-                      ? 'bg-indigo-600 text-white shadow-xs'
-                      : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
-                  }`}
-                >
-                  {tab.label}
-                </button>
-              ))}
+              {/* Post Composer */}
+              <form onSubmit={handlePublishPost} className="space-y-2">
+                <textarea
+                  rows={2}
+                  value={postText}
+                  onChange={(e) => setPostText(e.target.value)}
+                  placeholder="اكتب منشور تعارف، تحية، أو خاطرة جميلة ليراها الجميع..."
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs sm:text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-indigo-500 resize-none"
+                />
+
+                {postImageUrl && (
+                  <div className="relative inline-block rounded-xl overflow-hidden border border-slate-200 shadow-xs">
+                    <img src={postImageUrl} alt="معاينة الصورة" className="max-h-36 w-auto object-cover" />
+                    <button
+                      type="button"
+                      onClick={() => setPostImageUrl('')}
+                      className="absolute top-1 left-1 w-6 h-6 rounded-full bg-slate-900/75 text-white flex items-center justify-center hover:bg-rose-600 cursor-pointer"
+                      title="إزالة الصورة"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                )}
+
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => forumImageInputRef.current?.click()}
+                      className="px-2.5 py-1.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 text-[11px] font-black flex items-center gap-1 cursor-pointer transition"
+                    >
+                      <ImageIcon className="w-3.5 h-3.5" />
+                      <span>إضافة صورة</span>
+                    </button>
+                    <div className="hidden sm:flex items-center gap-1.5 text-[11px] text-slate-500">
+                      <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+                      <span>ينشر باسم: <strong className="text-slate-800">{currentUser.name}</strong></span>
+                    </div>
+                  </div>
+                  <button
+                    type="submit"
+                    disabled={(!postText.trim() && !postImageUrl) || isPublishing}
+                    className="px-4 py-1.5 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 disabled:opacity-50 text-white text-xs font-black flex items-center gap-1.5 shadow-sm active:scale-95 transition-all cursor-pointer"
+                  >
+                    <Send className="w-3.5 h-3.5" />
+                    <span>{isPublishing ? 'جاري النشر...' : 'نشر في المنتدى'}</span>
+                  </button>
+                </div>
+              </form>
+
+              {/* RTL Forum Filter Tabs: التريند (Default) | الكل | الشباب | البنات | المتواجدون الآن */}
+              <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 pt-1.5 border-t border-slate-100 text-xs font-bold">
+                {[
+                  { id: 'trend', label: '🔥 التريند' },
+                  { id: 'all', label: '🌟 الكل' },
+                  { id: 'male', label: '👦 الشباب' },
+                  { id: 'female', label: '👧 البنات' },
+                  { id: 'online', label: '🟢 المتواجدون الآن' }
+                ].map((tab) => (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => setForumFilter(tab.id as any)}
+                    className={`px-3 py-1.5 rounded-xl whitespace-nowrap transition-all cursor-pointer ${
+                      forumFilter === tab.id
+                        ? tab.id === 'trend'
+                          ? 'bg-gradient-to-r from-amber-500 to-rose-600 text-white shadow-xs'
+                          : 'bg-indigo-600 text-white shadow-xs'
+                        : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                    }`}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
 
@@ -587,6 +719,7 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
                 const isLikedByMe = (post.likedBy || []).includes(currentUser.id);
                 const isCommentsOpen = expandedCommentPostId === post.id;
                 const canDelete = isOwner || post.authorId === currentUser.id;
+                const authorRankMeta = getRankDisplayMeta(post.authorRole, post.authorVipBadge);
 
                 const peerForDm: User = onlineUsers.find(u => u.id === post.authorId) || {
                   id: post.authorId,
@@ -616,34 +749,42 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
                 return (
                   <div
                     key={post.id}
-                    className="bg-white border border-slate-200 rounded-2xl p-3.5 shadow-sm hover:border-indigo-200 transition-all"
+                    className={`rounded-2xl p-3.5 shadow-sm transition-all border ${
+                      post.isPinned
+                        ? 'bg-gradient-to-br from-amber-50/75 via-white to-rose-50/40 border-amber-300 ring-1 ring-amber-200'
+                        : 'bg-white border-slate-200 hover:border-indigo-200'
+                    }`}
                   >
+                    {post.isPinned && (
+                      <div className="mb-2 inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-amber-100 border border-amber-300 text-amber-900 text-[10.5px] font-black">
+                        <Pin className="w-3 h-3 text-amber-700" />
+                        <span>منشور مثبت من الإدارة 📌</span>
+                      </div>
+                    )}
+
                     {/* Post Author Header */}
                     <div className="flex items-start justify-between gap-2">
                       <div className="flex items-center gap-2.5 min-w-0">
-                        <div className="relative shrink-0">
-                          <div className="w-10 h-10 rounded-full overflow-hidden border-2 border-indigo-100 bg-slate-100 flex items-center justify-center font-black text-indigo-700 text-sm">
-                            {post.authorAvatar ? (
-                              <img src={post.authorAvatar} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                            ) : (
-                              <span>{post.authorName.charAt(0)}</span>
-                            )}
-                          </div>
-                          <span
-                            className={`absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 border-white ${
-                              isPostAuthorOnline ? 'bg-emerald-500' : 'bg-slate-300'
-                            }`}
-                            title={isPostAuthorOnline ? 'متصل الآن' : 'غير متصل'}
-                          />
-                        </div>
+                        <AvatarWithFrame
+                          user={{
+                            id: post.authorId,
+                            name: post.authorName,
+                            avatar: post.authorAvatar,
+                            role: post.authorRole || 'member',
+                            vipBadge: post.authorVipBadge,
+                            status: isPostAuthorOnline ? 'online' : 'offline'
+                          }}
+                          size="sm"
+                          showOnlineDot
+                        />
 
                         <div className="min-w-0 text-right">
                           <div className="flex items-center gap-1.5 flex-wrap">
-                            <span className="text-xs sm:text-sm font-black text-slate-900 truncate">{post.authorName}</span>
+                            <span className={`text-xs sm:text-sm truncate ${authorRankMeta.nameColorClass}`}>{post.authorName}</span>
                             <span className="text-xs">{post.authorCountryFlag || '🇪🇬'}</span>
-                            {post.authorVipBadge && (
-                              <span className="text-[9.5px] px-1.5 py-0.5 rounded bg-amber-50 border border-amber-200 text-amber-700 font-black">
-                                {post.authorVipBadge}
+                            {authorRankMeta.isPrivileged && (
+                              <span className={`text-[9.5px] px-1.5 py-0.5 rounded border font-black ${authorRankMeta.badgeClass}`}>
+                                {authorRankMeta.label}
                               </span>
                             )}
                           </div>
@@ -657,22 +798,49 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
                         </div>
                       </div>
 
-                      {canDelete && (
-                        <button
-                          type="button"
-                          onClick={() => deleteForumPost(post.id)}
-                          className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition cursor-pointer"
-                          title="حذف المنشور"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      )}
+                      <div className="flex items-center gap-1 shrink-0">
+                        {isOwner && (
+                          <button
+                            type="button"
+                            onClick={() => handleTogglePin(post)}
+                            className={`px-2 py-1 rounded-lg text-[10px] font-black flex items-center gap-1 transition cursor-pointer ${
+                              post.isPinned
+                                ? 'bg-amber-500 text-white'
+                                : 'bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200'
+                            }`}
+                            title={post.isPinned ? 'إلغاء التثبيت' : 'تثبيت المنشور'}
+                          >
+                            <Pin className="w-3 h-3" />
+                            <span>{post.isPinned ? 'مثبت' : 'تثبيت'}</span>
+                          </button>
+                        )}
+                        {canDelete && (
+                          <button
+                            type="button"
+                            onClick={() => deleteForumPost(post.id)}
+                            className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition cursor-pointer"
+                            title="حذف المنشور"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
                     </div>
 
                     {/* Post Body */}
                     <p className="mt-2.5 text-xs sm:text-sm text-slate-800 leading-relaxed whitespace-pre-wrap break-words bg-slate-50/70 rounded-xl p-3 border border-slate-100">
                       {post.text}
                     </p>
+
+                    {post.imageUrl && (
+                      <div className="mt-2 rounded-xl overflow-hidden border border-slate-200 bg-slate-50">
+                        <img
+                          src={post.imageUrl}
+                          alt="صورة المنشور"
+                          className="w-full max-h-80 object-contain bg-slate-900/5"
+                        />
+                      </div>
+                    )}
 
                     {/* Post Action Buttons: إعجاب ❤️ | تعليق 💬 | مراسلة خاصة ✉️ */}
                     <div className="mt-2.5 flex items-center justify-between gap-2 pt-1">

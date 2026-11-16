@@ -106,7 +106,7 @@ export const MusicRadioModal: React.FC<MusicRadioModalProps> = ({
   ];
 
   const radioCategories = [
-    { id: 'all', label: 'جميع المحطات (12 محطة)' },
+    { id: 'all', label: `جميع المحطات (${ARABIC_RADIO_STATIONS.length} محطة)` },
     { id: 'tarab', label: 'طرب زمان' },
     { id: 'egypt', label: 'تسعينات ومصر' },
     { id: 'fairuz', label: 'فيروز والصباح' },
@@ -322,7 +322,7 @@ export const MusicRadioModal: React.FC<MusicRadioModalProps> = ({
                   onChange={(e) => globalRadioPlayer.seek(parseFloat(e.target.value))}
                   className="flex-1 h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600"
                 />
-                <span>{activeSong.duration || formatSeconds(duration)}</span>
+                <span>{duration > 0 ? formatSeconds(duration) : activeSong.duration}</span>
               </div>
             )}
 

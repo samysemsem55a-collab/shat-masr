@@ -60,6 +60,8 @@ class RealtimeSocketManager {
   private cumulativeVisitorsListeners: Set<(count: number) => void> = new Set();
   private adminReportListeners: Set<(report: any) => void> = new Set();
   private callSignalListeners: Set<(signal: any) => void> = new Set();
+  private consentSignalListeners: Set<(signal: { kind: 'request' | 'response'; payload: any }) => void> = new Set();
+  private luxuryGiftListeners: Map<string, Set<(giftData: any) => void>> = new Map();
   private roomPurgedListeners: Map<string, Set<() => void>> = new Map();
   private isConnectedState = false;
   private latestCumulativeVisitorsCount = 15480;
@@ -416,6 +418,20 @@ class RealtimeSocketManager {
       case 'CALL_SIGNAL': {
         if (action.signal) {
           this.callSignalListeners.forEach(cb => cb(action.signal));
+        }
+        break;
+      }
+
+      case 'CONSENT_SIGNAL': {
+        if (action.kind && action.payload) {
+          this.consentSignalListeners.forEach(cb => cb({ kind: action.kind, payload: action.payload }));
+        }
+        break;
+      }
+
+      case 'LUXURY_GIFT_BROADCAST': {
+        if (action.roomId && action.giftData) {
+          this.luxuryGiftListeners.get(action.roomId)?.forEach(cb => cb(action.giftData));
         }
         break;
       }
@@ -823,6 +839,31 @@ class RealtimeSocketManager {
     }
     return () => {
       this.allRoomLockListeners.delete(callback);
+    };
+  }
+
+  sendConsentSignal(data: { kind: 'request' | 'response'; targetUserId: string; payload: any }) {
+    this.send('CONSENT_SIGNAL', data);
+  }
+
+  subscribeToConsentSignals(callback: (signal: { kind: 'request' | 'response'; payload: any }) => void): () => void {
+    this.consentSignalListeners.add(callback);
+    return () => {
+      this.consentSignalListeners.delete(callback);
+    };
+  }
+
+  sendLuxuryGiftBroadcast(roomId: string, giftData: any) {
+    this.send('LUXURY_GIFT_BROADCAST', { roomId, giftData });
+  }
+
+  subscribeToLuxuryGiftBroadcasts(roomId: string, callback: (giftData: any) => void): () => void {
+    if (!this.luxuryGiftListeners.has(roomId)) {
+      this.luxuryGiftListeners.set(roomId, new Set());
+    }
+    this.luxuryGiftListeners.get(roomId)!.add(callback);
+    return () => {
+      this.luxuryGiftListeners.get(roomId)?.delete(callback);
     };
   }
 }

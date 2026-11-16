@@ -98,13 +98,13 @@ export const VipUpgradeModal: React.FC<VipUpgradeModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/85 backdrop-blur-sm p-0 sm:p-4 animate-in fade-in">
-      <div className="w-full sm:max-w-2xl bg-[#0e1626] border border-amber-500/50 rounded-t-3xl sm:rounded-3xl overflow-hidden shadow-2xl flex flex-col max-h-[92vh]">
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-slate-950/85 backdrop-blur-md p-0 sm:p-4 animate-in fade-in">
+      <div className="w-full sm:max-w-2xl bg-[#0c1222] border border-amber-400/40 rounded-t-3xl sm:rounded-3xl overflow-hidden shadow-[0_0_45px_rgba(168,85,247,0.2)] flex flex-col max-h-[92vh]">
         
         {/* Modal Header */}
-        <div className="p-4 bg-gradient-to-r from-amber-950/70 via-purple-950/60 to-slate-900 border-b border-slate-800 flex items-center justify-between shrink-0">
+        <div className="p-4 bg-gradient-to-l from-[#1a1033] via-[#261447] to-[#2b1a0e] border-b border-amber-400/25 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-2.5">
-            <div className="w-10 h-10 rounded-2xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400 shrink-0">
+            <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-amber-400/25 to-purple-500/25 border border-amber-400/45 flex items-center justify-center text-amber-300 shrink-0 shadow-inner">
               <Crown className="w-5 h-5 fill-amber-400" />
             </div>
             <div>
@@ -112,23 +112,23 @@ export const VipUpgradeModal: React.FC<VipUpgradeModalProps> = ({
                 ترقية الرتب وعضويات VIP الملكية
                 <Sparkles className="w-4 h-4 text-amber-400" />
               </h3>
-              <p className="text-xs text-slate-300">مراجعة وتدقيق معتمد عبر InstaPay 🛡️</p>
+              <p className="text-xs text-purple-200/85">مراجعة وتدقيق معتمد عبر InstaPay 🛡️</p>
             </div>
           </div>
 
-          <button onClick={onClose} className="p-1.5 rounded-full text-slate-400 hover:text-white bg-slate-800">
+          <button onClick={onClose} className="p-1.5 rounded-full text-slate-300 hover:text-white bg-white/10 hover:bg-white/15 transition-colors">
             <X className="w-4 h-4" />
           </button>
         </div>
 
         {/* Content Body */}
-        <div className="p-4 overflow-y-auto space-y-4 flex-1">
+        <div className="p-4 overflow-y-auto space-y-4 flex-1 bg-gradient-to-b from-[#0c1222] to-[#090d1a]">
           
           {/* User's current rank */}
-          <div className="flex items-center justify-between bg-slate-900/80 border border-slate-800 rounded-2xl p-3 text-xs">
-            <span className="text-slate-400">رتبتك الحالية:</span>
-            <span className="font-black text-amber-400 flex items-center gap-1">
-              <Crown className="w-4 h-4" /> {currentUser.vipBadge || 'عضو مميز'}
+          <div className="flex items-center justify-between bg-[#131b31] border border-purple-500/30 rounded-2xl p-3 text-xs">
+            <span className="text-slate-300 font-bold">رتبتك الحالية:</span>
+            <span className="font-black text-amber-300 flex items-center gap-1">
+              <Crown className="w-4 h-4 text-amber-400" /> {currentUser.vipBadge || 'عضو نشط'}
             </span>
           </div>
 
@@ -156,8 +156,8 @@ export const VipUpgradeModal: React.FC<VipUpgradeModalProps> = ({
                       onClick={() => setSelectedTier(tier)}
                       className={`relative p-4 rounded-2xl border cursor-pointer transition-all ${
                         isSelected
-                          ? 'bg-slate-900/90 border-amber-400 shadow-[0_0_20px_rgba(245,158,11,0.25)] scale-[1.01]'
-                          : 'bg-slate-900/50 border-slate-800 hover:border-slate-700'
+                          ? 'bg-gradient-to-b from-[#17203a] to-[#11172a] border-amber-400 shadow-[0_0_22px_rgba(245,158,11,0.22)] scale-[1.01]'
+                          : 'bg-[#131b31]/80 border-purple-500/25 hover:border-amber-400/50'
                       }`}
                     >
                       {/* Top Badge */}
@@ -165,19 +165,19 @@ export const VipUpgradeModal: React.FC<VipUpgradeModalProps> = ({
                         <span className={`text-xs px-2.5 py-0.5 rounded-full font-black border ${tier.badgeBg}`}>
                           {tier.badge}
                         </span>
-                        <span className="text-xs font-black text-white">
+                        <span className="text-xs font-black text-amber-300">
                           {tier.priceEgp} ج.م <span className="text-[10px] text-slate-400">({tier.priceUsd}$)</span>
                         </span>
                       </div>
 
                       <h4 className="text-sm font-black text-white">{tier.name}</h4>
-                      <p className="text-[11px] text-slate-400 mb-3">{tier.tagline}</p>
+                      <p className="text-[11px] text-slate-300/80 mb-3">{tier.tagline}</p>
 
                       {/* Perks List */}
                       <ul className="space-y-1.5 mb-4">
                         {tier.perks.map((perk, pIdx) => (
-                          <li key={pIdx} className="text-[11px] text-slate-300 flex items-start gap-1.5">
-                            <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5" />
+                          <li key={pIdx} className="text-[11px] text-slate-200 flex items-start gap-1.5">
+                            <Check className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
                             <span>{perk}</span>
                           </li>
                         ))}
@@ -191,10 +191,10 @@ export const VipUpgradeModal: React.FC<VipUpgradeModalProps> = ({
                         }}
                         className={`w-full py-2.5 rounded-xl text-xs font-black flex items-center justify-center gap-1.5 shadow-md active:scale-95 transition-all ${
                           tier.id === 'vip_diamond'
-                            ? 'bg-gradient-to-r from-cyan-500 via-indigo-600 to-purple-600 text-white'
-                            : tier.id === 'vip_gold'
-                            ? 'bg-gradient-to-r from-amber-500 to-yellow-500 text-slate-950 font-black'
-                            : 'bg-indigo-600 hover:bg-indigo-500 text-white'
+                            ? 'bg-gradient-to-r from-amber-400 via-purple-500 to-indigo-600 text-white'
+                            : tier.id === 'vip_silver'
+                            ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white'
+                            : 'bg-gradient-to-r from-amber-500 to-yellow-500 text-slate-950'
                         }`}
                       >
                         <Crown className="w-3.5 h-3.5" />
@@ -232,28 +232,28 @@ export const VipUpgradeModal: React.FC<VipUpgradeModalProps> = ({
               </div>
 
               {/* Payment Method (InstaPay Only) */}
-              <div className="p-3 rounded-2xl bg-purple-950/50 border border-purple-500/60 flex items-center justify-between">
+              <div className="p-3 rounded-2xl bg-[#1a1333] border border-purple-500/45 flex items-center justify-between">
                 <div className="flex flex-col gap-0.5">
                   <span className="text-xs font-black text-white flex items-center gap-1.5">
-                    <QrCode className="w-4 h-4 text-purple-400" />
+                    <QrCode className="w-4 h-4 text-purple-300" />
                     إنستاباي (InstaPay)
                   </span>
-                  <span className="text-[10px] text-purple-300">تحويل فوري بدون رسوم — الوسيلة المعتمدة حالياً</span>
+                  <span className="text-[10px] text-purple-200">تحويل فوري بدون رسوم — الوسيلة المعتمدة حالياً</span>
                 </div>
-                <Check className="w-4 h-4 text-emerald-400" />
+                <Check className="w-4 h-4 text-amber-400" />
               </div>
 
               {/* Transfer Details Card */}
-              <div className="p-3.5 rounded-2xl bg-slate-900/90 border border-slate-700/80 space-y-3">
+              <div className="p-3.5 rounded-2xl bg-[#131b31] border border-amber-400/30 space-y-3">
                 <span className="text-xs font-bold text-amber-300 block">
                   بيانات حساب التحويل الرسمي للإدارة:
                 </span>
 
                 <div className="space-y-2">
-                  <div className="flex items-center justify-between bg-black/60 p-2.5 rounded-xl border border-purple-500/40">
+                  <div className="flex items-center justify-between bg-[#090d1a] p-2.5 rounded-xl border border-purple-500/45">
                     <div>
                       <span className="text-[10px] text-slate-400 block">عنوان الدفع اللحظي (IPA):</span>
-                      <span className="text-xs sm:text-sm font-mono font-black text-purple-300 select-all">
+                      <span className="text-xs sm:text-sm font-mono font-black text-amber-300 select-all">
                         {INSTAPAY_ADDRESS}
                       </span>
                     </div>
@@ -264,7 +264,7 @@ export const VipUpgradeModal: React.FC<VipUpgradeModalProps> = ({
                         setCopiedInstapay(true);
                         setTimeout(() => setCopiedInstapay(false), 2000);
                       }}
-                      className="px-2.5 py-1.5 rounded-lg bg-purple-600/80 hover:bg-purple-600 text-white text-[11px] font-bold flex items-center gap-1"
+                      className="px-2.5 py-1.5 rounded-lg bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white text-[11px] font-bold flex items-center gap-1 cursor-pointer"
                     >
                       <Copy className="w-3 h-3" />
                       <span>{copiedInstapay ? 'تم النسخ' : 'نسخ'}</span>
@@ -276,16 +276,16 @@ export const VipUpgradeModal: React.FC<VipUpgradeModalProps> = ({
               {/* Form Input fields */}
               <form onSubmit={handleSubmitVipRequest} className="space-y-3">
                 {formError && (
-                  <div className="p-2.5 rounded-xl bg-red-950/70 border border-red-500/50 text-red-200 text-xs flex items-center gap-2">
-                    <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
+                  <div className="p-2.5 rounded-xl bg-rose-950/70 border border-rose-500/50 text-rose-200 text-xs flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
                     <span>{formError}</span>
                   </div>
                 )}
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
-                    <label className="text-[11px] font-bold text-slate-300 block mb-1">
-                      رقم المحفظة / الحساب المحوّل منه <span className="text-red-400">*</span>
+                    <label className="text-[11px] font-bold text-slate-200 block mb-1">
+                      رقم المحفظة / الحساب المحوّل منه <span className="text-rose-400">*</span>
                     </label>
                     <input
                       type="text"
@@ -293,13 +293,13 @@ export const VipUpgradeModal: React.FC<VipUpgradeModalProps> = ({
                       placeholder="مثال: 01012345678 أو IPA"
                       value={senderPhone}
                       onChange={(e) => setSenderPhone(e.target.value)}
-                      className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-700 text-white text-xs placeholder:text-slate-500 focus:outline-none focus:border-amber-500"
+                      className="w-full px-3 py-2 rounded-xl bg-[#131b31] border border-purple-500/35 text-white text-xs placeholder:text-slate-500 focus:outline-none focus:border-amber-400"
                     />
                   </div>
 
                   <div>
-                    <label className="text-[11px] font-bold text-slate-300 block mb-1">
-                      اسم صاحب الحساب أو المحفظة <span className="text-red-400">*</span>
+                    <label className="text-[11px] font-bold text-slate-200 block mb-1">
+                      اسم صاحب الحساب أو المحفظة <span className="text-rose-400">*</span>
                     </label>
                     <input
                       type="text"
@@ -307,14 +307,14 @@ export const VipUpgradeModal: React.FC<VipUpgradeModalProps> = ({
                       placeholder="الاسم المسجل في التحويل"
                       value={senderName}
                       onChange={(e) => setSenderName(e.target.value)}
-                      className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-700 text-white text-xs placeholder:text-slate-500 focus:outline-none focus:border-amber-500"
+                      className="w-full px-3 py-2 rounded-xl bg-[#131b31] border border-purple-500/35 text-white text-xs placeholder:text-slate-500 focus:outline-none focus:border-amber-400"
                     />
                   </div>
                 </div>
 
                 <div>
-                  <label className="text-[11px] font-bold text-slate-300 block mb-1">
-                    كود العملية أو الرقم المرجعي للتحويل (Reference No) <span className="text-red-400">*</span>
+                  <label className="text-[11px] font-bold text-slate-200 block mb-1">
+                    كود العملية أو الرقم المرجعي للتحويل (Reference No) <span className="text-rose-400">*</span>
                   </label>
                   <input
                     type="text"
@@ -322,12 +322,12 @@ export const VipUpgradeModal: React.FC<VipUpgradeModalProps> = ({
                     placeholder="رقم العملية من تطبيق InstaPay أو رسالة تأكيد المحفظة"
                     value={senderReference}
                     onChange={(e) => setSenderReference(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-700 text-white text-xs font-mono placeholder:text-slate-500 focus:outline-none focus:border-amber-500"
+                    className="w-full px-3 py-2 rounded-xl bg-[#131b31] border border-purple-500/35 text-white text-xs font-mono placeholder:text-slate-500 focus:outline-none focus:border-amber-400"
                   />
                 </div>
 
                 <div>
-                  <label className="text-[11px] font-bold text-slate-300 block mb-1">
+                  <label className="text-[11px] font-bold text-slate-200 block mb-1">
                     ملاحظات إضافية أو تفاصيل الإيصال (اختياري)
                   </label>
                   <input
@@ -335,7 +335,7 @@ export const VipUpgradeModal: React.FC<VipUpgradeModalProps> = ({
                     placeholder="مثال: تم التحويل الساعة 5:30 م"
                     value={transferNote}
                     onChange={(e) => setTransferNote(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-700 text-white text-xs placeholder:text-slate-500 focus:outline-none focus:border-amber-500"
+                    className="w-full px-3 py-2 rounded-xl bg-[#131b31] border border-purple-500/35 text-white text-xs placeholder:text-slate-500 focus:outline-none focus:border-amber-400"
                   />
                 </div>
 
@@ -343,7 +343,7 @@ export const VipUpgradeModal: React.FC<VipUpgradeModalProps> = ({
                   <button
                     type="submit"
                     disabled={isSubmitting}
-                    className="w-full py-3 rounded-2xl bg-gradient-to-r from-amber-500 via-orange-500 to-amber-600 hover:from-amber-400 hover:to-orange-500 text-slate-950 font-black text-xs sm:text-sm flex items-center justify-center gap-2 shadow-lg shadow-amber-500/20 active:scale-95 transition-all disabled:opacity-50"
+                    className="w-full py-3 rounded-2xl bg-gradient-to-r from-amber-400 via-amber-500 to-purple-600 hover:from-amber-300 hover:to-purple-500 text-slate-950 font-black text-xs sm:text-sm flex items-center justify-center gap-2 shadow-lg shadow-amber-500/20 active:scale-95 transition-all disabled:opacity-50 cursor-pointer"
                   >
                     {isSubmitting ? (
                       <>

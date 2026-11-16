@@ -14,10 +14,15 @@ import {
   Sparkles,
   Flag,
   AlertTriangle,
-  Loader2
+  Loader2,
+  Music,
+  Play,
+  Pause
 } from 'lucide-react';
 import { User } from '../types/chat';
 import { BADGES_CATALOG } from '../data/seedData';
+import { getRankDisplayMeta, hasPrivilegedRank, resolveBannerStyle } from '../utils/userRanks';
+import { AvatarWithFrame } from './AvatarWithFrame';
 import { sendFriendRequest, submitUserRating, submitUserReport } from '../services/firebase';
 import { realtimeSocket } from '../services/realtimeSocket';
 import { sounds } from '../utils/soundEffects';
@@ -54,6 +59,55 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
   const [reportNotes, setReportNotes] = useState('');
   const [isSubmittingReport, setIsSubmittingReport] = useState(false);
   const [reportSentSuccess, setReportSentSuccess] = useState(false);
+
+  // Favorite music mini-player for privileged profiles
+  const musicAudioRef = useRef<HTMLAudioElement | null>(null);
+  const [isMusicPlaying, setIsMusicPlaying] = useState(false);
+
+  React.useEffect(() => {
+    return () => {
+      if (musicAudioRef.current) {
+        musicAudioRef.current.pause();
+        musicAudioRef.current = null;
+      }
+      setIsMusicPlaying(false);
+    };
+  }, [user.id]);
+
+  const handleToggleFavoriteMusic = () => {
+    if (!user.favoriteMusicUrl) return;
+    if (isMusicPlaying && musicAudioRef.current) {
+      musicAudioRef.current.pause();
+      setIsMusicPlaying(false);
+      return;
+    }
+    if (musicAudioRef.current) {
+      musicAudioRef.current.pause();
+    }
+    const audio = new Audio(user.favoriteMusicUrl);
+    audio.volume = 0.65;
+    audio.onended = () => setIsMusicPlaying(false);
+    audio.onerror = () => {
+      setIsMusicPlaying(false);
+      toast.error('تعذر تشغيل الموسيقى حالياً');
+    };
+    musicAudioRef.current = audio;
+    audio.play().then(() => setIsMusicPlaying(true)).catch(() => setIsMusicPlaying(false));
+  };
+
+  const rankMeta = getRankDisplayMeta(user.role, user.vipBadge);
+  const isPrivileged = hasPrivilegedRank(user.role);
+  const bannerStyle = isPrivileged ? resolveBannerStyle(user.profileBanner) : undefined;
+  const isAvailable = user.status !== 'offline' && (user.isOnline !== false || Boolean(user.status));
+  const statusLabel = !isAvailable
+    ? 'غير متصل'
+    : user.status === 'busy'
+    ? 'مشغول'
+    : user.status === 'dnd'
+    ? 'لا تزعجني'
+    : user.status === 'in_mic'
+    ? 'في مجلس صوتي'
+    : 'متاح الآن';
 
   const handleSendFriendReq = async () => {
     if (isMe || friendRequestSent) return;
@@ -141,8 +195,11 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
           onChange={handleFileChange} 
         />
 
-        {/* Cover Header */}
-        <div className="h-24 bg-gradient-to-r from-[#0f172a] via-[#1e3a8a] to-[#0f766e] relative">
+        {/* Cover Header (Custom VIP Banner or Clean Default Gradient) */}
+        <div
+          className="h-24 bg-gradient-to-r from-[#0f172a] via-[#1e3a8a] to-[#0f766e] relative"
+          style={bannerStyle}
+        >
           <button 
             onClick={onClose}
             className="absolute top-2.5 left-2.5 p-1.5 rounded-full bg-white/90 text-slate-700 hover:bg-white shadow active:scale-90 transition-transform"
@@ -156,29 +213,14 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
           
           {/* Avatar with Live Indicator & Direct Edit for Owner */}
           <div className="relative inline-block">
-            <div className={`w-22 h-22 rounded-full overflow-hidden border-4 bg-white shadow-xl mx-auto ${user.frameStyle || 'border-amber-400'}`}>
-              <img 
-                src={user.avatar || `https://api.dicebear.com/9.x/avataaars/svg?seed=${encodeURIComponent(user.name || user.id)}`} 
-                alt={user.name} 
-                className="w-full h-full object-cover" 
-                referrerPolicy="no-referrer"
-              />
-            </div>
-
-            {/* Live Indicator Dot */}
-            <span 
-              className={`absolute bottom-1 right-2 w-4 h-4 rounded-full border-2 border-white ${
-                user.isOnline ? 'bg-emerald-500' : 'bg-slate-400'
-              }`}
-              title={user.isOnline ? 'متصل الآن' : 'غير متصل'}
-            />
+            <AvatarWithFrame user={user} size="lg" showOnlineDot />
 
             {/* If Current User, Show Quick Photo Change Button (Pencil Icon) */}
             {isMe && (
               <button
                 onClick={() => fileInputRef.current?.click()}
                 title="تغيير الصورة الشخصية وتحديثها فوراً"
-                className="absolute top-0 right-0 p-1.5 rounded-full bg-gradient-to-tr from-indigo-600 to-pink-600 hover:from-indigo-500 hover:to-pink-500 text-white shadow-lg border-2 border-white active:scale-90 transition-transform flex items-center justify-center"
+                className="absolute top-0 right-0 p-1.5 rounded-full bg-gradient-to-tr from-indigo-600 to-pink-600 hover:from-indigo-500 hover:to-pink-500 text-white shadow-lg border-2 border-white active:scale-90 transition-transform flex items-center justify-center z-20"
               >
                 <Pencil className="w-3.5 h-3.5" />
               </button>
@@ -188,27 +230,57 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
           {/* Name & Country */}
           <div>
             <div className="flex items-center justify-center gap-1.5">
-              <h3 className="text-base font-black text-slate-900">{user.name}</h3>
+              <h3 className={`text-base ${rankMeta.nameColorClass}`}>{user.name}</h3>
               <span className="text-lg">{user.countryFlag || '🇪🇬'}</span>
             </div>
 
-            {/* VIP Tier Badge */}
+            {/* Strict Rank-Gated VIP Tier Badge */}
             <div className="flex items-center justify-center gap-1.5 mt-1">
-              <span className="px-2.5 py-0.5 rounded-full text-xs font-black bg-amber-50 border border-amber-200 text-amber-700 flex items-center gap-1">
-                <Crown className="w-3.5 h-3.5 text-amber-500 fill-amber-400" />
-                {user.vipBadge || 'عضو مميز'}
-              </span>
+              {rankMeta.isPrivileged ? (
+                <span className={`px-2.5 py-0.5 rounded-full text-xs font-black border flex items-center gap-1 ${rankMeta.badgeClass}`}>
+                  <span>{rankMeta.label}</span>
+                </span>
+              ) : (
+                <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-slate-100 border border-slate-200 text-slate-600">
+                  {rankMeta.label}
+                </span>
+              )}
               <span className="text-xs text-slate-500 font-normal">(@{user.username || 'user'})</span>
             </div>
 
             <div className="flex items-center justify-center gap-2 text-xs text-slate-500 mt-1">
-              <span className={user.isOnline ? 'text-emerald-600 font-bold' : 'text-slate-500'}>
-                {user.isOnline ? '● متصل الآن' : '○ غير متصل'}
+              <span className={isAvailable ? 'text-emerald-600 font-bold' : 'text-slate-500'}>
+                ● {statusLabel}
               </span>
               <span>•</span>
               <span>{user.country || 'مصر'}</span>
             </div>
           </div>
+
+          {/* Privileged User's Favorite Profile Music Mini-Player */}
+          {isPrivileged && user.favoriteMusicUrl && (
+            <div className="p-2.5 rounded-2xl bg-gradient-to-r from-purple-50 via-indigo-50 to-amber-50 border border-purple-200 flex items-center justify-between gap-2 text-right">
+              <div className="flex items-center gap-2 min-w-0">
+                <div className="w-8 h-8 rounded-xl bg-purple-600 text-white flex items-center justify-center shrink-0 shadow-xs">
+                  <Music className={`w-4 h-4 ${isMusicPlaying ? 'animate-pulse' : ''}`} />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-[11px] font-black text-purple-900 truncate">النغمة المفضلة للبروفايل 🎶</p>
+                  <p className="text-[10px] text-purple-700 truncate">
+                    {isMusicPlaying ? 'جاري التشغيل الآن...' : 'اضغط للاستماع'}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={handleToggleFavoriteMusic}
+                className="px-3 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-black flex items-center gap-1 shrink-0 shadow-xs cursor-pointer"
+              >
+                {isMusicPlaying ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
+                <span>{isMusicPlaying ? 'إيقاف' : 'تشغيل'}</span>
+              </button>
+            </div>
+          )}
 
           {/* Earned Badges Section */}
           <div className="p-2.5 rounded-2xl bg-slate-50 border border-slate-200 text-right space-y-1.5">

@@ -24,7 +24,13 @@ import { PrivateRoomPromptModal } from './components/PrivateRoomPromptModal';
 import { PhoneAuthModal } from './components/PhoneAuthModal';
 import { WelcomeAuthModal } from './components/WelcomeAuthModal';
 import { CallModal } from './components/CallModal';
-import { PullToRefreshShell } from './components/PullToRefreshShell';
+import { LeaderboardModal } from './components/LeaderboardModal';
+import { ConsentRequestModal } from './components/ConsentRequestModal';
+import {
+  ConsentRequestPayload,
+  respondToConsentRequest,
+  subscribeToIncomingConsentRequests,
+} from './services/consentService';
 
 import { User, Room, Message, GiftItem, VipTier, SpeakerSeat, FriendRequest, DailyMission, UnreadSenderSummary } from './types/chat';
 import { INITIAL_ROOMS, getOrCreateUser, isUserAdminOrOwner } from './data/seedData';
@@ -54,8 +60,7 @@ import {
   setRoomBackgroundTheme,
   setRoomLockState,
   subscribeToAllRoomLocks,
-  contributeToSharedRoomMission,
-  refreshHomeDataFromFirebase
+  contributeToSharedRoomMission
 } from './services/firebase';
 
 function areUserListsEqual(a: User[], b: User[]): boolean {
@@ -266,6 +271,8 @@ export default function App() {
   const [isPrivateChatDrawerOpen, setIsPrivateChatDrawerOpen] = useState(false);
   const [isRadioModalOpen, setIsRadioModalOpen] = useState(false);
   const [selectedProfileUser, setSelectedProfileUser] = useState<User | null>(null);
+  const [isLeaderboardOpen, setIsLeaderboardOpen] = useState(false);
+  const [incomingConsentRequest, setIncomingConsentRequest] = useState<ConsentRequestPayload | null>(null);
   const [isPhoneAuthOpen, setIsPhoneAuthOpen] = useState(false);
   const [isWelcomeAuthOpen, setIsWelcomeAuthOpen] = useState<boolean>(() => {
     if (typeof window === 'undefined') return false;
@@ -1072,6 +1079,32 @@ export default function App() {
     };
   }, [activeRoom?.id, currentUser.id]);
 
+  // Listen for incoming consent requests (Audio Call / Video Call / Send Image)
+  useEffect(() => {
+    if (!currentUser.id) return;
+    const unsub = subscribeToIncomingConsentRequests(currentUser.id, (req) => {
+      sounds.playMessageReceived();
+      setIncomingConsentRequest(req);
+    });
+    return () => unsub();
+  }, [currentUser.id]);
+
+  // Listen for real-time WebSocket Luxury & Interactive Fullscreen Gift broadcasts in active room
+  useEffect(() => {
+    if (!activeRoom?.id) return;
+    const unsub = realtimeSocket.subscribeToLuxuryGiftBroadcasts(activeRoom.id, (giftData) => {
+      if (!giftData?.gift) return;
+      if (giftData.senderId === currentUserRef.current.id) return;
+      setActiveFullscreenGift({
+        gift: giftData.gift,
+        senderName: giftData.senderName || 'عضو',
+        recipientName: giftData.recipientName || activeRoom.title,
+      });
+      sounds.playGiftFanfare();
+    });
+    return () => unsub();
+  }, [activeRoom?.id]);
+
   // Realtime Broadcast Listener (Gifts, Room deletion)
   useEffect(() => {
     const channel = new BroadcastChannel('arab_egypt_chat_bus');
@@ -1229,7 +1262,13 @@ export default function App() {
       description: `خصم ${isOwner ? 0 : gift.cost} كوينز من رصيدك`
     });
 
-    // Broadcast across tabs/users
+    // Broadcast room-wide across all connected WebSocket clients + tabs
+    realtimeSocket.sendLuxuryGiftBroadcast(activeRoom.id, {
+      gift,
+      senderId: currentUser.id,
+      senderName: currentUser.name,
+      recipientName,
+    });
     try {
       const channel = new BroadcastChannel('arab_egypt_chat_bus');
       channel.postMessage({
@@ -1495,79 +1534,7 @@ export default function App() {
     setCurrentTab(tab);
   }, []);
 
-  const isPullToRefreshEnabled =
-    !activeRoom &&
-    !isPrivateChatDrawerOpen &&
-    !isAdminOpen &&
-    !isWalletOpen &&
-    !isVipOpen &&
-    !isGiftModalOpen &&
-    !isCreateRoomOpen &&
-    !isNotificationsOpen &&
-    !isOnlineUsersOpen &&
-    !isRadioModalOpen &&
-    !selectedProfileUser &&
-    !isPhoneAuthOpen &&
-    !isWelcomeAuthOpen &&
-    !isDailyMissionsOpen &&
-    !isFriendRequestsOpen &&
-    !isPrivatePromptOpen &&
-    !isLogoutModalOpen &&
-    !incomingCall;
-
-  const handlePullToRefresh = useCallback(async () => {
-    const activeUser = currentUserRef.current;
-    realtimeSocket.registerUser(activeUser);
-
-    const [refreshRes] = await Promise.allSettled([
-      refreshHomeDataFromFirebase(activeUser),
-      new Promise<void>((resolve) => setTimeout(resolve, 450))
-    ]);
-
-    if (refreshRes.status === 'fulfilled') {
-      const { visitorsCount, onlineUsers, roomLocks } = refreshRes.value;
-
-      if (typeof visitorsCount === 'number' && visitorsCount > 0) {
-        setCumulativeVisitorsCount((prev) => {
-          const next = Math.max(prev, visitorsCount, 15480);
-          if (next === prev) return prev;
-          try {
-            localStorage.setItem('shat_masr_cumulative_visitors', String(next));
-          } catch {}
-          return next;
-        });
-      }
-
-      if (onlineUsers.length > 0) {
-        setGlobalOnlineUsers((prev) => {
-          const map = new Map<string, User>();
-          prev.forEach((u) => map.set(u.id, u));
-          onlineUsers.forEach((u) => map.set(u.id, u));
-          const nextList = Array.from(map.values());
-          return areUserListsEqual(prev, nextList) ? prev : nextList;
-        });
-      }
-
-      if (roomLocks) {
-        setRooms((prev) => {
-          let changed = false;
-          const next = prev.map((r) => {
-            if (typeof roomLocks[r.id] !== 'boolean' && !r.isLocked) return r;
-            const nextLocked = Boolean(roomLocks[r.id]);
-            if (Boolean(r.isLocked) === nextLocked) return r;
-            changed = true;
-            return { ...r, isLocked: nextLocked };
-          });
-          return changed ? next : prev;
-        });
-      }
-    }
-
-    toast.success('تم تحديث الغرف والبيانات بنجاح ✨', {
-      id: 'pull_refresh_done',
-      duration: 2000
-    });
-  }, []);
+  const openLeaderboard = useCallback(() => setIsLeaderboardOpen(true), []);
 
   const confirmLogout = async () => {
     setIsLogoutModalOpen(false);
@@ -1614,6 +1581,7 @@ export default function App() {
         return;
       }
       if (isRadioModalOpen) { setIsRadioModalOpen(false); return; }
+      if (isLeaderboardOpen) { setIsLeaderboardOpen(false); return; }
       if (selectedProfileUser) { setSelectedProfileUser(null); return; }
       if (isPhoneAuthOpen) { setIsPhoneAuthOpen(false); return; }
       if (isPrivatePromptOpen) { setIsPrivatePromptOpen(false); return; }
@@ -1644,9 +1612,9 @@ export default function App() {
     return () => window.removeEventListener('popstate', handlePopState);
   }, [
     isAdminOpen, isWalletOpen, isVipOpen, isGiftModalOpen, isCreateRoomOpen,
-    isNotificationsOpen, isOnlineUsersOpen, isPrivateChatDrawerOpen, isRadioModalOpen, selectedProfileUser,
-    isPhoneAuthOpen, isPrivatePromptOpen, isDailyMissionsOpen,
-    isFriendRequestsOpen, isInsidePrivateChat, activeRoom, currentTab
+    isNotificationsOpen, isOnlineUsersOpen, isPrivateChatDrawerOpen, isRadioModalOpen,
+    isLeaderboardOpen, selectedProfileUser, isPhoneAuthOpen, isPrivatePromptOpen,
+    isDailyMissionsOpen, isFriendRequestsOpen, isInsidePrivateChat, activeRoom, currentTab
   ]);
 
   // Friend Request Accept / Decline
@@ -1726,6 +1694,7 @@ export default function App() {
           onOpenNotifications={openNotifications}
           onOpenOnlineUsers={openOnlineUsers}
           onOpenFriendRequests={openFriendRequests}
+          onOpenLeaderboard={openLeaderboard}
           onOpenAdmin={openAdmin}
           pendingFriendRequestsCount={pendingFriendRequests.length}
           onlineUsersCount={globalOnlineUsers.length}
@@ -1769,28 +1738,24 @@ export default function App() {
 
       {/* 2. Main View Routing: Home Page (RoomsView) remains persistently mounted & frozen to prevent re-mounts/reloads */}
       <main className={activeRoom ? "w-full h-screen overflow-hidden" : "max-w-7xl mx-auto min-h-[calc(100vh-56px)]"}>
-        <PullToRefreshShell
-          enabled={isPullToRefreshEnabled}
-          onRefresh={handlePullToRefresh}
-          className={activeRoom ? 'h-full' : ''}
-        >
-          {/* Frozen Home Page Container (always mounted; hidden via CSS when inside a room or on another tab) */}
-          <div className={!activeRoom && currentTab === 'rooms' ? '' : 'hidden'}>
-            <RoomsView
-              rooms={rooms}
-              currentUser={currentUser}
-              onlineUsers={globalOnlineUsers}
-              onSelectRoom={handleSelectRoom}
-              onOpenPrivateChatWith={handleOpenPrivateChatWith}
-              onOpenWallet={openWallet}
-              onOpenVip={openVip}
-              onOpenMissions={openMissions}
-              totalActiveUsersCount={globalOnlineUsers.length}
-              cumulativeVisitorsCount={cumulativeVisitorsCount}
-              onOpenOnlineUsers={openOnlineUsers}
-              onClaimSharedRewardCoins={handleClaimSharedRewardCoins}
-            />
-          </div>
+        {/* Frozen Home Page Container (always mounted; hidden via CSS when inside a room or on another tab) */}
+        <div className={!activeRoom && currentTab === 'rooms' ? '' : 'hidden'}>
+          <RoomsView
+            rooms={rooms}
+            currentUser={currentUser}
+            onlineUsers={globalOnlineUsers}
+            onSelectRoom={handleSelectRoom}
+            onOpenPrivateChatWith={handleOpenPrivateChatWith}
+            onOpenWallet={openWallet}
+            onOpenVip={openVip}
+            onOpenLeaderboard={openLeaderboard}
+            onOpenMissions={openMissions}
+            totalActiveUsersCount={globalOnlineUsers.length}
+            cumulativeVisitorsCount={cumulativeVisitorsCount}
+            onOpenOnlineUsers={openOnlineUsers}
+            onClaimSharedRewardCoins={handleClaimSharedRewardCoins}
+          />
+        </div>
 
           {activeRoom ? (
             <RoomActiveView
@@ -1865,7 +1830,6 @@ export default function App() {
               )}
             </>
           )}
-        </PullToRefreshShell>
       </main>
 
       {/* 3. Bottom Navigation Bar - Hidden inside active room OR active 1-on-1 private chat */}
@@ -2060,6 +2024,25 @@ export default function App() {
         onRequestJoin={handleRequestJoinPrivateRoom}
       />
 
+
+      {/* Top 10 Leaderboard (الكبار) Modal */}
+      <LeaderboardModal
+        isOpen={isLeaderboardOpen}
+        onClose={() => setIsLeaderboardOpen(false)}
+        currentUser={currentUser}
+        onSelectUser={(u) => setSelectedProfileUser(u)}
+      />
+
+      {/* Consent Request Popup (Audio Call / Video Call / Send Image Approval + 5-min Cooldown) */}
+      <ConsentRequestModal
+        request={incomingConsentRequest}
+        onRespond={(approved) => {
+          if (incomingConsentRequest) {
+            respondToConsentRequest(incomingConsentRequest, currentUser.name, approved);
+            setIncomingConsentRequest(null);
+          }
+        }}
+      />
 
       {/* Incoming WebRTC Call Modal */}
       {incomingCall && (

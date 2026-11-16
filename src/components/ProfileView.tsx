@@ -20,13 +20,52 @@ import {
   Trophy,
   Bell,
   BellOff,
-  Activity
+  Activity,
+  Music,
+  Play,
+  Square,
+  Image as ImageIcon
 } from 'lucide-react';
 import { User } from '../types/chat';
 import { sounds } from '../utils/soundEffects';
+import {
+  getRankDisplayMeta,
+  hasPrivilegedRank,
+  PROFILE_BANNER_PRESETS,
+  resolveBannerStyle
+} from '../utils/userRanks';
+import { AvatarWithFrame } from './AvatarWithFrame';
 import { PWAInstallButton } from './PWAInstallButton';
 import { updateNotificationPreferences, updateUserActivityStatus } from '../services/firebase';
 import { toast } from 'sonner';
+
+const FAVORITE_MUSIC_PRESETS = [
+  {
+    id: 'none',
+    label: 'بدون موسيقى مفضلة',
+    url: ''
+  },
+  {
+    id: 'umm_kulthum',
+    label: 'أم كلثوم — أنت الحب 🎙️',
+    url: 'https://archive.org/download/umm-kulthum-enta-el-hobal-ahat/01%20Inta%20Al%20Hob.mp3'
+  },
+  {
+    id: 'abdel_halim',
+    label: 'عبد الحليم — على حسب وداد 🎻',
+    url: 'https://archive.org/download/y-2mate.com-ala-hesb-wedad-abdel-halim-hafez_202305/y2mate.com%20-%20Ala%20Hesb%20Wedad%20%20Abdel%20Halim%20Hafez%20%20%D8%B9%D9%84%D9%89%20%D8%AD%D8%B3%D8%A8%20%D9%88%D8%AF%D8%A7%D8%AF%20%D9%82%D9%84%D8%A8%D9%89%20%20%D8%B9%D8%A8%D8%AF%20%D8%A7%D9%84%D8%AD%D9%84%D9%8A%D9%85%20%D8%AD%D8%A7%D9%81%D8%B8.mp3'
+  },
+  {
+    id: 'amr_diab',
+    label: 'عمرو دياب — راجعين 🎵',
+    url: 'https://archive.org/download/ragein/01%20Ragein.mp3'
+  },
+  {
+    id: 'khaleeji',
+    label: 'طرب خليجي — يا ابن الأوادم ✨',
+    url: 'https://archive.org/download/y-2meta.app-amr-diab-amarain-official-music-video-hd-version-128-kbps/Y2meta.app%20-%20%D8%B9%D8%A8%D8%AF%D8%A7%D9%84%D9%85%D8%AC%D9%8A%D8%AF%20%D8%B9%D8%A8%D8%AF%D8%A7%D9%84%D9%84%D9%87%20-%20%D9%8a%D8%A7%20%D8%A3%D8%A8%D9%86%20%D8%A7%D9%84%D8%A7%D9%88%D8%A7%D8%AF%D9%85%20%28%D8%A3%D9%84%D8%A8%D9%88%D9%85%20%D8%B9%D8%A7%D9%84%D9%85%20%D9%85%D9%88%D8%A7%D8%B2%D9%8a%29%20_%202021%20%28128%20kbps%29.mp3'
+  }
+];
 
 interface ProfileViewProps {
   currentUser: User;
@@ -100,8 +139,12 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   const [fontPreference, setFontPreference] = useState(currentUser.fontPreference || 'cairo');
   const [selectedWallpaper, setSelectedWallpaper] = useState(currentUser.profileWallpaper || '/assets/wallpapers/nature_nile_sunset.jpg');
   const [selectedFrame, setSelectedFrame] = useState(currentUser.frameStyle || 'border-slate-600');
+  const [profileBanner, setProfileBanner] = useState(currentUser.profileBanner || 'royal_gold');
+  const [favoriteMusicUrl, setFavoriteMusicUrl] = useState(currentUser.favoriteMusicUrl || '');
   const [avatarUrl, setAvatarUrl] = useState(currentUser.avatar);
   const [allowPrivateMessages, setAllowPrivateMessages] = useState<boolean>(currentUser.allowPrivateMessages !== false);
+  const previewAudioRef = useRef<HTMLAudioElement | null>(null);
+  const [isPreviewPlaying, setIsPreviewPlaying] = useState(false);
   const [notifyDMs, setNotifyDMs] = useState<boolean>(() => {
     try {
       const raw = localStorage.getItem(`user_notification_prefs_${currentUser.id}`);
@@ -141,12 +184,40 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
     });
   };
 
-  const isVipUser = currentUser.role === 'vip_diamond' || 
-                    currentUser.role === 'vip_gold' || 
-                    currentUser.role === 'vip_silver' || 
-                    currentUser.role === 'vip_bronze' || 
-                    currentUser.role === 'owner' || 
-                    currentUser.role === 'super_admin';
+  useEffect(() => {
+    return () => {
+      if (previewAudioRef.current) {
+        previewAudioRef.current.pause();
+        previewAudioRef.current = null;
+      }
+    };
+  }, []);
+
+  const toggleMusicPreview = () => {
+    if (!favoriteMusicUrl.trim()) return;
+    if (isPreviewPlaying && previewAudioRef.current) {
+      previewAudioRef.current.pause();
+      setIsPreviewPlaying(false);
+      return;
+    }
+    if (previewAudioRef.current) {
+      previewAudioRef.current.pause();
+    }
+    const audio = new Audio(favoriteMusicUrl.trim());
+    audio.volume = 0.65;
+    audio.onended = () => setIsPreviewPlaying(false);
+    audio.onerror = () => {
+      setIsPreviewPlaying(false);
+      toast.error('تعذر تشغيل هذا الرابط الصوتي حالياً');
+    };
+    previewAudioRef.current = audio;
+    audio.play().then(() => setIsPreviewPlaying(true)).catch(() => {
+      setIsPreviewPlaying(false);
+    });
+  };
+
+  const isVipUser = hasPrivilegedRank(currentUser.role);
+  const rankMeta = getRankDisplayMeta(currentUser.role, currentUser.vipBadge);
 
   const countries = [
     { name: 'مصر', flag: '🇪🇬' },
@@ -221,6 +292,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
       fontPreference,
       profileWallpaper: selectedWallpaper,
       frameStyle: selectedFrame,
+      ...(isVipUser ? { profileBanner, favoriteMusicUrl: favoriteMusicUrl.trim() } : {}),
       avatar: avatarUrl,
       allowPrivateMessages,
       notificationPrefs: { directMessages: notifyDMs, gifts: notifyGifts } as any
@@ -242,14 +314,19 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
 
       {/* Header Profile Hero Card */}
       <div className="relative overflow-hidden rounded-3xl border border-slate-200 shadow-md bg-white">
-        {/* Cover Wallpaper */}
-        <div className="h-28 sm:h-32 w-full overflow-hidden relative">
-          <img 
-            src={selectedWallpaper} 
-            alt="Cover" 
-            className="w-full h-full object-cover"
-          />
-          <div className="absolute inset-0 bg-gradient-to-t from-white via-white/30 to-black/10" />
+        {/* Cover Wallpaper or Privileged Custom Banner */}
+        <div
+          className="h-28 sm:h-32 w-full overflow-hidden relative"
+          style={isVipUser ? resolveBannerStyle(profileBanner) : undefined}
+        >
+          {(!isVipUser || !resolveBannerStyle(profileBanner)) && (
+            <img 
+              src={selectedWallpaper} 
+              alt="Cover" 
+              className="w-full h-full object-cover"
+            />
+          )}
+          <div className="absolute inset-0 bg-gradient-to-t from-white via-white/30 to-black/15" />
         </div>
 
         {/* Profile Info Row */}
@@ -257,23 +334,19 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
           <div className="flex items-end gap-3">
             {/* Avatar with Click to Change */}
             <div className="relative group cursor-pointer" onClick={() => { setShowAvatarModal(true); setAvatarModalMode('choose'); }}>
-              <div className={`w-20 h-20 rounded-full overflow-hidden border-4 bg-white shrink-0 relative ${selectedFrame} transition-transform group-hover:scale-105 shadow-lg`}>
-                <img 
-                  src={avatarUrl} 
-                  alt={name} 
-                  className="w-full h-full object-cover" 
-                  referrerPolicy="no-referrer"
-                />
-              </div>
-              <div className="absolute inset-0 rounded-full bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity text-white text-[10px] font-bold">
+              <AvatarWithFrame
+                user={{ ...currentUser, avatar: avatarUrl, frameStyle: selectedFrame, status: activityStatus }}
+                size="lg"
+                showOnlineDot
+              />
+              <div className="absolute inset-0 rounded-full bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity text-white text-[10px] font-bold z-20">
                 تغيير 📷
               </div>
-              <span className={`absolute bottom-0 right-1 w-3.5 h-3.5 ${currentStatusMeta.dotClass} border-2 border-white rounded-full shadow-sm`} />
             </div>
 
             <div className="space-y-0.5">
               <div className="flex items-center gap-1.5 flex-wrap">
-                <h2 className="text-base sm:text-lg font-black text-slate-900">{name}</h2>
+                <h2 className={`text-base sm:text-lg ${rankMeta.nameColorClass}`}>{name}</h2>
                 <span className="text-base">{countryFlag}</span>
                 <span className={`text-[10px] font-bold border px-2 py-0.5 rounded-full flex items-center gap-1 ${currentStatusMeta.badgeClass}`}>
                   <span className={`w-1.5 h-1.5 rounded-full ${currentStatusMeta.dotClass}`} />
@@ -281,10 +354,13 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                 </span>
               </div>
               <div className="flex items-center gap-1.5 text-xs">
-                <span className="text-amber-700 font-black flex items-center gap-1">
-                  <Crown className="w-3.5 h-3.5 text-amber-500" />
-                  {currentUser.vipBadge || 'عضو نشط 🌟'}
-                </span>
+                {rankMeta.isPrivileged ? (
+                  <span className={`px-2 py-0.5 rounded-full text-[10.5px] font-black border flex items-center gap-1 ${rankMeta.badgeClass}`}>
+                    <span>{rankMeta.label}</span>
+                  </span>
+                ) : (
+                  <span className="text-slate-600 font-bold text-[11px]">{rankMeta.label}</span>
+                )}
                 <span className="text-slate-400">•</span>
                 <span className="text-slate-500 text-[11px]">@{currentUser.username}</span>
               </div>
@@ -602,6 +678,143 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                     </button>
                   );
                 })}
+              </div>
+            </div>
+
+            {/* Privileged VIP / Admin Custom Banner & Favorite Music */}
+            <div className="pt-3 border-t border-slate-100 space-y-4">
+              {/* Custom Profile Banner */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-black text-slate-800 flex items-center gap-1.5">
+                    <ImageIcon className="w-3.5 h-3.5 text-amber-500" />
+                    <span>بانر البروفايل الحصري (Banner)</span>
+                  </label>
+                  {!isVipUser && (
+                    <span className="text-[10px] text-amber-700 font-bold flex items-center gap-1">
+                      <Lock className="w-2.5 h-2.5" /> حصري لـ VIP والإدارة
+                    </span>
+                  )}
+                </div>
+
+                {isVipUser ? (
+                  <div className="space-y-2">
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                      {PROFILE_BANNER_PRESETS.map((preset) => (
+                        <button
+                          key={preset.id}
+                          type="button"
+                          onClick={() => setProfileBanner(preset.id)}
+                          style={{ background: preset.preview }}
+                          className={`p-2.5 rounded-xl text-white text-[10.5px] font-black text-center border-2 transition-all cursor-pointer ${
+                            profileBanner === preset.id
+                              ? 'border-amber-400 ring-2 ring-amber-300 scale-[1.02]'
+                              : 'border-white/40 opacity-90 hover:opacity-100'
+                          }`}
+                        >
+                          {preset.label}
+                        </button>
+                      ))}
+                    </div>
+                    <input
+                      type="url"
+                      value={profileBanner.startsWith('http') ? profileBanner : ''}
+                      onChange={(e) => setProfileBanner(e.target.value)}
+                      placeholder="أو الصق رابط صورة بانر مخصص (https://...)"
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 focus:outline-none focus:border-indigo-500"
+                    />
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={onOpenVip}
+                    className="w-full p-2.5 rounded-xl bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-800 text-xs font-bold flex items-center justify-center gap-1.5"
+                  >
+                    <Crown className="w-3.5 h-3.5 text-amber-500" />
+                    <span>قم بالترقية لـ VIP لتخصيص بانر ملفك الشخصي</span>
+                  </button>
+                )}
+              </div>
+
+              {/* Custom Favorite Profile Music */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-black text-slate-800 flex items-center gap-1.5">
+                    <Music className="w-3.5 h-3.5 text-purple-600" />
+                    <span>موسيقى البروفايل المفضلة 🎵</span>
+                  </label>
+                  {!isVipUser && (
+                    <span className="text-[10px] text-amber-700 font-bold flex items-center gap-1">
+                      <Lock className="w-2.5 h-2.5" /> حصري لـ VIP والإدارة
+                    </span>
+                  )}
+                </div>
+
+                {isVipUser ? (
+                  <div className="space-y-2">
+                    <select
+                      value={
+                        FAVORITE_MUSIC_PRESETS.some((p) => p.url === favoriteMusicUrl)
+                          ? favoriteMusicUrl
+                          : '__custom__'
+                      }
+                      onChange={(e) => {
+                        if (e.target.value !== '__custom__') {
+                          setFavoriteMusicUrl(e.target.value);
+                        }
+                      }}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-900 focus:outline-none focus:border-purple-500"
+                    >
+                      {FAVORITE_MUSIC_PRESETS.map((p) => (
+                        <option key={p.id} value={p.url}>
+                          {p.label}
+                        </option>
+                      ))}
+                      {favoriteMusicUrl &&
+                        !FAVORITE_MUSIC_PRESETS.some((p) => p.url === favoriteMusicUrl) && (
+                          <option value="__custom__">رابط مخصص 🎶</option>
+                        )}
+                    </select>
+
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="url"
+                        value={favoriteMusicUrl}
+                        onChange={(e) => setFavoriteMusicUrl(e.target.value)}
+                        placeholder="أو الصق رابط ملف MP3 مباشر..."
+                        className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 focus:outline-none focus:border-purple-500"
+                      />
+                      {favoriteMusicUrl.trim() && (
+                        <button
+                          type="button"
+                          onClick={toggleMusicPreview}
+                          className="px-3 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-black flex items-center gap-1 shrink-0 cursor-pointer"
+                        >
+                          {isPreviewPlaying ? (
+                            <>
+                              <Square className="w-3.5 h-3.5" />
+                              <span>إيقاف</span>
+                            </>
+                          ) : (
+                            <>
+                              <Play className="w-3.5 h-3.5" />
+                              <span>تجربة</span>
+                            </>
+                          )}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={onOpenVip}
+                    className="w-full p-2.5 rounded-xl bg-purple-50 hover:bg-purple-100 border border-purple-200 text-purple-800 text-xs font-bold flex items-center justify-center gap-1.5"
+                  >
+                    <Music className="w-3.5 h-3.5 text-purple-600" />
+                    <span>ميزة إضافة نغمة موسيقية في البروفايل متاحة لكبار الشخصيات VIP</span>
+                  </button>
+                )}
               </div>
             </div>
           </div>

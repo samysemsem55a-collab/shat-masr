@@ -47,6 +47,10 @@ service cloud.firestore {
       match /messages/{messageId} {
         allow read, write: if true;
       }
+
+      match /presence/{presenceId} {
+        allow read, write: if true;
+      }
     }
 
     // Direct Messages security: Read and write conversations and their messages

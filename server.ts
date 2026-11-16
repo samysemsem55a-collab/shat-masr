@@ -966,6 +966,33 @@ wss.on('connection', (ws: WebSocket) => {
           break;
         }
 
+        case 'CONSENT_SIGNAL': {
+          const { targetUserId, kind, payload: consentPayload } = payload || {};
+          if (targetUserId && kind && consentPayload) {
+            const delivered = sendToUser(targetUserId, {
+              type: 'CONSENT_SIGNAL',
+              kind,
+              payload: consentPayload
+            });
+            if (!delivered) {
+              broadcastToAll({ type: 'CONSENT_SIGNAL', kind, payload: consentPayload }, ws);
+            }
+          }
+          break;
+        }
+
+        case 'LUXURY_GIFT_BROADCAST': {
+          const { roomId, giftData } = payload || {};
+          if (roomId && giftData) {
+            broadcastToRoom(roomId, {
+              type: 'LUXURY_GIFT_BROADCAST',
+              roomId,
+              giftData
+            }, ws);
+          }
+          break;
+        }
+
         case 'CLEAR_ROOM_MESSAGES': {
           const { roomId } = payload || {};
           if (roomId) {

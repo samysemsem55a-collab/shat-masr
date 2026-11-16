@@ -52,10 +52,13 @@ import confetti from 'canvas-confetti';
 import { toast } from 'sonner';
 import { Room, Message, User, SpeakerSeat } from '../types/chat';
 import { isUserAdminOrOwner, LUXURY_GIFTS } from '../data/seedData';
-import { STICKERS_CATALOG, StickerItem } from '../data/stickers';
+import { STICKERS_CATALOG } from '../data/stickers';
 import { JoinRequestsManagerModal } from './JoinRequestsManagerModal';
 import { ArabicMusicPlayerModal } from './ArabicMusicPlayerModal';
 import { ChatWallpapersModal } from './ChatWallpapersModal';
+import { AvatarWithFrame } from './AvatarWithFrame';
+import { getRankDisplayMeta, hasPrivilegedRank } from '../utils/userRanks';
+import { ANIMATED_INLINE_EMOJIS, InlineRichText } from './InlineRichText';
 import { 
   getWallpaperStyleById, 
   ROOM_BACKGROUND_THEMES, 
@@ -104,7 +107,7 @@ interface RoomActiveViewProps {
 
 const EMOJI_CATEGORIES = {
   faces: ['😊', '😂', '😍', '❤️', '🔥', '✨', '🌹', '👍', '👏', '🎉', '🥰', '😎', '🤲', '🤍', '👑', '💯', '🙌', '😘', '🤩', '🌸', '☕', '💎', '🕊️', '🌿'],
-  flags: ['🇪🇬', '🇸🇦', '🇦🇪', '🇲🇦', '🇮🇶', '🇰🇼', '🇩🇿', '🇸🇾', '🇯🇴', '🇵🇸', 'لبي', 'تونس', 'عمان', 'بحرين', 'قطر', 'يمن', 'سودان', 'ليبيا', '🕌', '🕋', '📿', '🧿', '🦁', '🦅'],
+  flags: ['🇪🇬', '🇸🇦', '🇦🇪', '🇲🇦', '🇮🇶', '🇰🇼', '🇩🇿', '🇸🇾', '🇯🇴', '🇵🇸', '🇱🇧', '🇹🇳', '🇴🇲', '🇧🇭', '🇶🇦', '🇾🇪', '🇸🇩', '🇱🇾', '🕌', '🕋', '📿', '🧿', '🦁', '🦅'],
   fun: ['😂', '🤣', '😭', '🥺', '😡', '😱', '🥳', '🤔', '👀', '💪', '🤝', '👌', '⚡', '🌟', '💥', '🎶', '🎵', '🎤', '🏆', '🥇', '💫', '🎯', '🚀', '⭐']
 };
 
@@ -164,42 +167,56 @@ export const getRoomContainerStyle = (
 };
 
 const SENDER_STYLE_PALETTE = [
-  { name: 'text-rose-600', ring: 'border-rose-400', badge: '💎' },
-  { name: 'text-sky-600', ring: 'border-sky-400', badge: '' },
-  { name: 'text-fuchsia-600', ring: 'border-fuchsia-400', badge: '' },
-  { name: 'text-teal-600', ring: 'border-teal-400', badge: '' },
-  { name: 'text-indigo-600', ring: 'border-indigo-400', badge: '⭐' },
-  { name: 'text-amber-700', ring: 'border-amber-400', badge: '🏅' },
-  { name: 'text-emerald-600', ring: 'border-emerald-400', badge: '' },
-  { name: 'text-purple-600', ring: 'border-purple-400', badge: '' },
+  { name: 'text-rose-600' },
+  { name: 'text-sky-600' },
+  { name: 'text-fuchsia-600' },
+  { name: 'text-teal-600' },
+  { name: 'text-indigo-600' },
+  { name: 'text-amber-700' },
+  { name: 'text-emerald-600' },
+  { name: 'text-purple-600' },
 ];
 
 const SENDER_STYLE_PALETTE_DARK = [
-  { name: 'text-rose-300', ring: 'border-rose-400', badge: '💎' },
-  { name: 'text-sky-300', ring: 'border-sky-400', badge: '' },
-  { name: 'text-fuchsia-300', ring: 'border-fuchsia-400', badge: '' },
-  { name: 'text-teal-300', ring: 'border-teal-400', badge: '' },
-  { name: 'text-indigo-300', ring: 'border-indigo-400', badge: '⭐' },
-  { name: 'text-amber-300', ring: 'border-amber-400', badge: '🏅' },
-  { name: 'text-emerald-300', ring: 'border-emerald-400', badge: '' },
-  { name: 'text-purple-300', ring: 'border-purple-400', badge: '' },
+  { name: 'text-rose-300' },
+  { name: 'text-sky-300' },
+  { name: 'text-fuchsia-300' },
+  { name: 'text-teal-300' },
+  { name: 'text-indigo-300' },
+  { name: 'text-amber-300' },
+  { name: 'text-emerald-300' },
+  { name: 'text-purple-300' },
 ];
 
-function getSenderChatStyle(senderId: string, isVip: boolean, isDark: boolean = false) {
+function getSenderChatStyle(
+  senderId: string,
+  senderRole?: string,
+  senderVipBadge?: string,
+  isDark: boolean = false
+) {
+  const rankMeta = getRankDisplayMeta(senderRole, senderVipBadge);
+  if (rankMeta.isPrivileged) {
+    return {
+      isPrivileged: true,
+      name: isDark ? rankMeta.nameColorDarkClass : rankMeta.nameColorClass,
+      rowBg: isDark ? rankMeta.msgBgDarkClass : rankMeta.msgBgClass,
+      badge: rankMeta.shortIcon,
+      rankMeta,
+    };
+  }
   let hash = 0;
   for (let i = 0; i < (senderId || 'u').length; i++) {
     hash = (hash * 31 + senderId.charCodeAt(i)) >>> 0;
   }
   const palette = isDark ? SENDER_STYLE_PALETTE_DARK : SENDER_STYLE_PALETTE;
   const picked = palette[hash % palette.length];
-  if (isVip) {
-    return {
-      name: picked.name,
-      ring: 'border-amber-400 ring-1 ring-amber-300/60',
-      badge: picked.badge || '💎'
-    };
-  }
-  return picked;
+  return {
+    isPrivileged: false,
+    name: picked.name,
+    rowBg: '',
+    badge: '',
+    rankMeta,
+  };
 }
 
 export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
@@ -785,37 +802,6 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
       handleInputChange(inputText + emoji);
       inputRef.current?.focus();
     }
-  };
-
-  const handleSendSticker = (sticker: StickerItem) => {
-    if (currentUser.isBanned || currentUser.isMuted) return;
-    sounds.playMessageSent();
-    onSendMessage({
-      roomId: room.id,
-      senderId: currentUser.id,
-      senderName: currentUser.name,
-      senderAvatar: currentUser.avatar,
-      senderRole: currentUser.role,
-      senderVipBadge: currentUser.vipBadge,
-      badges: currentUser.badges || ['عضو نشط'],
-      type: 'sticker',
-      content: sticker.emoji,
-      text: sticker.label,
-      stickerId: sticker.id,
-      stickerEmoji: sticker.emoji,
-      stickerLabel: sticker.label,
-      stickerAnimation: sticker.animationClass,
-      replyTo: replyingTo ? {
-        id: replyingTo.id,
-        senderName: replyingTo.senderName,
-        content: replyingTo.content || replyingTo.text || '',
-        type: replyingTo.type
-      } : undefined,
-      timestamp: Date.now(),
-      status: 'read'
-    });
-    updateReplyingTo(null);
-    setIsEmojiPickerOpen(false);
   };
 
   // Instant Welcoming Phrase Sender (الجمل الترحيبية)
@@ -1815,34 +1801,8 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
             );
           }
 
-          const isVipSender = Boolean(
-            msg.senderVipBadge ||
-              (msg as any).isVip ||
-              (msg.senderRole &&
-                (msg.senderRole.includes('vip') ||
-                  msg.senderRole.includes('VIP') ||
-                  msg.senderRole === 'owner' ||
-                  msg.senderRole === 'super_admin'))
-          );
-
-          const isNewUserSender = Boolean(
-            msg.senderId !== 'system_bot' &&
-              (msg.senderRole === 'guest' ||
-                msg.senderId?.startsWith('guest_') ||
-                msg.senderId?.startsWith('visitor_') ||
-                msg.senderVipBadge?.includes('زائر') ||
-                msg.senderVipBadge?.includes('جديد') ||
-                msg.badges?.some((b) => b.includes('جديد') || b.includes('زائر')))
-          );
-
-          const hasGiftContent = Boolean(
-            msg.gift ||
-              msg.type === 'gift' ||
-              (typeof msg.content === 'string' &&
-                (msg.content.includes('🎁') || msg.content.includes('هدية')))
-          );
-
-          const senderStyle = getSenderChatStyle(msg.senderId, isVipSender, isDarkRoomBg);
+          const senderStyle = getSenderChatStyle(msg.senderId, msg.senderRole, msg.senderVipBadge, isDarkRoomBg);
+          const isVipSender = senderStyle.isPrivileged;
 
           return (
             <motion.div
@@ -1850,32 +1810,30 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.18, ease: 'easeOut' }}
-              className={`flex items-start gap-2 justify-start group py-1 px-1 rounded-xl transition-colors ${
+              className={`flex items-start gap-2 justify-start group py-1 px-1.5 rounded-xl transition-colors ${
                 highlightedMsgId === msg.id
                   ? (isDarkRoomBg ? 'bg-amber-400/20 ring-1 ring-amber-400' : 'bg-amber-100/80 ring-1 ring-amber-400')
                   : isPrivateMsg
                   ? (isDarkRoomBg ? 'bg-amber-500/15 border border-amber-400/35 px-2' : 'bg-amber-50/75 border border-amber-200/70 px-2')
+                  : senderStyle.rowBg
+                  ? senderStyle.rowBg
                   : (isDarkRoomBg ? 'hover:bg-white/[0.06]' : 'hover:bg-slate-900/[0.03]')
               }`}
             >
-              {/* Circular Avatar with Colored Ring */}
-              <div 
+              {/* Circular Avatar (Animated Gradient Ring strictly for VIP/Admin/Owner; plain for regular members/guests) */}
+              <AvatarWithFrame
+                user={{
+                  id: msg.senderId,
+                  name: msg.senderName,
+                  avatar: msg.senderAvatar,
+                  role: msg.senderRole,
+                  vipBadge: msg.senderVipBadge,
+                }}
+                size="sm"
                 onClick={(e) => openUserQuickMenu(msg, e)}
-                className={`w-8 h-8 sm:w-9 sm:h-9 rounded-full overflow-hidden bg-slate-100 border-2 flex items-center justify-center font-black text-xs text-slate-700 shrink-0 mt-0.5 cursor-pointer hover:scale-105 active:scale-95 transition-transform shadow-2xs ${
-                  isVipSender
-                    ? 'border-amber-400 ring-1 ring-amber-300/60'
-                    : isNewUserSender
-                    ? 'border-emerald-400'
-                    : senderStyle.ring
-                }`}
                 title="خيارات التفاعل مع العضو"
-              >
-                {msg.senderAvatar ? (
-                  <img src={msg.senderAvatar} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                ) : (
-                  <span>{msg.senderName.charAt(0)}</span>
-                )}
-              </div>
+                className="mt-0.5 hover:scale-105 active:scale-95 transition-transform"
+              />
 
               {/* Inline Message Flow Container (Classic Arabic Chat Style) */}
               <div
@@ -1947,29 +1905,27 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
                   </div>
                 )}
 
-                {/* Voice Note Player OR Sticker OR Classic Inline [Icon] [Colored Name] : [Black Message Text] [Flag] */}
+                {/* Voice Note Player OR Inline Sticker OR Classic Inline [Rank Icon] [Colored Name] : [Message Text with 1em Animated Emojis] [Flag] */}
                 {msg.type === 'sticker' ? (
-                  <div className="flex items-center flex-wrap gap-2 py-0.5">
+                  <p className={`text-[13.5px] sm:text-sm leading-relaxed font-semibold whitespace-pre-wrap break-words ${isDarkRoomBg ? 'text-white/95' : 'text-slate-900'}`}>
+                    {isVipSender && senderStyle.badge && (
+                      <span className="ml-0.5 text-xs align-middle select-none">
+                        {senderStyle.badge}
+                      </span>
+                    )}
                     <button
                       type="button"
                       onClick={(e) => {
                         e.stopPropagation();
                         openUserQuickMenu(msg, e);
                       }}
-                      className={`text-[13px] font-black cursor-pointer hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 rounded ${senderStyle.name}`}
+                      className={`font-black cursor-pointer hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 rounded inline ${senderStyle.name}`}
                     >
-                      {isVipSender && <span className="ml-0.5">💎</span>}
-                      {msg.senderName}:
+                      {msg.senderName}
                     </button>
-                    <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-2xl bg-white/95 border border-slate-200 shadow-xs">
-                      <span className={`text-3xl select-none ${msg.stickerAnimation || ''}`}>
-                        {msg.stickerEmoji || msg.content}
-                      </span>
-                      {msg.stickerLabel && (
-                        <span className="text-[11px] font-black text-indigo-700">{msg.stickerLabel}</span>
-                      )}
-                    </div>
-                  </div>
+                    <span className={`font-bold mx-1 ${isDarkRoomBg ? 'text-slate-300' : 'text-slate-700'}`}>:</span>
+                    <InlineRichText text={`${msg.stickerEmoji || msg.content || '✨'}${msg.stickerLabel ? ` ${msg.stickerLabel}` : ''}`} />
+                  </p>
                 ) : msg.type === 'voice' ? (
                   <div className="flex items-center flex-wrap gap-1.5 py-0.5">
                     <button
@@ -1980,7 +1936,7 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
                       }}
                       className={`text-[13px] sm:text-sm font-black cursor-pointer hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 rounded ${senderStyle.name}`}
                     >
-                      {isVipSender && <span className="ml-0.5">💎</span>}
+                      {isVipSender && senderStyle.badge && <span className="ml-0.5">{senderStyle.badge}</span>}
                       {msg.senderName}
                     </button>
                     <span className={`font-bold ${isDarkRoomBg ? 'text-slate-300' : 'text-slate-700'}`}>:</span>
@@ -2021,14 +1977,11 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
                   </div>
                 ) : (
                   <p className={`text-[13.5px] sm:text-sm leading-relaxed font-semibold whitespace-pre-wrap break-words ${isDarkRoomBg ? 'text-white/95' : 'text-slate-900'}`}>
-                    {/* Optional Role / VIP Emblem */}
-                    {(isVipSender || senderStyle.badge) && (
+                    {/* Strict Rank Emblem: only for Privileged VIP/Admin/Owner roles */}
+                    {isVipSender && senderStyle.badge && (
                       <span className="ml-0.5 text-xs align-middle select-none">
-                        {isVipSender ? '💎' : senderStyle.badge}
+                        {senderStyle.badge}
                       </span>
-                    )}
-                    {isNewUserSender && !isVipSender && (
-                      <span className="ml-0.5 text-[11px] align-middle select-none" title="عضو جديد">🌟</span>
                     )}
 
                     {/* Distinct Colored Username */}
@@ -2051,9 +2004,9 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
                       </span>
                     )}
 
-                    {/* Message Body Text */}
+                    {/* Message Body Text with 1em Inline Animated Emojis */}
                     <span className={`font-semibold ${isDarkRoomBg ? 'text-white/95' : 'text-slate-900'}`}>
-                      {filterInappropriateText(msg.content)}
+                      <InlineRichText text={filterInappropriateText(msg.content)} />
                     </span>
 
                     {/* Inline Trailing Flag / Options Icon */}
@@ -2404,27 +2357,43 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
               </div>
 
               {activeEmojiTab === 'stickers' ? (
-                <div className="grid grid-cols-3 gap-1.5 max-h-48 overflow-y-auto p-1 scrollbar-none">
-                  {STICKERS_CATALOG.map((stk) => (
-                    <button
-                      key={stk.id}
-                      type="button"
-                      onClick={() => handleSendSticker(stk)}
-                      className={`p-2 rounded-xl border bg-gradient-to-br ${stk.bgGradient} flex flex-col items-center justify-center gap-0.5 hover:scale-105 active:scale-95 transition-transform shadow-2xs`}
-                    >
-                      <span className={`text-2xl ${stk.animationClass || ''}`}>{stk.emoji}</span>
-                      <span className="text-[9.5px] font-black truncate max-w-full">{stk.label}</span>
-                    </button>
-                  ))}
+                <div className="space-y-1.5 max-h-48 overflow-y-auto p-1 scrollbar-none">
+                  <span className="text-[10px] font-black text-slate-500 block">
+                    اضغط لإدراج إيموجي متحرك داخل رسالتك بنفس حجم النص:
+                  </span>
+                  <div className="grid grid-cols-7 sm:grid-cols-8 gap-1.5">
+                    {ANIMATED_INLINE_EMOJIS.map((item) => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        onClick={() => handleInsertEmoji(item.emoji)}
+                        title={item.label}
+                        className="w-8 h-8 rounded-full bg-slate-50 hover:bg-amber-50 border border-slate-200/80 flex items-center justify-center text-base hover:scale-115 active:scale-95 transition-transform cursor-pointer"
+                      >
+                        <span className={`inline-block leading-none ${item.animClass}`}>{item.emoji}</span>
+                      </button>
+                    ))}
+                    {STICKERS_CATALOG.map((stk) => (
+                      <button
+                        key={stk.id}
+                        type="button"
+                        onClick={() => handleInsertEmoji(stk.emoji)}
+                        title={stk.label}
+                        className="w-8 h-8 rounded-full bg-slate-50 hover:bg-indigo-50 border border-slate-200/80 flex items-center justify-center text-base hover:scale-115 active:scale-95 transition-transform cursor-pointer"
+                      >
+                        <span className={`inline-block leading-none ${stk.animationClass || ''}`}>{stk.emoji}</span>
+                      </button>
+                    ))}
+                  </div>
                 </div>
               ) : (
-                <div className="grid grid-cols-6 sm:grid-cols-8 gap-1.5 max-h-44 overflow-y-auto p-1 scrollbar-none">
+                <div className="grid grid-cols-7 sm:grid-cols-8 gap-1.5 max-h-44 overflow-y-auto p-1 scrollbar-none">
                   {EMOJI_CATEGORIES[activeEmojiTab].map((emoji, idx) => (
                     <button
                       key={idx}
                       type="button"
                       onClick={() => handleInsertEmoji(emoji)}
-                      className="w-8 h-8 rounded-lg hover:bg-slate-100 flex items-center justify-center text-lg hover:scale-125 active:scale-95 transition-transform"
+                      className="w-8 h-8 rounded-full hover:bg-slate-100 flex items-center justify-center text-base hover:scale-115 active:scale-95 transition-transform cursor-pointer"
                     >
                       {emoji}
                     </button>
@@ -3038,17 +3007,13 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
               {/* Compact User Header */}
               <div className="flex items-center justify-between gap-2 px-2 py-1.5 border-b border-slate-100">
                 <div className="flex items-center gap-2 min-w-0">
-                  <div className="w-8 h-8 rounded-full overflow-hidden bg-slate-100 border border-slate-200 shrink-0 flex items-center justify-center text-xs font-black text-slate-700">
-                    {target.avatar ? (
-                      <img src={target.avatar} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                    ) : (
-                      <span>{target.name.charAt(0)}</span>
-                    )}
-                  </div>
+                  <AvatarWithFrame user={target} size="sm" />
                   <div className="min-w-0">
                     <p className="text-xs font-black text-slate-900 truncate">{target.name}</p>
                     <p className="text-[10.5px] font-medium text-slate-500 truncate">
-                      {target.vipBadge || 'عضو في الغرفة'}
+                      {hasPrivilegedRank(target.role)
+                        ? getRankDisplayMeta(target.role, target.vipBadge).label
+                        : 'عضو في الغرفة'}
                     </p>
                   </div>
                 </div>

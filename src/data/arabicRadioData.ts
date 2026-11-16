@@ -169,5 +169,70 @@ export const ARABIC_RADIO_STATIONS: ArabicRadioStation[] = [
     bitrate: '128 kbps',
     color: 'from-teal-700 to-cyan-800',
     icon: '🌿'
+  },
+  {
+    id: 'radio_umm_kulthum_kawkab',
+    name: 'إذاعة أم كلثوم (كوكب الشرق)',
+    category: 'tarab',
+    categoryLabel: 'طرب أصيل',
+    streamUrl: 'https://stream.zeno.fm/zsgrfxg71s8uv',
+    description: 'بث متواصل على مدار 24 ساعة لأجمل حفلات وروائع كوكب الشرق السيدة أم كلثوم',
+    country: 'مصر - القاهرة',
+    countryFlag: '🇪🇬',
+    bitrate: '128 kbps',
+    color: 'from-amber-600 to-rose-700',
+    icon: '👑'
+  },
+  {
+    id: 'radio_hits_882',
+    name: 'راديو هيتس 88.2 (Radio Hits Egypt)',
+    category: 'egypt',
+    categoryLabel: 'كلاسيك مصري',
+    streamUrl: 'https://radiohits882.radioca.st/;',
+    description: 'أقوى الأغاني المصرية الشبابية وبرامج المنوعات المباشرة من قلب القاهرة',
+    country: 'مصر',
+    countryFlag: '🇪🇬',
+    bitrate: '128 kbps',
+    color: 'from-rose-500 to-indigo-600',
+    icon: '📻'
+  },
+  {
+    id: 'radio_aghani_arabia',
+    name: 'إذاعة الأغاني العربية 87.9 FM',
+    category: 'hits',
+    categoryLabel: 'أغاني ومنوعات',
+    streamUrl: 'https://streaming.nrjaudio.fm/ou6pfgxp336f',
+    description: 'أحدث الأغاني العربية والمصرية واللبنانية المختارة بجودة بث فائقة النقاء',
+    country: 'العالم العربي',
+    countryFlag: '🎵',
+    bitrate: '128 kbps',
+    color: 'from-fuchsia-600 to-purple-700',
+    icon: '🎧'
+  },
+  {
+    id: 'radio_nogoum_hits_cairo',
+    name: 'نجوم هيتس القاهرة (Nogoum Hits)',
+    category: 'egypt',
+    categoryLabel: 'كلاسيك مصري',
+    streamUrl: 'https://stream.zeno.fm/qb1zvsykm98uv',
+    description: 'هيتس القاهرة والأغاني المصرية والعربية الأكثر استماعاً على مدار الساعة',
+    country: 'مصر',
+    countryFlag: '🇪🇬',
+    bitrate: '128 kbps',
+    color: 'from-orange-500 to-red-600',
+    icon: '⭐'
+  },
+  {
+    id: 'radio_nrj_nile_pop',
+    name: 'إنيرجي / نايل بوب مصر (NRJ Egypt)',
+    category: 'hits',
+    categoryLabel: 'أغاني ومنوعات',
+    streamUrl: 'https://nrjstreaming.ahmed-melege.com/nrjegypt',
+    description: 'إيقاعات البوب المصرية والعالمية وبرامج الشباب والسهرات الحية من مصر',
+    country: 'مصر',
+    countryFlag: '🇪🇬',
+    bitrate: '128 kbps',
+    color: 'from-red-600 to-amber-500',
+    icon: '⚡'
   }
 ];

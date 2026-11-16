@@ -50,9 +50,18 @@ import { LuxuryGiftModal } from './LuxuryGiftModal';
 import { CallModal } from './CallModal';
 import { CoinsTransferModal } from './CoinsTransferModal';
 import { ChatWallpapersModal } from './ChatWallpapersModal';
-import { CURATED_EMOJIS, STICKERS_CATALOG, StickerItem } from '../data/stickers';
+import { STICKERS_CATALOG, CURATED_EMOJIS } from '../data/stickers';
 import { toast } from 'sonner';
 import { getWallpaperStyleById } from '../data/wallpapers';
+import { AvatarWithFrame } from './AvatarWithFrame';
+import { getRankDisplayMeta } from '../utils/userRanks';
+import { ANIMATED_INLINE_EMOJIS, InlineRichText } from './InlineRichText';
+import {
+  ConsentRequestType,
+  formatCooldownRemaining,
+  getConsentCooldownRemaining,
+  requestUserConsent,
+} from '../services/consentService';
 
 interface PrivateChatViewProps {
   currentUser: User;
@@ -121,11 +130,12 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
   });
   const [isCoinsTransferOpen, setIsCoinsTransferOpen] = useState(false);
 
-  // Emoji & Stickers Picker + Media Upload + Lightbox States
+  // Emoji & Animated Emojis Picker + Media Upload + Lightbox + Consent States
   const [isEmojiStickerOpen, setIsEmojiStickerOpen] = useState(false);
-  const [emojiStickerTab, setEmojiStickerTab] = useState<'emojis' | 'stickers'>('emojis');
+  const [emojiStickerTab, setEmojiStickerTab] = useState<'emojis' | 'animated'>('emojis');
   const [isUploadingMedia, setIsUploadingMedia] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
+  const [requestingConsentType, setRequestingConsentType] = useState<ConsentRequestType | null>(null);
   const [lightboxImageUrl, setLightboxImageUrl] = useState<string | null>(null);
   const mediaFileInputRef = useRef<HTMLInputElement>(null);
   const chatInputRef = useRef<HTMLInputElement>(null);
@@ -358,40 +368,60 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
     }
   };
 
-  // Send Sticker directly
-  const handleSendSticker = async (sticker: StickerItem) => {
+  // Pre-approved Audio / Video Call Launcher with 5-minute Rejection Cooldown
+  const handleRequestCall = async (callType: 'audio' | 'video') => {
     if (!activeContact) return;
-    sounds.playMessageSent();
-    setIsEmojiStickerOpen(false);
-    const newMsg: Partial<Message> & { recipientName?: string; recipientAvatar?: string; recipientSessionId?: string } = {
-      senderId: currentUser.id,
-      senderName: currentUser.name,
-      senderAvatar: currentUser.avatar,
-      senderRole: currentUser.role,
-      senderVipBadge: currentUser.vipBadge,
-      recipientId: activeContact.id,
-      recipientName: activeContact.name,
-      recipientAvatar: activeContact.avatar,
-      recipientSessionId: getActivePeerSessionId(),
-      type: 'sticker',
-      content: `${sticker.emoji} ${sticker.label}`,
-      text: `${sticker.emoji} ${sticker.label}`,
-      stickerId: sticker.id,
-      stickerEmoji: sticker.emoji,
-      stickerLabel: sticker.label,
-      stickerAnimation: sticker.category === 'animated' ? sticker.animationClass : undefined,
-      timestamp: Date.now(),
-      status: 'sent'
-    };
+    if (isGuest) {
+      toast.warning('المكالمات مخصصة للأعضاء المسجلين — يمكنك التسجيل بحساب جوجل أو الهاتف مجاناً!');
+      if (onPromptRegister) {
+        onPromptRegister();
+      } else {
+        setCallModalState({ isOpen: true, callType });
+      }
+      return;
+    }
+    const consentType: ConsentRequestType = callType === 'video' ? 'video_call' : 'audio_call';
+    const remainingMs = getConsentCooldownRemaining(currentUser.id, activeContact.id, consentType);
+    if (remainingMs > 0) {
+      toast.warning(
+        `تم حظر إعادة طلب ${callType === 'video' ? 'مكالمة الفيديو' : 'المكالمة الصوتية'} مؤقتاً — متبقي ${formatCooldownRemaining(remainingMs)} ⏳`
+      );
+      return;
+    }
+    if (requestingConsentType) return;
+
+    setRequestingConsentType(consentType);
+    const toastId = toast.loading(
+      `تم إرسال طلب ${callType === 'video' ? 'مكالمة فيديو' : 'مكالمة صوتية'} إلى ${activeContact.name}... في انتظار الموافقة ⏳`
+    );
     try {
-      const sent = await sendDirectMessage(currentUser.id, activeContact.id, newMsg);
-      setMessages(prev => (prev.some(m => m.id === sent.id) ? prev : [...prev, sent]));
-    } catch (err) {
-      console.warn('Sticker send error:', err);
+      const res = await requestUserConsent(
+        currentUser,
+        activeContact.id,
+        activeContact.name,
+        consentType
+      );
+      toast.dismiss(toastId);
+      if (res.approved) {
+        toast.success(`وافق ${activeContact.name} على المكالمة ✅`);
+        setCallModalState({ isOpen: true, callType });
+      } else if (res.reason === 'rejected') {
+        toast.error(
+          `رفض ${activeContact.name} طلب المكالمة ❌ (ممنوع إعادة الطلب لمدة 5 دقائق)`
+        );
+      } else if (res.reason === 'cooldown') {
+        toast.warning(
+          `يرجى الانتظار ${formatCooldownRemaining(res.remainingMs || 0)} قبل إعادة الطلب`
+        );
+      } else {
+        toast.info(`لم يرد ${activeContact.name} على طلب المكالمة في الوقت المحدد`);
+      }
+    } finally {
+      setRequestingConsentType(null);
     }
   };
 
-  // Media file picker & upload handler (Images & Videos)
+  // Media file picker & consent-gated upload handler (Images & Videos)
   const handleMediaFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = '';
@@ -406,6 +436,45 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
     if (file.size > 15 * 1024 * 1024) {
       toast.error('حجم الملف كبير جداً! الحد الأقصى المسموح هو 15 ميجابايت.');
       return;
+    }
+
+    const cooldownRemaining = getConsentCooldownRemaining(currentUser.id, activeContact.id, 'send_image');
+    if (cooldownRemaining > 0) {
+      toast.warning(
+        `لا يمكنك إرسال صور لـ ${activeContact.name} الآن — متبقي ${formatCooldownRemaining(cooldownRemaining)} ⏳`
+      );
+      return;
+    }
+
+    setRequestingConsentType('send_image');
+    const consentToastId = toast.loading(
+      `في انتظار موافقة ${activeContact.name} على استقبال ${isVideo ? 'الفيديو' : 'الصورة'}... ⏳`
+    );
+    try {
+      const consentRes = await requestUserConsent(
+        currentUser,
+        activeContact.id,
+        activeContact.name,
+        'send_image',
+        isVideo ? 'يرغب في إرسال مقطع فيديو إليك' : 'يرغب في إرسال صورة إليك'
+      );
+      toast.dismiss(consentToastId);
+      if (!consentRes.approved) {
+        if (consentRes.reason === 'rejected') {
+          toast.error(
+            `رفض ${activeContact.name} استقبال الصور ❌ (تم تفعيل منع الإزعاج لمدة 5 دقائق)`
+          );
+        } else if (consentRes.reason === 'cooldown') {
+          toast.warning(
+            `يرجى الانتظار ${formatCooldownRemaining(consentRes.remainingMs || 0)}`
+          );
+        } else {
+          toast.info(`لم يوافق ${activeContact.name} في الوقت المحدد — لم يتم إرسال الملف`);
+        }
+        return;
+      }
+    } finally {
+      setRequestingConsentType(null);
     }
 
     const convId = [currentUser.id, activeContact.id].sort().join('_');
@@ -736,13 +805,10 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                     className="w-full px-2.5 py-1.5 rounded-lg bg-white hover:bg-indigo-100/70 border border-indigo-100 flex items-center justify-between gap-2 text-right transition cursor-pointer"
                   >
                     <div className="flex items-center gap-2 min-w-0 flex-1">
-                      <div className="w-7 h-7 rounded-full overflow-hidden border border-indigo-200 bg-indigo-50 flex items-center justify-center text-[10px] font-black text-indigo-700 shrink-0">
-                        {sender.senderAvatar ? (
-                          <img src={sender.senderAvatar} alt={sender.senderName} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                        ) : (
-                          <span>{sender.senderName.charAt(0)}</span>
-                        )}
-                      </div>
+                      <AvatarWithFrame
+                        user={{ id: sender.senderId, name: sender.senderName, avatar: sender.senderAvatar }}
+                        size="xs"
+                      />
                       <div className="min-w-0 flex-1">
                         <div className="text-[11px] font-black text-slate-900 truncate">{sender.senderName}</div>
                         <div className="text-[10px] text-slate-500 truncate">{sender.lastMessage}</div>
@@ -857,23 +923,19 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                       }`}
                     >
                       <div className="flex items-center gap-3 min-w-0">
-                        <div className="relative shrink-0">
-                          <div className="w-12 h-12 rounded-full overflow-hidden border border-slate-200 bg-indigo-50 flex items-center justify-center font-bold text-xs text-indigo-700">
-                            {chat.peerAvatar ? (
-                              <img 
-                                src={chat.peerAvatar} 
-                                alt="" 
-                                className="w-full h-full object-cover" 
-                                referrerPolicy="no-referrer"
-                              />
-                            ) : (
-                              <span>{(chat.peerName || 'م').charAt(0)}</span>
-                            )}
-                          </div>
-                          {peerOnline && (
-                            <span className="absolute bottom-0 right-0 w-3 h-3 bg-emerald-500 border-2 border-white rounded-full" title="متصل الآن"></span>
-                          )}
-                        </div>
+                        <AvatarWithFrame
+                          user={
+                            globalOnlineUsers.find(u => u.id === chat.peerId) || {
+                              id: chat.peerId,
+                              name: chat.peerName || 'مستخدم',
+                              avatar: chat.peerAvatar || '',
+                              role: (chat.peerRole as any) || 'member',
+                              status: peerOnline ? 'online' : 'offline',
+                            }
+                          }
+                          size="md"
+                          showOnlineDot={peerOnline}
+                        />
 
                         <div className="min-w-0">
                           <div className="flex items-center gap-1.5">
@@ -952,7 +1014,14 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                             <span>{user.countryFlag || '🌍'}</span>
                           </div>
                           <div className="flex items-center gap-1.5 justify-end text-[10px] text-slate-500">
-                            {user.vipBadge && <span className="text-amber-600 font-bold">{user.vipBadge}</span>}
+                            {(() => {
+                              const rMeta = getRankDisplayMeta(user.role, user.vipBadge);
+                              return rMeta.isPrivileged ? (
+                                <span className={`px-1.5 py-0.5 rounded-full border text-[9px] font-black ${rMeta.badgeClass}`}>
+                                  {rMeta.label}
+                                </span>
+                              ) : null;
+                            })()}
                             <span className="text-emerald-600 font-bold flex items-center gap-1">
                               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
                               متصل الآن
@@ -960,16 +1029,7 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                           </div>
                         </div>
 
-                        <div className="relative shrink-0">
-                          <div className="w-11 h-11 rounded-full overflow-hidden border border-slate-200 bg-indigo-50 flex items-center justify-center font-bold text-xs text-indigo-700">
-                            {user.avatar ? (
-                              <img src={user.avatar} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                            ) : (
-                              <span>{user.name.charAt(0)}</span>
-                            )}
-                          </div>
-                          <span className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-emerald-500 border-2 border-white rounded-full"></span>
-                        </div>
+                        <AvatarWithFrame user={user} size="md" showOnlineDot />
                       </div>
                     </div>
                   ))
@@ -1012,20 +1072,19 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                 <ArrowRight className="w-4 h-4" />
               </button>
 
-              <div className="relative shrink-0">
-                <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-full overflow-hidden border-2 border-amber-400 bg-slate-100 flex items-center justify-center font-bold text-xs text-slate-800 shadow-xs">
-                  {activeContact.avatar ? (
-                    <img src={activeContact.avatar} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                  ) : (
-                    <span>{activeContact.name.charAt(0)}</span>
-                  )}
-                </div>
-                {activeContact.status === 'online' ? (
-                  <span className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-emerald-500 rounded-full border-2 border-white shadow-xs"></span>
-                ) : (
-                  <span className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-slate-400 rounded-full border-2 border-white"></span>
-                )}
-              </div>
+              <AvatarWithFrame
+                user={
+                  globalOnlineUsers.find(u => u.id === activeContact.id) || {
+                    id: activeContact.id,
+                    name: activeContact.name,
+                    avatar: activeContact.avatar,
+                    role: (activeContact.role as any) || 'member',
+                    status: activeContact.status,
+                  }
+                }
+                size="sm"
+                showOnlineDot
+              />
 
               <div className="min-w-0 flex-1 text-right">
                 <h3 className="text-xs sm:text-sm font-black text-slate-900 flex items-center gap-1 min-w-0">
@@ -1085,30 +1144,34 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                 <span className="hidden sm:inline">هدية 🎁</span>
               </button>
 
-              {/* Calls strictly available to registered accounts */}
-              {!isGuest && (
-                <>
-                  {/* HD Audio Call Button */}
-                  <button 
-                    type="button"
-                    onClick={() => setCallModalState({ isOpen: true, callType: 'audio' })}
-                    className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 flex items-center justify-center transition active:scale-95 shrink-0"
-                    title="اتصال صوتي مباشر"
-                  >
-                    <Phone className="w-3.5 h-3.5" />
-                  </button>
+              {/* Audio & Video Calls (Pre-approved consent + 5-min cooldown + visible on mobile & desktop) */}
+              <button 
+                type="button"
+                onClick={() => handleRequestCall('audio')}
+                disabled={Boolean(requestingConsentType)}
+                className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-emerald-50 hover:bg-emerald-100 disabled:opacity-50 text-emerald-700 border border-emerald-200 flex items-center justify-center transition active:scale-95 shrink-0 cursor-pointer"
+                title="طلب مكالمة صوتية"
+              >
+                {requestingConsentType === 'audio_call' ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Phone className="w-3.5 h-3.5" />
+                )}
+              </button>
 
-                  {/* Live Video Call Button */}
-                  <button 
-                    type="button"
-                    onClick={() => setCallModalState({ isOpen: true, callType: 'video' })}
-                    className="hidden sm:flex w-9 h-9 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 hover:text-indigo-600 border border-slate-200/80 items-center justify-center transition active:scale-95 shrink-0"
-                    title="مكالمة فيديو مباشرة"
-                  >
-                    <Video className="w-3.5 h-3.5" />
-                  </button>
-                </>
-              )}
+              <button 
+                type="button"
+                onClick={() => handleRequestCall('video')}
+                disabled={Boolean(requestingConsentType)}
+                className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-sky-50 hover:bg-sky-100 disabled:opacity-50 text-sky-700 hover:text-indigo-700 border border-sky-200 flex items-center justify-center transition active:scale-95 shrink-0 cursor-pointer"
+                title="طلب مكالمة فيديو"
+              >
+                {requestingConsentType === 'video_call' ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Video className="w-3.5 h-3.5" />
+                )}
+              </button>
 
               {isDrawer && onCloseDrawer && (
                 <button
@@ -1232,16 +1295,10 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                     title="اضغط مطولاً لخيارات الرسالة (حذف / نسخ)"
                   >
                     {msg.type === 'sticker' ? (
-                      <div className="flex flex-col items-center justify-center px-3 py-1.5 text-center space-y-1">
-                        <span className={`text-5xl select-none inline-block ${msg.stickerAnimation || ''}`}>
-                          {msg.stickerEmoji || '✨'}
-                        </span>
-                        {msg.stickerLabel && (
-                          <span className="text-[11px] font-black text-indigo-700 bg-indigo-50 px-2.5 py-0.5 rounded-full border border-indigo-200">
-                            {msg.stickerLabel}
-                          </span>
-                        )}
-                      </div>
+                      <p className={`leading-relaxed whitespace-pre-wrap font-medium ${isMe ? 'text-white' : 'text-slate-900'}`}>
+                        <InlineRichText text={msg.stickerEmoji || msg.content || '✨'} />
+                        {msg.stickerLabel ? ` ${msg.stickerLabel}` : ''}
+                      </p>
                     ) : msg.type === 'image' && (msg.mediaUrl || msg.imageUrl) ? (
                       <div className="space-y-1.5">
                         <div
@@ -1320,7 +1377,9 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                         </span>
                       </div>
                     ) : (
-                      <p className={`leading-relaxed whitespace-pre-wrap font-medium ${isMe ? 'text-white' : 'text-slate-900'}`}>{msg.content || msg.text}</p>
+                      <p className={`leading-relaxed whitespace-pre-wrap font-medium ${isMe ? 'text-white' : 'text-slate-900'}`}>
+                        <InlineRichText text={msg.content || msg.text || ''} />
+                      </p>
                     )}
 
                     <div className={`flex items-center justify-end gap-1 text-[10px] ${msg.type === 'sticker' ? 'text-slate-500' : isMe ? 'text-white/85' : 'text-slate-500'}`}>
@@ -1378,14 +1437,14 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
 
           {/* Bottom Chat Bar: Full-Width Mobile + Emoji/Sticker Drawer + Media Picker */}
           <div ref={emojiStickerPanelRef} className="relative w-full p-2 sm:p-3 bg-white/98 backdrop-blur-md border-t border-slate-200/90 flex items-center gap-1 sm:gap-2 shrink-0 pb-[calc(env(safe-area-inset-bottom,0px)+10px)] sm:pb-3 shadow-[0_-4px_20px_rgba(0,0,0,0.06)]">
-            {/* Emoji & Animated/Static Stickers Floating Drawer */}
+            {/* Compact Circular Telegram/WhatsApp-Style Emoji & Animated Emoji Picker */}
             {isEmojiStickerOpen && (
               <div className="absolute bottom-full left-2 right-2 sm:left-auto sm:right-3 mb-2 sm:w-80 bg-white border border-slate-200 rounded-2xl shadow-2xl p-2.5 z-40 space-y-2 animate-in slide-in-from-bottom-2">
                 <div className="grid grid-cols-2 gap-1 p-1 bg-slate-100 rounded-xl text-[11px] font-black">
                   <button
                     type="button"
                     onClick={() => setEmojiStickerTab('emojis')}
-                    className={`py-1.5 rounded-lg flex items-center justify-center gap-1 transition ${
+                    className={`py-1.5 rounded-lg flex items-center justify-center gap-1 transition cursor-pointer ${
                       emojiStickerTab === 'emojis' ? 'bg-indigo-600 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
                     }`}
                   >
@@ -1394,13 +1453,13 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                   </button>
                   <button
                     type="button"
-                    onClick={() => setEmojiStickerTab('stickers')}
-                    className={`py-1.5 rounded-lg flex items-center justify-center gap-1 transition ${
-                      emojiStickerTab === 'stickers' ? 'bg-amber-500 text-slate-950 shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                    onClick={() => setEmojiStickerTab('animated')}
+                    className={`py-1.5 rounded-lg flex items-center justify-center gap-1 transition cursor-pointer ${
+                      emojiStickerTab === 'animated' ? 'bg-amber-500 text-slate-950 shadow-xs' : 'text-slate-600 hover:text-slate-900'
                     }`}
                   >
                     <Sticker className="w-3.5 h-3.5" />
-                    <span>ملصقات متحركة ✨</span>
+                    <span>إيموجي متحركة ✨</span>
                   </button>
                 </div>
 
@@ -1415,7 +1474,7 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                               key={`${group.label}_${i}`}
                               type="button"
                               onClick={() => handleInsertEmojiAtCursor(em)}
-                              className="w-8 h-8 rounded-lg hover:bg-indigo-50 flex items-center justify-center text-lg hover:scale-125 active:scale-95 transition-transform"
+                              className="w-8 h-8 rounded-full hover:bg-indigo-50 flex items-center justify-center text-base hover:scale-115 active:scale-95 transition-transform cursor-pointer"
                             >
                               {em}
                             </button>
@@ -1425,20 +1484,38 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                     ))}
                   </div>
                 ) : (
-                  <div className="max-h-52 overflow-y-auto grid grid-cols-3 gap-1.5 pr-0.5">
-                    {STICKERS_CATALOG.map((stk) => (
-                      <button
-                        key={stk.id}
-                        type="button"
-                        onClick={() => handleSendSticker(stk)}
-                        className={`p-2 rounded-xl border bg-gradient-to-br ${stk.bgGradient} flex flex-col items-center justify-center gap-1 hover:scale-[1.03] active:scale-95 transition`}
-                      >
-                        <span className={`text-2xl ${stk.category === 'animated' ? stk.animationClass : ''}`}>
-                          {stk.emoji}
-                        </span>
-                        <span className="text-[9.5px] font-black truncate max-w-full">{stk.label}</span>
-                      </button>
-                    ))}
+                  <div className="max-h-48 overflow-y-auto space-y-2 pr-0.5">
+                    <span className="text-[10px] font-black text-slate-500 block">
+                      اضغط لإدراج إيموجي متحرك داخل رسالتك بنفس حجم النص:
+                    </span>
+                    <div className="grid grid-cols-8 gap-1.5">
+                      {ANIMATED_INLINE_EMOJIS.map((item) => (
+                        <button
+                          key={item.id}
+                          type="button"
+                          onClick={() => handleInsertEmojiAtCursor(item.emoji)}
+                          title={item.label}
+                          className="w-8 h-8 rounded-full bg-slate-50 hover:bg-amber-50 border border-slate-200/80 flex items-center justify-center text-base hover:scale-115 active:scale-95 transition-transform cursor-pointer"
+                        >
+                          <span className={`inline-block leading-none ${item.animClass}`}>
+                            {item.emoji}
+                          </span>
+                        </button>
+                      ))}
+                      {STICKERS_CATALOG.map((stk) => (
+                        <button
+                          key={stk.id}
+                          type="button"
+                          onClick={() => handleInsertEmojiAtCursor(stk.emoji)}
+                          title={stk.label}
+                          className="w-8 h-8 rounded-full bg-slate-50 hover:bg-indigo-50 border border-slate-200/80 flex items-center justify-center text-base hover:scale-115 active:scale-95 transition-transform cursor-pointer"
+                        >
+                          <span className={`inline-block leading-none ${stk.animationClass || ''}`}>
+                            {stk.emoji}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 )}
               </div>
@@ -1479,15 +1556,29 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
               </div>
             ) : (
               <>
-                {/* Media Sharing Button (Image / Video) */}
+                {/* Media Sharing Button (Image / Video) — Kept in exact slot, gated by consent */}
                 <button
                   type="button"
-                  onClick={() => mediaFileInputRef.current?.click()}
-                  disabled={isUploadingMedia}
-                  className="p-2 rounded-2xl bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-600 min-h-[42px] min-w-[40px] flex items-center justify-center active:scale-95 transition-all shadow-xs shrink-0"
-                  title="إرسال صورة أو فيديو"
+                  onClick={() => {
+                    if (!activeContact) return;
+                    const cd = getConsentCooldownRemaining(currentUser.id, activeContact.id, 'send_image');
+                    if (cd > 0) {
+                      toast.warning(
+                        `لا يمكنك إرسال صور لـ ${activeContact.name} الآن — متبقي ${formatCooldownRemaining(cd)} ⏳`
+                      );
+                      return;
+                    }
+                    mediaFileInputRef.current?.click();
+                  }}
+                  disabled={isUploadingMedia || requestingConsentType === 'send_image'}
+                  className="p-2 rounded-2xl bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-600 min-h-[42px] min-w-[40px] flex items-center justify-center active:scale-95 transition-all shadow-xs shrink-0 disabled:opacity-50 cursor-pointer"
+                  title="إرسال صورة أو فيديو (يتطلب موافقة الطرف الثاني)"
                 >
-                  <ImageIcon className="w-4 h-4 sm:w-5 sm:h-5" />
+                  {requestingConsentType === 'send_image' ? (
+                    <Loader2 className="w-4 h-4 sm:w-5 sm:h-5 animate-spin" />
+                  ) : (
+                    <ImageIcon className="w-4 h-4 sm:w-5 sm:h-5" />
+                  )}
                 </button>
 
                 {/* Emoji & Stickers Picker Toggle */}

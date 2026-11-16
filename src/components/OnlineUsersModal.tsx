@@ -12,6 +12,8 @@ import {
   Award
 } from 'lucide-react';
 import { User } from '../types/chat';
+import { getRankDisplayMeta } from '../utils/userRanks';
+import { AvatarWithFrame } from './AvatarWithFrame';
 import { sounds } from '../utils/soundEffects';
 
 interface OnlineUsersModalProps {
@@ -208,12 +210,17 @@ export const OnlineUsersModal: React.FC<OnlineUsersModalProps> = ({
           {filteredUsers.map((user, idx) => {
             const isMe = user.id === currentUser.id;
             const hasInvited = invitedUserIds.has(user.id);
+            const rankMeta = getRankDisplayMeta(user.role, user.vipBadge);
 
             return (
               <div
                 key={user.id || idx}
                 onClick={() => onSelectUserForProfile(user)}
-                className="p-1.5 sm:p-2 rounded-xl bg-white border border-slate-200 hover:border-indigo-300 flex items-center justify-between gap-1.5 cursor-pointer transition-all hover:bg-slate-50 shadow-2xs"
+                className={`p-1.5 sm:p-2 rounded-xl border flex items-center justify-between gap-1.5 cursor-pointer transition-all hover:bg-slate-50 shadow-2xs ${
+                  rankMeta.isPrivileged
+                    ? 'bg-gradient-to-l from-amber-50/40 via-white to-white border-amber-200/80 hover:border-amber-300'
+                    : 'bg-white border-slate-200 hover:border-indigo-300'
+                }`}
               >
                 {/* Right Side (in RTL): Rank + Compact Avatar + Name */}
                 <div className="flex items-center gap-1.5 min-w-0 flex-1">
@@ -221,20 +228,11 @@ export const OnlineUsersModal: React.FC<OnlineUsersModalProps> = ({
                     #{idx + 1}
                   </span>
 
-                  <div className="relative shrink-0">
-                    <div className="w-7 h-7 rounded-full overflow-hidden border border-slate-200 bg-slate-100 flex items-center justify-center font-bold text-[10px] text-slate-700">
-                      {user.avatar ? (
-                        <img src={user.avatar} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                      ) : (
-                        <span>{user.name.charAt(0)}</span>
-                      )}
-                    </div>
-                    <span className="absolute -bottom-0.5 -right-0.5 w-2 h-2 rounded-full bg-emerald-500 border border-white"></span>
-                  </div>
+                  <AvatarWithFrame user={user} size="xs" showOnlineDot />
 
                   <div className="text-right min-w-0 flex-1">
                     <div className="flex items-center gap-1 min-w-0">
-                      <span className="text-[11px] font-black text-slate-900 truncate">
+                      <span className={`text-[11px] truncate ${rankMeta.nameColorClass}`}>
                         {user.name}
                       </span>
                       <span className="text-[10px] shrink-0">{user.countryFlag || '🇪🇬'}</span>
@@ -244,8 +242,10 @@ export const OnlineUsersModal: React.FC<OnlineUsersModalProps> = ({
                         <Star className="w-2.5 h-2.5 fill-amber-400 text-amber-500" />
                         {user.ratingPoints || 0}
                       </span>
-                      {user.vipBadge && (
-                        <span className="text-indigo-600 font-bold truncate">• {user.vipBadge}</span>
+                      {rankMeta.isPrivileged && (
+                        <span className={`px-1 py-0.2 rounded border text-[8.5px] font-black truncate ${rankMeta.badgeClass}`}>
+                          {rankMeta.label}
+                        </span>
                       )}
                     </div>
                   </div>

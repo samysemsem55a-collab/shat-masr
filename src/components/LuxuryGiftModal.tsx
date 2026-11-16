@@ -33,6 +33,7 @@ export const LuxuryGiftModal: React.FC<LuxuryGiftModalProps> = ({
   onOpenWallet,
   preselectedRecipient = null,
 }) => {
+  const [activeCategory, setActiveCategory] = useState<'luxury' | 'interactive'>('luxury');
   const [selectedGift, setSelectedGift] = useState<GiftItem>(LUXURY_GIFTS[0]);
   const [selectedRecipient, setSelectedRecipient] = useState<string>(
     preselectedRecipient?.name ||
@@ -40,6 +41,10 @@ export const LuxuryGiftModal: React.FC<LuxuryGiftModalProps> = ({
       'مضيف المجلس 👑'
   );
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  const visibleGifts = LUXURY_GIFTS.filter(
+    (g) => (g.category || 'luxury') === activeCategory
+  );
 
   useEffect(() => {
     if (!isOpen) return;
@@ -167,13 +172,53 @@ export const LuxuryGiftModal: React.FC<LuxuryGiftModalProps> = ({
             </select>
           </div>
 
+          {/* Category Tabs */}
+          <div className="grid grid-cols-2 gap-2 p-1 rounded-2xl bg-slate-900 border border-slate-800">
+            <button
+              type="button"
+              onClick={() => {
+                setActiveCategory('luxury');
+                const firstLux = LUXURY_GIFTS.find((g) => (g.category || 'luxury') === 'luxury');
+                if (firstLux) setSelectedGift(firstLux);
+                setErrorMsg(null);
+              }}
+              className={`py-2 px-3 rounded-xl text-xs font-black flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                activeCategory === 'luxury'
+                  ? 'bg-gradient-to-r from-amber-500 to-yellow-500 text-slate-950 shadow-sm'
+                  : 'text-slate-300 hover:text-white'
+              }`}
+            >
+              <span>💎</span>
+              <span>هدايا فاخرة</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setActiveCategory('interactive');
+                const firstInteractive = LUXURY_GIFTS.find((g) => g.category === 'interactive');
+                if (firstInteractive) setSelectedGift(firstInteractive);
+                setErrorMsg(null);
+              }}
+              className={`py-2 px-3 rounded-xl text-xs font-black flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                activeCategory === 'interactive'
+                  ? 'bg-gradient-to-r from-pink-600 via-purple-600 to-indigo-600 text-white shadow-sm'
+                  : 'text-slate-300 hover:text-white'
+              }`}
+            >
+              <span>🎆</span>
+              <span>الهدايا التفاعلية</span>
+            </button>
+          </div>
+
           {/* Luxury Gifts Grid */}
           <div>
             <label className="text-xs font-bold text-slate-300 block mb-1.5">
-              اختر هديتك:
+              {activeCategory === 'interactive'
+                ? 'هدايا تفاعلية تملأ شاشة الغرفة للجميع:'
+                : 'اختر هديتك:'}
             </label>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-              {LUXURY_GIFTS.map((gift) => {
+              {visibleGifts.map((gift) => {
                 const isSelected = selectedGift.id === gift.id;
                 return (
                   <div
@@ -192,6 +237,12 @@ export const LuxuryGiftModal: React.FC<LuxuryGiftModalProps> = ({
                     <span className="absolute top-1.5 right-2 text-[10px] font-black text-amber-300 flex items-center gap-0.5">
                       🪙 {gift.cost}
                     </span>
+
+                    {gift.category === 'interactive' && (
+                      <span className="absolute top-1.5 left-1.5 text-[8.5px] px-1.5 py-0.5 rounded-full bg-pink-500/25 border border-pink-400/40 text-pink-200 font-black">
+                        ملء الشاشة
+                      </span>
+                    )}
 
                     {/* Gift Icon */}
                     <div className="text-3xl my-2 animate-pulse">
@@ -214,7 +265,9 @@ export const LuxuryGiftModal: React.FC<LuxuryGiftModalProps> = ({
               « {selectedGift.bannerText} »
             </p>
             <p className="text-[11px] text-slate-400">
-              سيظهر إشعار فخم على كامل شاشة الغرفة مع أنيميشن وتأثير صوتي ملكي
+              {selectedGift.category === 'interactive'
+                ? 'تُطلق رسوماً متحركة احتفالية تملأ شاشة الغرفة بالكامل أمام جميع المتواجدين!'
+                : 'سيظهر إشعار فخم على كامل شاشة الغرفة مع أنيميشن وتأثير صوتي ملكي'}
             </p>
           </div>
 

@@ -93,6 +93,15 @@ export function getOrCreateUser(): User {
       try {
         const parsed = JSON.parse(saved);
         if (parsed && typeof parsed === 'object' && parsed.id && parsed.id !== 'usr_me') {
+          if (parsed.email || parsed.isEmailVerified || parsed.isPhoneVerified || isUserAdminOrOwner(parsed)) {
+            parsed.isGuest = false;
+            if (parsed.role === 'guest') {
+              parsed.role = isUserAdminOrOwner(parsed) ? 'owner' : 'member';
+            }
+            if (typeof parsed.vipBadge === 'string' && parsed.vipBadge.includes('زائر')) {
+              parsed.vipBadge = parsed.role === 'owner' ? 'المالك 👑' : 'عضو مسجل ✨';
+            }
+          }
           localStorage.setItem(idKey, parsed.id);
           if (queryName && parsed.name !== queryName) {
             parsed.name = queryName;
@@ -222,14 +231,19 @@ export const RADIO_STATIONS: import('../types/chat').RadioStation[] = [
 ];
 
 export const LUXURY_GIFTS: GiftItem[] = [
-  { id: 'gift_rose', name: 'وردة المحبة', icon: '🌹', cost: 50, animation: 'rose', bannerText: 'أهدى باقة ورد أنيقة تعبيراً عن الود!' },
-  { id: 'gift_coffee', name: 'فنجان قهوة عربي', icon: '☕', cost: 100, animation: 'coffee', bannerText: 'حيّاك الله بفنجان قهوة وكرم ضيافة!' },
-  { id: 'gift_horus', name: 'عين حورس الذهبية', icon: '🧿', cost: 250, animation: 'diamond', bannerText: 'أرسل تميمة المحبة والحماية المصرية!' },
-  { id: 'gift_crown', name: 'التاج الملكي الفاخر', icon: '👑', cost: 500, animation: 'crown', bannerText: 'توّج المضيف بتاج العز والملوك!' },
-  { id: 'gift_tower', name: 'برج القاهرة المضيء', icon: '🗼', cost: 1000, animation: 'cairo_tower', bannerText: 'أضاء سماء الروم ببرج القاهرة الشامخ!' },
-  { id: 'gift_ferrari', name: 'فيراري حمراء سبيد', icon: '🏎️', cost: 2500, animation: 'car', bannerText: 'انطلق بأقوى سرعة وفخامة الفيراري!' },
-  { id: 'gift_lion', name: 'الأسد المصري الملكي', icon: '🦁', cost: 5000, animation: 'lion', bannerText: 'زأر الأسد الملكي لتهتز أركان المجلس بالهيبة!' },
-  { id: 'gift_rocket', name: 'الصاروخ الذهبي العملاق', icon: '🚀', cost: 10000, animation: 'rocket', bannerText: 'أطلق الصاروخ الذهبي إلى الفضاء مع عاصفة ذهبية!' }
+  { id: 'gift_rose', name: 'وردة المحبة', icon: '🌹', cost: 50, animation: 'rose', category: 'luxury', bannerText: 'أهدى باقة ورد أنيقة تعبيراً عن الود!' },
+  { id: 'gift_coffee', name: 'فنجان قهوة عربي', icon: '☕', cost: 100, animation: 'coffee', category: 'luxury', bannerText: 'حيّاك الله بفنجان قهوة وكرم ضيافة!' },
+  { id: 'gift_horus', name: 'عين حورس الذهبية', icon: '🧿', cost: 250, animation: 'diamond', category: 'luxury', bannerText: 'أرسل تميمة المحبة والحماية المصرية!' },
+  { id: 'gift_crown', name: 'التاج الملكي الفاخر', icon: '👑', cost: 500, animation: 'crown', category: 'luxury', bannerText: 'توّج المضيف بتاج العز والملوك!' },
+  { id: 'gift_tower', name: 'برج القاهرة المضيء', icon: '🗼', cost: 1000, animation: 'cairo_tower', category: 'luxury', bannerText: 'أضاء سماء الروم ببرج القاهرة الشامخ!' },
+  { id: 'gift_ferrari', name: 'فيراري حمراء سبيد', icon: '🏎️', cost: 2500, animation: 'car', category: 'luxury', bannerText: 'انطلق بأقوى سرعة وفخامة الفيراري!' },
+  { id: 'gift_lion', name: 'الأسد المصري الملكي', icon: '🦁', cost: 5000, animation: 'lion', category: 'luxury', bannerText: 'زأر الأسد الملكي لتهتز أركان المجلس بالهيبة!' },
+  { id: 'gift_rocket', name: 'الصاروخ الذهبي العملاق', icon: '🚀', cost: 10000, animation: 'rocket', category: 'luxury', bannerText: 'أطلق الصاروخ الذهبي إلى الفضاء مع عاصفة ذهبية!' },
+  // الهدايا التفاعلية (تظهر كرسوم متحركة تملأ شاشة الغرفة بالكامل)
+  { id: 'gift_interactive_roses', name: 'مطر الورود التفاعلي', icon: '🌸', cost: 350, animation: 'rose', category: 'interactive', effectType: 'roses', bannerText: 'أمطر سماء الغرفة بوابل من الورود المتساقطة!' },
+  { id: 'gift_interactive_fireworks', name: 'ألعاب نارية احتفالية', icon: '🎆', cost: 750, animation: 'rocket', category: 'interactive', effectType: 'fireworks', bannerText: 'أشعل سماء الغرفة بالألعاب النارية المبهرة!' },
+  { id: 'gift_interactive_gold', name: 'عاصفة الكوينز الذهبية', icon: '✨', cost: 1200, animation: 'crown', category: 'interactive', effectType: 'gold_rain', bannerText: 'أطلق عاصفة من النجوم والذهب في كامل الشاشة!' },
+  { id: 'gift_interactive_hearts', name: 'وابل القلوب الرومانسية', icon: '💖', cost: 450, animation: 'diamond', category: 'interactive', effectType: 'hearts', bannerText: 'ملأ شاشة الغرفة بقلوب المحبة المتطايرة!' }
 ];
 
 export const QUICK_PHRASES = [

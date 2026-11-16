@@ -11,11 +11,13 @@ import {
   ShieldCheck,
   LogOut,
   MoreVertical,
-  ShoppingBag
+  ShoppingBag,
+  Trophy
 } from 'lucide-react';
 import { User, UnreadSenderSummary } from '../types/chat';
 import { isUserAdminOrOwner } from '../data/seedData';
-import { realtimeSocket } from '../services/realtimeSocket';
+import { getRankDisplayMeta, hasPrivilegedRank } from '../utils/userRanks';
+import { AvatarWithFrame } from './AvatarWithFrame';
 import { PWAInstallButton } from './PWAInstallButton';
 import { toast } from 'sonner';
 import appBrandIcon from '../assets/images/shat_masr_icon_1794650535035.jpg';
@@ -28,6 +30,7 @@ interface HeaderProps {
   onOpenNotifications: () => void;
   onOpenOnlineUsers: () => void;
   onOpenFriendRequests: () => void;
+  onOpenLeaderboard?: () => void;
   onOpenAdmin?: () => void;
   pendingFriendRequestsCount: number;
   onlineUsersCount: number;
@@ -50,6 +53,7 @@ export const Header: React.FC<HeaderProps> = React.memo(({
   onOpenNotifications,
   onOpenOnlineUsers,
   onOpenFriendRequests,
+  onOpenLeaderboard,
   pendingFriendRequestsCount,
   onlineUsersCount,
   onOpenRadio,
@@ -66,15 +70,25 @@ export const Header: React.FC<HeaderProps> = React.memo(({
   const [isMoreMenuOpen, setIsMoreMenuOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const moreMenuRef = useRef<HTMLDivElement>(null);
-  const [isSocketConnected, setIsSocketConnected] = useState<boolean>(() => realtimeSocket.isConnected());
+  const [isBrowserOnline, setIsBrowserOnline] = useState<boolean>(() =>
+    typeof navigator !== 'undefined' ? navigator.onLine !== false : true
+  );
 
-  // Subscribe to real-time socket connection state
+  // Unified browser network status (avoids false "غير متصل" during transient socket reconnects)
   useEffect(() => {
-    const unsub = realtimeSocket.subscribeToConnectionStatus((connected) => {
-      setIsSocketConnected(connected);
-    });
-    return () => unsub();
+    const handleOnline = () => setIsBrowserOnline(true);
+    const handleOffline = () => setIsBrowserOnline(false);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
   }, []);
+
+  const isEffectiveOnline = isBrowserOnline && currentUser.status !== 'offline';
+  const rankMeta = getRankDisplayMeta(currentUser.role, currentUser.vipBadge);
+  const isPrivileged = hasPrivilegedRank(currentUser.role);
 
   // Close dropdowns when clicking outside
   useEffect(() => {
@@ -143,67 +157,44 @@ export const Header: React.FC<HeaderProps> = React.memo(({
             <div className="flex items-center gap-1.5 sm:gap-2 p-1 pl-2 sm:pl-2.5 rounded-2xl bg-slate-50 hover:bg-slate-100/80 border border-slate-200 transition min-w-0 max-w-full sm:max-w-[240px] md:max-w-none shrink">
               {/* Avatar Wrapper with Self-Contained Status Dot & Quick Camera Trigger */}
               <div className="relative shrink-0">
-                <button
-                  type="button"
+                <AvatarWithFrame
+                  user={currentUser}
+                  size="sm"
+                  showOnlineDot
                   onClick={onOpenProfile}
                   title={`عرض الملف الشخصي: ${currentUser.name}`}
-                  className={`w-9 h-9 rounded-full overflow-hidden border-2 bg-gradient-to-tr from-indigo-500 to-amber-500 flex items-center justify-center font-bold text-white text-xs shadow-sm cursor-pointer ${currentUser.frameStyle || 'border-indigo-300'}`}
-                >
-                  {currentUser.avatar ? (
-                    <img 
-                      src={currentUser.avatar} 
-                      alt={currentUser.name} 
-                      className="w-full h-full object-cover" 
-                      referrerPolicy="no-referrer"
-                    />
-                  ) : (
-                    <span>{currentUser.name.charAt(0)}</span>
-                  )}
-                </button>
-                <span 
-                  className={`absolute bottom-0 right-0 w-2.5 h-2.5 border-2 border-white rounded-full pointer-events-none transition-colors ${
-                    !isSocketConnected
-                      ? 'bg-rose-500'
-                      : currentUser.status === 'busy'
-                      ? 'bg-amber-500'
-                      : currentUser.status === 'dnd'
-                      ? 'bg-rose-500'
-                      : currentUser.status === 'in_mic'
-                      ? 'bg-purple-500'
-                      : 'bg-emerald-500'
-                  }`}
                 />
                 <button
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
                   title="تغيير الصورة الشخصية مباشرة"
-                  className="absolute -bottom-0.5 -left-1 w-[18px] h-[18px] bg-indigo-600 hover:bg-indigo-500 text-white rounded-full flex items-center justify-center shadow-xs border-[1.5px] border-white transition-transform active:scale-90 cursor-pointer"
+                  className="absolute -bottom-0.5 -left-1 w-[18px] h-[18px] bg-indigo-600 hover:bg-indigo-500 text-white rounded-full flex items-center justify-center shadow-xs border-[1.5px] border-white transition-transform active:scale-90 cursor-pointer z-20"
                 >
                   <Camera className="w-2.5 h-2.5" />
                 </button>
               </div>
 
-              {/* Username right beside avatar, and live connection/activity status underneath */}
+              {/* Username right beside avatar, and unified live availability status underneath */}
               <button
                 type="button"
                 onClick={onOpenProfile}
-                title={`عرض الملف الشخصي: ${currentUser.name} (${isSocketConnected ? 'متصل' : 'غير متصل'})`}
+                title={`عرض الملف الشخصي: ${currentUser.name} (${isEffectiveOnline ? 'متاح' : 'غير متصل'})`}
                 className="flex flex-col justify-center leading-tight min-w-0 flex-1 text-right cursor-pointer"
               >
                 <div className="flex items-center gap-1 min-w-0">
-                  <span className="text-xs font-black text-slate-900 truncate hover:text-indigo-600 transition">
+                  <span className={`text-xs truncate hover:text-indigo-600 transition ${rankMeta.nameColorClass}`}>
                     {currentUser.name}
                   </span>
-                  {currentUser.vipBadge && (
-                    <span className="text-[8.5px] px-1 py-0.5 leading-none rounded bg-amber-100 text-amber-700 border border-amber-200 font-bold shrink-0">
-                      VIP
+                  {isPrivileged && (
+                    <span className={`text-[8.5px] px-1 py-0.5 leading-none rounded border font-black shrink-0 ${rankMeta.badgeClass}`}>
+                      {rankMeta.shortIcon}
                     </span>
                   )}
                 </div>
                 <div className="flex items-center gap-1 text-[9.5px] font-bold mt-0.5 min-w-0">
                   <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-                    !isSocketConnected
-                      ? 'bg-rose-500'
+                    !isEffectiveOnline
+                      ? 'bg-slate-400'
                       : currentUser.status === 'busy'
                       ? 'bg-amber-500'
                       : currentUser.status === 'dnd'
@@ -213,8 +204,8 @@ export const Header: React.FC<HeaderProps> = React.memo(({
                       : 'bg-emerald-500 animate-pulse'
                   }`} />
                   <span className={`truncate ${
-                    !isSocketConnected
-                      ? 'text-rose-600'
+                    !isEffectiveOnline
+                      ? 'text-slate-500'
                       : currentUser.status === 'busy'
                       ? 'text-amber-600'
                       : currentUser.status === 'dnd'
@@ -223,15 +214,17 @@ export const Header: React.FC<HeaderProps> = React.memo(({
                       ? 'text-purple-600'
                       : 'text-emerald-600'
                   }`}>
-                    {!isSocketConnected
+                    {!isEffectiveOnline
                       ? 'غير متصل'
                       : currentUser.status === 'busy'
-                      ? 'متصل • مشغول'
+                      ? 'مشغول'
                       : currentUser.status === 'dnd'
-                      ? 'متصل • لا تزعجني'
+                      ? 'لا تزعجني'
                       : currentUser.status === 'in_mic'
                       ? 'في مجلس صوتي'
-                      : 'متصل'}
+                      : currentUser.status === 'away'
+                      ? 'بالخارج'
+                      : 'متاح'}
                   </span>
                 </div>
               </button>
@@ -251,6 +244,18 @@ export const Header: React.FC<HeaderProps> = React.memo(({
 
             {/* Desktop Economy & Rank Strip (md+) */}
             <div className="hidden md:flex items-center gap-1.5 shrink-0">
+              {onOpenLeaderboard && (
+                <button
+                  type="button"
+                  onClick={onOpenLeaderboard}
+                  title="قائمة الكبار - التوب 10"
+                  className="h-9 px-2.5 rounded-xl bg-gradient-to-r from-amber-50 to-yellow-50 hover:from-amber-100 hover:to-yellow-100 border border-amber-200 text-amber-800 active:scale-95 transition-all flex items-center gap-1 shrink-0 whitespace-nowrap cursor-pointer"
+                >
+                  <Trophy className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                  <span className="text-xs font-black">الكبار</span>
+                </button>
+              )}
+
               <button 
                 type="button"
                 onClick={onOpenVip}
@@ -429,6 +434,17 @@ export const Header: React.FC<HeaderProps> = React.memo(({
                       {currentUser.coins.toLocaleString()}
                     </span>
                   </button>
+
+                  {onOpenLeaderboard && (
+                    <button
+                      type="button"
+                      onClick={onOpenLeaderboard}
+                      className="md:hidden w-full px-3 py-2 rounded-xl hover:bg-amber-50 text-amber-800 text-xs font-black flex items-center gap-2 transition"
+                    >
+                      <Trophy className="w-3.5 h-3.5 text-amber-600" />
+                      <span>الكبار (التوب 10)</span>
+                    </button>
+                  )}
 
                   <button
                     type="button"

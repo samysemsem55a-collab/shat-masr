@@ -240,41 +240,98 @@ export function subscribeToRoomPresence(
   onCountChange: (count: number, activeUsers: User[]) => void
 ): () => void {
   const presenceKey = `room_presence_${roomId}`;
-  
-  const registerLocalPresence = () => {
-    try {
-      const stored = localStorage.getItem(presenceKey);
-      const list: User[] = stored ? JSON.parse(stored) : [];
-      const updated = list.filter(u => u.id !== user.id);
-      updated.push({ ...user, isOnline: true });
-      localStorage.setItem(presenceKey, JSON.stringify(updated));
-      onCountChange(updated.length, updated);
+  const mergedMap = new Map<string, User>();
+  if (user?.id) {
+    mergedMap.set(user.id, { ...user, isOnline: true });
+  }
 
-      liveChatBus?.postMessage({
-        type: 'PRESENCE_UPDATE',
-        roomId,
-        users: updated
-      });
+  const emitMerged = () => {
+    const list = Array.from(mergedMap.values());
+    try {
+      localStorage.setItem(presenceKey, JSON.stringify(list));
     } catch {}
+    onCountChange(Math.max(1, list.length), list);
   };
 
-  const removeLocalPresence = () => {
+  let fsCleanup: (() => void) | null = null;
+  let fsHeartbeat: ReturnType<typeof setInterval> | null = null;
+  if (db && user?.id) {
     try {
-      const stored = localStorage.getItem(presenceKey);
-      if (stored) {
-        const list: User[] = JSON.parse(stored);
-        const updated = list.filter(u => u.id !== user.id);
-        localStorage.setItem(presenceKey, JSON.stringify(updated));
-        onCountChange(Math.max(1, updated.length), updated);
+      const presenceDocRef = doc(db, 'rooms', roomId, 'presence', user.id);
+      const presencePayload = {
+        id: user.id,
+        name: user.name,
+        avatar: user.avatar || '',
+        role: user.role || 'member',
+        vipBadge: user.vipBadge || '',
+        countryFlag: user.countryFlag || '🇪🇬',
+        badges: user.badges || [],
+        status: user.status || 'online',
+        isOnline: true,
+        isBanned: !!user.isBanned,
+        isMuted: !!user.isMuted,
+        lastSeen: Date.now(),
+        updatedAt: serverTimestamp(),
+      };
 
-        liveChatBus?.postMessage({
-          type: 'PRESENCE_UPDATE',
-          roomId,
-          users: updated
-        });
-      }
-    } catch {}
-  };
+      setDoc(presenceDocRef, presencePayload, { merge: true }).catch(() => {});
+      fsHeartbeat = setInterval(() => {
+        setDoc(presenceDocRef, { ...presencePayload, lastSeen: Date.now(), updatedAt: serverTimestamp() }, { merge: true }).catch(() => {});
+      }, 40000);
+
+      const presenceCol = collection(db, 'rooms', roomId, 'presence');
+      const unsubFs = onSnapshot(
+        presenceCol,
+        (snap) => {
+          const now = Date.now();
+          const activeDocIds = new Set<string>();
+          snap.docs.forEach((docSnap) => {
+            const data = docSnap.data();
+            const lastSeen = typeof data.lastSeen === 'number'
+              ? data.lastSeen
+              : data.updatedAt?.toMillis
+              ? data.updatedAt.toMillis()
+              : now;
+            if (now - lastSeen < 180000) {
+              activeDocIds.add(docSnap.id);
+              mergedMap.set(docSnap.id, {
+                id: docSnap.id,
+                name: data.name || 'عضو',
+                avatar: data.avatar || '',
+                role: data.role || 'member',
+                vipBadge: data.vipBadge || '',
+                countryFlag: data.countryFlag || '🇪🇬',
+                badges: Array.isArray(data.badges) ? data.badges : [],
+                status: data.status || 'online',
+                isOnline: true,
+                isBanned: !!data.isBanned,
+                isMuted: !!data.isMuted,
+              } as User);
+            } else {
+              mergedMap.delete(docSnap.id);
+            }
+          });
+          Array.from(mergedMap.keys()).forEach((id) => {
+            if (id !== user.id && !activeDocIds.has(id)) {
+              mergedMap.delete(id);
+            }
+          });
+          emitMerged();
+        },
+        (err) => {
+          console.warn(`Firestore rooms/${roomId}/presence onSnapshot notice:`, err);
+        }
+      );
+
+      fsCleanup = () => {
+        unsubFs();
+        if (fsHeartbeat) clearInterval(fsHeartbeat);
+        deleteDoc(presenceDocRef).catch(() => {});
+      };
+    } catch (e) {
+      console.warn('Firestore room presence setup error:', e);
+    }
+  }
 
   let rtdbCleanup: (() => void) | null = null;
   if (rtdb && user.id) {
@@ -305,9 +362,10 @@ export function subscribeToRoomPresence(
         const data = snapshot.val();
         if (data) {
           const usersList = Object.values(data) as User[];
-          onCountChange(usersList.length, usersList);
-        } else {
-          onCountChange(1, [user]);
+          usersList.forEach((u) => {
+            if (u && u.id) mergedMap.set(u.id, { ...mergedMap.get(u.id), ...u, isOnline: true });
+          });
+          emitMerged();
         }
       });
 
@@ -323,19 +381,33 @@ export function subscribeToRoomPresence(
     }
   }
 
-  registerLocalPresence();
+  emitMerged();
+  liveChatBus?.postMessage({
+    type: 'PRESENCE_UPDATE',
+    roomId,
+    users: Array.from(mergedMap.values())
+  });
 
   const handleMessage = (event: MessageEvent) => {
     if (event.data?.type === 'PRESENCE_UPDATE' && event.data.roomId === roomId) {
       const users: User[] = event.data.users || [];
-      onCountChange(users.length, users);
+      users.forEach((u) => {
+        if (u && u.id) mergedMap.set(u.id, { ...mergedMap.get(u.id), ...u, isOnline: true });
+      });
+      emitMerged();
     }
   };
   liveChatBus?.addEventListener('message', handleMessage);
 
   return () => {
-    removeLocalPresence();
+    mergedMap.delete(user.id);
+    liveChatBus?.postMessage({
+      type: 'PRESENCE_UPDATE',
+      roomId,
+      users: Array.from(mergedMap.values())
+    });
     liveChatBus?.removeEventListener('message', handleMessage);
+    if (fsCleanup) fsCleanup();
     if (rtdbCleanup) rtdbCleanup();
   };
 }
@@ -347,6 +419,7 @@ export function subscribeToGlobalPresence(
 ): () => void {
   const globalKey = 'arab_chat_global_presence';
   const liveUsersMap = new Map<string, User>();
+  const firestoreTrackedIds = new Set<string>();
   let lastPresenceSignature = '';
 
   // Helper to emit merged live presence only when visible user list/fields actually change
@@ -358,7 +431,7 @@ export function subscribeToGlobalPresence(
     const sig = list
       .map(
         (u) =>
-          `${u.id}:${u.name || ''}:${u.avatar || ''}:${u.status || ''}:${u.role || ''}:${u.vipBadge || ''}:${u.isBanned ? 1 : 0}:${u.isMuted ? 1 : 0}`
+          `${u.id}:${u.name || ''}:${u.avatar || ''}:${u.status || ''}:${u.role || ''}:${u.vipBadge || ''}:${u.profileBanner || ''}:${u.isBanned ? 1 : 0}:${u.isMuted ? 1 : 0}`
       )
       .sort()
       .join('|');
@@ -389,10 +462,18 @@ export function subscribeToGlobalPresence(
         avatar: user.avatar || '',
         role: user.role || 'member',
         vipBadge: user.vipBadge || '',
+        badges: user.badges || [],
+        frameStyle: user.frameStyle || '',
+        profileBanner: user.profileBanner || '',
+        favoriteMusicUrl: user.favoriteMusicUrl || '',
         countryFlag: user.countryFlag || '🇪🇬',
         sessionId: user.sessionId || '',
         isGuest: !!user.isGuest,
         status: user.status || 'online',
+        isBanned: !!user.isBanned,
+        isMuted: !!user.isMuted,
+        coins: Number(user.coins) || 0,
+        ratingPoints: Number(user.ratingPoints) || 0,
         isOnline: true,
         lastSeen: Date.now(),
         updatedAt: serverTimestamp()
@@ -401,43 +482,71 @@ export function subscribeToGlobalPresence(
       // Write heartbeat immediately
       setDoc(userOnlineDoc, onlinePayload, { merge: true }).catch(() => {});
 
-      // Keep heartbeat alive every 45 seconds
+      // Keep heartbeat alive every 35 seconds
       heartbeatTimer = setInterval(() => {
         setDoc(userOnlineDoc, {
           ...onlinePayload,
           lastSeen: Date.now(),
           updatedAt: serverTimestamp()
         }, { merge: true }).catch(() => {});
-      }, 45000);
+      }, 35000);
 
-      // Listen to all online users in Firestore
+      // Listen to all online users in Firestore in real time (zero empty-snap block)
       const onlineCol = collection(db, 'online_users');
       unsubFirestore = onSnapshot(onlineCol, (snap) => {
-        if (!snap.empty) {
-          const now = Date.now();
-          snap.docs.forEach((docSnap) => {
-            const data = docSnap.data();
-            const lastSeen = data.lastSeen || (data.updatedAt?.toMillis ? data.updatedAt.toMillis() : now);
-            // Consider active within 3 minutes
-            if (now - lastSeen < 180000) {
-              liveUsersMap.set(docSnap.id, {
-                id: docSnap.id,
-                name: data.name || 'مستخدم',
-                avatar: data.avatar || '',
-                role: data.role || 'member',
-                vipBadge: data.vipBadge || '',
-                countryFlag: data.countryFlag || '🇪🇬',
-                sessionId: data.sessionId || undefined,
-                isGuest: !!data.isGuest,
-                status: data.status || 'online',
-                isOnline: true
-              } as User);
-            } else {
+        const now = Date.now();
+        const currentFsIds = new Set<string>();
+        snap.docs.forEach((docSnap) => {
+          const data = docSnap.data();
+          const lastSeen = typeof data.lastSeen === 'number'
+            ? data.lastSeen
+            : data.updatedAt?.toMillis
+            ? data.updatedAt.toMillis()
+            : now;
+          // Consider active within 3 minutes
+          if (now - lastSeen < 180000) {
+            currentFsIds.add(docSnap.id);
+            firestoreTrackedIds.add(docSnap.id);
+            liveUsersMap.set(docSnap.id, {
+              ...liveUsersMap.get(docSnap.id),
+              id: docSnap.id,
+              name: data.name || 'مستخدم',
+              avatar: data.avatar || '',
+              role: data.role || 'member',
+              vipBadge: data.vipBadge || '',
+              badges: Array.isArray(data.badges) ? data.badges : [],
+              frameStyle: data.frameStyle || '',
+              profileBanner: data.profileBanner || '',
+              favoriteMusicUrl: data.favoriteMusicUrl || '',
+              countryFlag: data.countryFlag || '🇪🇬',
+              sessionId: data.sessionId || undefined,
+              isGuest: !!data.isGuest,
+              status: data.status || 'online',
+              isBanned: !!data.isBanned,
+              isMuted: !!data.isMuted,
+              coins: Number(data.coins) || 0,
+              ratingPoints: Number(data.ratingPoints) || 0,
+              isOnline: true
+            } as User);
+          } else {
+            firestoreTrackedIds.delete(docSnap.id);
+            if (docSnap.id !== user.id) {
               liveUsersMap.delete(docSnap.id);
             }
-          });
-          emitPresence();
-        }
+          }
+        });
+
+        // Remove any previously Firestore-tracked doc that left online_users
+        Array.from(firestoreTrackedIds).forEach((trackedId) => {
+          if (!currentFsIds.has(trackedId)) {
+            firestoreTrackedIds.delete(trackedId);
+            if (trackedId !== user.id) {
+              liveUsersMap.delete(trackedId);
+            }
+          }
+        });
+
+        emitPresence();
       }, (err) => {
         console.warn('Firestore online_users onSnapshot notice:', err);
       });
@@ -887,6 +996,8 @@ export async function syncUserProfileToFirebase(user: User): Promise<void> {
     isBanned: user.isBanned || false,
     isMuted: user.isMuted || false,
     frameStyle: user.frameStyle || '',
+    profileBanner: user.profileBanner || '',
+    favoriteMusicUrl: user.favoriteMusicUrl || '',
     status: user.status || 'online',
     sessionId: user.sessionId || '',
     isGuest: !!user.isGuest,
@@ -910,6 +1021,8 @@ export async function syncUserProfileToFirebase(user: User): Promise<void> {
         status: profilePayload.status,
         name: profilePayload.name,
         avatar: profilePayload.avatar,
+        role: profilePayload.role,
+        vipBadge: profilePayload.vipBadge,
         lastSeen: Date.now()
       }).catch(() => {});
     } catch (e) {
@@ -926,6 +1039,16 @@ export async function syncUserProfileToFirebase(user: User): Promise<void> {
         id: user.id,
         name: user.name,
         avatar: user.avatar || '',
+        role: profilePayload.role,
+        vipBadge: profilePayload.vipBadge,
+        badges: profilePayload.badges,
+        frameStyle: profilePayload.frameStyle,
+        profileBanner: profilePayload.profileBanner,
+        favoriteMusicUrl: profilePayload.favoriteMusicUrl,
+        isBanned: profilePayload.isBanned,
+        isMuted: profilePayload.isMuted,
+        coins: profilePayload.coins,
+        ratingPoints: profilePayload.ratingPoints,
         status: profilePayload.status,
         isOnline: true,
         lastSeen: Date.now(),
@@ -1014,31 +1137,35 @@ export function subscribeToAllUsers(
     try {
       const usersCol = collection(db, 'users');
       unsubFirestore = onSnapshot(usersCol, (snap) => {
-        if (!snap.empty) {
-          snap.docs.forEach((docSnap) => {
-            const data = docSnap.data();
-            usersMap.set(docSnap.id, {
-              id: docSnap.id,
-              name: data.name || 'مستخدم',
-              username: data.username || 'user',
-              avatar: data.avatar || '',
-              countryFlag: data.countryFlag || '🇪🇬',
-              country: data.country || 'مصر',
-              role: data.role || 'member',
-              vipBadge: data.vipBadge || '',
-              coins: data.coins || 0,
-              earningsEgp: data.earningsEgp || 0,
-              badges: data.badges || [],
-              ratingPoints: data.ratingPoints || 0,
-              isBanned: data.isBanned || false,
-              isMuted: data.isMuted || false,
-              frameStyle: data.frameStyle || '',
-              bio: data.bio || '',
-              status: 'online'
-            } as User);
-          });
-          emit();
-        }
+        snap.docs.forEach((docSnap) => {
+          const data = docSnap.data();
+          usersMap.set(docSnap.id, {
+            id: docSnap.id,
+            name: data.name || 'مستخدم',
+            username: data.username || 'user',
+            avatar: data.avatar || '',
+            countryFlag: data.countryFlag || '🇪🇬',
+            country: data.country || 'مصر',
+            role: data.role || 'member',
+            vipBadge: data.vipBadge || '',
+            coins: Number(data.coins) || 0,
+            earningsEgp: Number(data.earningsEgp) || 0,
+            badges: Array.isArray(data.badges) ? data.badges : [],
+            ratingPoints: Number(data.ratingPoints) || 0,
+            giftsReceivedCount: Number(data.giftsReceivedCount) || 0,
+            level: Number(data.level) || 1,
+            isBanned: Boolean(data.isBanned),
+            isMuted: Boolean(data.isMuted),
+            isGuest: Boolean(data.isGuest),
+            frameStyle: data.frameStyle || '',
+            profileBanner: data.profileBanner || '',
+            favoriteMusicUrl: data.favoriteMusicUrl || '',
+            bio: data.bio || '',
+            status: data.status || 'online',
+            isOnline: data.status !== 'offline'
+          } as User);
+        });
+        emit();
       }, (e) => {
         console.warn('Firestore subscribeToAllUsers notice:', e);
       });
@@ -1088,10 +1215,13 @@ export async function adminUpdateUser(
     try {
       const userDoc = doc(db, 'users', targetUserId);
       await setDoc(userDoc, updates, { merge: true });
+      await setDoc(doc(db, 'online_users', targetUserId), updates, { merge: true }).catch(() => {});
     } catch (e) {
       console.warn("Admin update Firestore notice:", e);
     }
   }
+
+  realtimeSocket.sendAdminAction(targetUserId, updates);
 
   liveChatBus?.postMessage({
     type: 'ADMIN_USER_UPDATED',
@@ -2423,12 +2553,22 @@ export async function verifyFirebasePhoneOtp(
     const phone = firebaseUser.phoneNumber || currentUser.phoneNumber || '';
     const newUid = firebaseUser.uid;
 
+    const cleanedBadges = (currentUser.badges || []).filter((b) => !b.includes('زائر'));
+    const nextRole = currentUser.role === 'guest' ? 'member' : currentUser.role;
+    const nextVipBadge =
+      currentUser.vipBadge && currentUser.vipBadge.includes('زائر')
+        ? 'عضو موثق 📱'
+        : currentUser.vipBadge;
+
     const updatedUser: User = {
       ...currentUser,
       id: newUid,
       phoneNumber: phone,
       isPhoneVerified: true,
-      badges: Array.from(new Set([...(currentUser.badges || []), 'حساب موثق 📱']))
+      isGuest: false,
+      role: nextRole,
+      vipBadge: nextVipBadge,
+      badges: Array.from(new Set([...cleanedBadges, 'حساب موثق 📱']))
     };
 
     // Sync to Firestore & Realtime DB
@@ -2469,6 +2609,17 @@ export async function signInWithGoogle(
     const email = (firebaseUser.email || '').toLowerCase().trim();
     const newUid = firebaseUser.uid;
     const isOwner = email === 'samielsayed555@gmail.com';
+    const cleanedBadges = (currentUser.badges || []).filter((b) => !b.includes('زائر'));
+    const nextRole = isOwner
+      ? 'owner'
+      : currentUser.role === 'owner' || currentUser.role === 'guest'
+      ? 'member'
+      : currentUser.role;
+    const nextVipBadge = isOwner
+      ? 'مالك المنصة والإدارة العليا 👑'
+      : currentUser.vipBadge && currentUser.vipBadge.includes('زائر')
+      ? 'عضو مسجل 🌐'
+      : currentUser.vipBadge;
 
     const updatedUser: User = {
       ...currentUser,
@@ -2476,10 +2627,11 @@ export async function signInWithGoogle(
       email: email,
       name: firebaseUser.displayName || currentUser.name,
       avatar: firebaseUser.photoURL || currentUser.avatar,
-      isEmailVerified: firebaseUser.emailVerified,
-      role: isOwner ? 'owner' : (currentUser.role === 'owner' ? 'member' : currentUser.role),
-      vipBadge: isOwner ? 'مالك المنصة والإدارة العليا 👑' : currentUser.vipBadge,
-      badges: Array.from(new Set([...(currentUser.badges || []), 'حساب Google موثق 🌐', ...(isOwner ? ['الإدارة العليا ⭐'] : [])]))
+      isEmailVerified: firebaseUser.emailVerified || true,
+      isGuest: false,
+      role: nextRole,
+      vipBadge: nextVipBadge,
+      badges: Array.from(new Set([...cleanedBadges, 'حساب Google موثق 🌐', ...(isOwner ? ['الإدارة العليا ⭐'] : [])]))
     };
 
     if (isOwner) {
@@ -3965,6 +4117,10 @@ export function subscribeToForumPosts(
               authorVipBadge: data.authorVipBadge || '',
               authorRole: data.authorRole || 'member',
               text: data.text || '',
+              imageUrl: data.imageUrl || undefined,
+              isPinned: Boolean(data.isPinned),
+              pinnedAt: typeof data.pinnedAt === 'number' ? data.pinnedAt : undefined,
+              pinnedBy: data.pinnedBy || undefined,
               likedBy: Array.isArray(data.likedBy) ? data.likedBy : [],
               likesCount: Number(data.likesCount) || (Array.isArray(data.likedBy) ? data.likedBy.length : 0),
               commentsCount: Number(data.commentsCount) || 0,
@@ -4006,7 +4162,7 @@ export function subscribeToForumPosts(
   };
 }
 
-export async function createForumPost(user: User, text: string): Promise<ForumPost> {
+export async function createForumPost(user: User, text: string, imageUrl?: string): Promise<ForumPost> {
   const id = `post_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
   const post: ForumPost = {
     id,
@@ -4018,6 +4174,8 @@ export async function createForumPost(user: User, text: string): Promise<ForumPo
     authorVipBadge: user.vipBadge || '',
     authorRole: user.role || 'member',
     text: text.trim(),
+    ...(imageUrl ? { imageUrl } : {}),
+    isPinned: false,
     likedBy: [],
     likesCount: 0,
     commentsCount: 0,
@@ -4040,6 +4198,50 @@ export async function createForumPost(user: User, text: string): Promise<ForumPo
     }
   }
   return post;
+}
+
+export async function toggleForumPostPin(
+  postId: string,
+  isPinned: boolean,
+  pinnedBy?: string
+): Promise<void> {
+  const nextPinState = Boolean(isPinned);
+  const pinnedAt = nextPinState ? Date.now() : 0;
+
+  try {
+    const raw = localStorage.getItem(LOCAL_FORUM_KEY);
+    if (raw) {
+      const list: ForumPost[] = JSON.parse(raw);
+      const updated = list.map((p) =>
+        p.id === postId
+          ? {
+              ...p,
+              isPinned: nextPinState,
+              pinnedAt: nextPinState ? pinnedAt : undefined,
+              pinnedBy: nextPinState ? pinnedBy || 'الإدارة' : undefined,
+            }
+          : p
+      );
+      localStorage.setItem(LOCAL_FORUM_KEY, JSON.stringify(updated));
+    }
+  } catch {}
+  liveChatBus?.postMessage({ type: 'FORUM_POSTS_CHANGED' });
+
+  if (db) {
+    try {
+      await setDoc(
+        doc(db, 'forum_posts', postId),
+        {
+          isPinned: nextPinState,
+          pinnedAt: nextPinState ? pinnedAt : null,
+          pinnedBy: nextPinState ? pinnedBy || 'الإدارة' : null,
+        },
+        { merge: true }
+      );
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `forum_posts/${postId}`);
+    }
+  }
 }
 
 export async function toggleForumPostLike(postId: string, userId: string, currentlyLiked: boolean): Promise<void> {
@@ -4831,227 +5033,127 @@ export function subscribeToAllRoomLocks(
 }
 
 // ==========================================
-// 26. IN-PLACE SILENT HOME DATA REFRESH (Pull-to-Refresh)
+// 26. REALTIME HEALTH MONITOR & TOP 10 LEADERBOARD
 // ==========================================
-export interface HomeRefreshResult {
-  visitorsCount: number | null;
-  onlineUsers: User[];
-  roomLocks: Record<string, boolean> | null;
+export function subscribeToRealtimeFirestoreHealth(
+  onHealth: (health: { ok: boolean; latencyMs: number; projectId: string; timestamp: number }) => void
+): () => void {
+  if (!db) {
+    onHealth({ ok: false, latencyMs: 0, projectId: firebaseConfig.projectId, timestamp: Date.now() });
+    return () => {};
+  }
+
+  const start = Date.now();
+  const statsDocRef = doc(db, 'stats', 'visitors');
+  return onSnapshot(
+    statsDocRef,
+    { includeMetadataChanges: true },
+    (snap) => {
+      onHealth({
+        ok: true,
+        latencyMs: Math.max(1, Date.now() - start),
+        projectId: firebaseConfig.projectId,
+        timestamp: Date.now(),
+      });
+    },
+    (err) => {
+      console.warn('Firestore realtime health listener error:', err);
+      onHealth({
+        ok: false,
+        latencyMs: Math.max(1, Date.now() - start),
+        projectId: firebaseConfig.projectId,
+        timestamp: Date.now(),
+      });
+    }
+  );
 }
 
-export async function refreshHomeDataFromFirebase(currentUser?: User): Promise<HomeRefreshResult> {
-  const result: HomeRefreshResult = {
-    visitorsCount: null,
-    onlineUsers: [],
-    roomLocks: null
+export function subscribeToLeaderboardUsers(
+  onLeaderboard: (leaders: User[]) => void
+): () => void {
+  const scoreFor = (u: User) =>
+    (Number(u.ratingPoints) || 0) +
+    Math.floor((Number(u.coins) || 0) / 25) +
+    (Number(u.giftsReceivedCount) || 0) * 15;
+
+  const userMap = new Map<string, User>();
+  const emitSorted = () => {
+    const list = Array.from(userMap.values())
+      .filter((u) => u && u.id && !u.isBanned && u.id !== 'system_bot')
+      .sort((a, b) => scoreFor(b) - scoreFor(a))
+      .slice(0, 15);
+    onLeaderboard(list);
   };
 
-  const mergedOnlineMap = new Map<string, User>();
-  if (currentUser?.id) {
-    mergedOnlineMap.set(currentUser.id, { ...currentUser, isOnline: true });
-  }
+  let unsubUsers: (() => void) | null = null;
+  let unsubOnline: (() => void) | null = null;
 
-  const tasks: Promise<void>[] = [];
-
-  // 1. REST Presence & Visitors Count (Server authoritative)
-  if (typeof fetch === 'function') {
-    tasks.push(
-      fetch('/api/stats/visitors')
-        .then((r) => (r.ok ? r.json() : null))
-        .then((data) => {
-          if (data && typeof data.count === 'number' && !isNaN(data.count)) {
-            result.visitorsCount = Math.max(result.visitorsCount ?? 0, Math.floor(data.count));
-          }
-        })
-        .catch(() => {})
-    );
-
-    tasks.push(
-      fetch('/api/presence')
-        .then((r) => (r.ok ? r.json() : null))
-        .then((data) => {
-          if (Array.isArray(data?.users)) {
-            data.users.forEach((u: User) => {
-              if (u && u.id) mergedOnlineMap.set(u.id, { ...u, isOnline: true });
-            });
-          }
-        })
-        .catch(() => {})
-    );
-  }
-
-  // 2. Firestore authoritative reads (with handleFirestoreError)
   if (db) {
-    const fsDb = db;
-
-    // 2a. Cumulative visitors from Firestore stats/visitors
-    tasks.push(
-      (async () => {
-        try {
-          const snap = await getDocFromServer(doc(fsDb, 'stats', 'visitors'));
-          if (snap.exists()) {
-            const val = Number(snap.data()?.totalVisitors);
-            if (!isNaN(val) && val > 0) {
-              result.visitorsCount = Math.max(result.visitorsCount ?? 0, Math.floor(val));
-            }
-          }
-        } catch (err) {
-          handleFirestoreError(err, OperationType.GET, 'stats/visitors');
-        }
-      })()
-    );
-
-    // 2b. Online users from Firestore online_users
-    tasks.push(
-      (async () => {
-        try {
-          if (currentUser?.id) {
-            setDoc(
-              doc(fsDb, 'online_users', currentUser.id),
-              {
-                id: currentUser.id,
-                name: currentUser.name,
-                avatar: currentUser.avatar || '',
-                role: currentUser.role || 'member',
-                vipBadge: currentUser.vipBadge || '',
-                countryFlag: currentUser.countryFlag || '🇪🇬',
-                sessionId: currentUser.sessionId || '',
-                isGuest: !!currentUser.isGuest,
-                status: currentUser.status || 'online',
-                isOnline: true,
-                lastSeen: Date.now(),
-                updatedAt: serverTimestamp()
-              },
-              { merge: true }
-            ).catch(() => {});
-          }
-
-          const snap = await getDocs(collection(fsDb, 'online_users'));
-          const now = Date.now();
+    try {
+      unsubUsers = onSnapshot(
+        collection(db, 'users'),
+        (snap) => {
           snap.docs.forEach((docSnap) => {
-            const data = docSnap.data();
-            const lastSeen = data.lastSeen || (data.updatedAt?.toMillis ? data.updatedAt.toMillis() : now);
-            if (now - lastSeen < 180000) {
-              mergedOnlineMap.set(docSnap.id, {
-                id: docSnap.id,
-                name: data.name || 'مستخدم',
-                avatar: data.avatar || '',
-                role: data.role || 'member',
-                vipBadge: data.vipBadge || '',
-                countryFlag: data.countryFlag || '🇪🇬',
-                sessionId: data.sessionId || undefined,
-                isGuest: !!data.isGuest,
-                status: data.status || 'online',
-                isOnline: true
-              } as User);
-            }
+            const d = docSnap.data();
+            userMap.set(docSnap.id, {
+              ...userMap.get(docSnap.id),
+              id: docSnap.id,
+              name: d.name || 'عضو',
+              username: d.username || 'user',
+              avatar: d.avatar || '',
+              countryFlag: d.countryFlag || '🇪🇬',
+              country: d.country || 'مصر',
+              role: d.role || 'member',
+              vipBadge: d.vipBadge || '',
+              coins: Number(d.coins) || 0,
+              ratingPoints: Number(d.ratingPoints) || 0,
+              giftsReceivedCount: Number(d.giftsReceivedCount) || 0,
+              level: Number(d.level) || 1,
+              isBanned: Boolean(d.isBanned),
+              status: d.status || 'online',
+              isOnline: d.status !== 'offline',
+            } as User);
           });
-        } catch (err) {
-          handleFirestoreError(err, OperationType.LIST, 'online_users');
+          emitSorted();
+        },
+        (err) => {
+          console.warn('Firestore leaderboard users onSnapshot notice:', err);
         }
-      })()
-    );
+      );
 
-    // 2c. Forum posts refresh -> BroadcastChannel updates RoomsView in-place
-    tasks.push(
-      (async () => {
-        try {
-          const q = query(collection(fsDb, 'forum_posts'), orderBy('createdAt', 'desc'), limit(60));
-          const snapshot = await getDocs(q);
-          const list: ForumPost[] = snapshot.docs.map((d) => {
-            const data = d.data();
-            return {
-              id: data.id || d.id,
-              authorId: data.authorId || '',
-              authorName: data.authorName || 'عضو',
-              authorAvatar: data.authorAvatar || '',
-              authorGender: data.authorGender || 'male',
-              authorCountryFlag: data.authorCountryFlag || '🇪🇬',
-              authorVipBadge: data.authorVipBadge || '',
-              authorRole: data.authorRole || 'member',
-              text: data.text || '',
-              likedBy: Array.isArray(data.likedBy) ? data.likedBy : [],
-              likesCount: Number(data.likesCount) || (Array.isArray(data.likedBy) ? data.likedBy.length : 0),
-              commentsCount: Number(data.commentsCount) || 0,
-              createdAt: typeof data.createdAt === 'number' ? data.createdAt : Date.now()
-            };
+      unsubOnline = onSnapshot(
+        collection(db, 'online_users'),
+        (snap) => {
+          snap.docs.forEach((docSnap) => {
+            const d = docSnap.data();
+            const prev = userMap.get(docSnap.id);
+            userMap.set(docSnap.id, {
+              ...prev,
+              id: docSnap.id,
+              name: d.name || prev?.name || 'عضو',
+              avatar: d.avatar || prev?.avatar || '',
+              role: d.role || prev?.role || 'member',
+              vipBadge: d.vipBadge || prev?.vipBadge || '',
+              countryFlag: d.countryFlag || prev?.countryFlag || '🇪🇬',
+              coins: Number(d.coins ?? prev?.coins) || 0,
+              ratingPoints: Number(d.ratingPoints ?? prev?.ratingPoints) || 0,
+              status: d.status || prev?.status || 'online',
+              isOnline: true,
+            } as User);
           });
-          try {
-            localStorage.setItem(LOCAL_FORUM_KEY, JSON.stringify(list.slice(0, 80)));
-          } catch {}
-          liveChatBus?.postMessage({ type: 'FORUM_POSTS_CHANGED' });
-          if (typeof window !== 'undefined') {
-            window.dispatchEvent(new CustomEvent('shat_masr_sync_event', { detail: { type: 'FORUM_POSTS_CHANGED' } }));
-          }
-        } catch (err) {
-          handleFirestoreError(err, OperationType.LIST, 'forum_posts');
+          emitSorted();
+        },
+        (err) => {
+          console.warn('Firestore leaderboard online_users onSnapshot notice:', err);
         }
-      })()
-    );
-
-    // 2d. Shared daily room missions refresh -> updates RoomsView in-place
-    tasks.push(
-      (async () => {
-        try {
-          const dateKey = getTodayKey();
-          const localKey = `shat_masr_shared_missions_${dateKey}`;
-          const q = query(collection(fsDb, 'room_daily_missions'), where('dateKey', '==', dateKey));
-          const snap = await getDocs(q);
-          if (!snap.empty) {
-            const list: SharedRoomMission[] = snap.docs.map((d) => d.data() as SharedRoomMission);
-            try {
-              localStorage.setItem(localKey, JSON.stringify(list));
-            } catch {}
-            liveChatBus?.postMessage({ type: 'SHARED_MISSIONS_CHANGED' });
-            if (typeof window !== 'undefined') {
-              window.dispatchEvent(new CustomEvent('shat_masr_sync_event', { detail: { type: 'SHARED_MISSIONS_CHANGED' } }));
-            }
-          }
-        } catch (err) {
-          handleFirestoreError(err, OperationType.LIST, 'room_daily_missions');
-        }
-      })()
-    );
-
-    // 2e. Room locks state from Firestore rooms collection
-    tasks.push(
-      (async () => {
-        try {
-          const snap = await getDocs(collection(fsDb, 'rooms'));
-          const locks: Record<string, boolean> = {};
-          snap.docs.forEach((d) => {
-            const data = d.data();
-            if (typeof data?.isLocked === 'boolean') {
-              if (data.isLocked) {
-                locks[d.id] = true;
-                try {
-                  localStorage.setItem(`room_lock_${d.id}`, 'true');
-                } catch {}
-              } else {
-                try {
-                  localStorage.removeItem(`room_lock_${d.id}`);
-                } catch {}
-              }
-            }
-          });
-          result.roomLocks = locks;
-        } catch (err) {
-          handleFirestoreError(err, OperationType.LIST, 'rooms');
-        }
-      })()
-    );
+      );
+    } catch (e) {
+      console.warn('Leaderboard subscription setup notice:', e);
+    }
   }
 
-  // Race against a 3.5s safety timeout so offline connections settle smoothly
-  await Promise.race([
-    Promise.allSettled(tasks),
-    new Promise<void>((resolve) => setTimeout(resolve, 3500))
-  ]);
-
-  result.onlineUsers = Array.from(mergedOnlineMap.values());
-  return result;
+  return () => {
+    if (unsubUsers) unsubUsers();
+    if (unsubOnline) unsubOnline();
+  };
 }
-
-
-
-

@@ -14,6 +14,7 @@ import {
   PhoneIncoming,
 } from 'lucide-react';
 import { User } from '../types/chat';
+import { isGuestUser } from '../data/seedData';
 import { sounds } from '../utils/soundEffects';
 import { realtimeSocket } from '../services/realtimeSocket';
 
@@ -52,11 +53,7 @@ export const CallModal: React.FC<CallModalProps> = ({
   incomingMode = false,
   incomingSignal,
 }) => {
-  const isGuest =
-    currentUser.role === 'guest' ||
-    Boolean((currentUser as { isGuest?: boolean }).isGuest) ||
-    currentUser.id.startsWith('guest_') ||
-    currentUser.id.startsWith('visitor_');
+  const isGuest = isGuestUser(currentUser);
 
   const [callState, setCallState] = useState<'incoming' | 'ringing' | 'connected' | 'ended'>(
     incomingMode ? 'incoming' : 'ringing'

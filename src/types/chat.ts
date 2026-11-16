@@ -47,6 +47,8 @@ export interface User {
   unlockedWallpapers?: string[];
   isGuest?: boolean;
   sessionId?: string;
+  profileBanner?: string;
+  favoriteMusicUrl?: string;
   notificationPrefs?: {
     directMessages: boolean;
     gifts: boolean;
@@ -178,6 +180,8 @@ export interface GiftItem {
   cost: number;
   animation: 'lion' | 'car' | 'cairo_tower' | 'crown' | 'rocket' | 'rose' | 'coffee' | 'diamond';
   bannerText: string;
+  category?: 'luxury' | 'interactive';
+  effectType?: 'roses' | 'fireworks' | 'gold_rain' | 'hearts';
 }
 
 export interface Message {
@@ -250,6 +254,10 @@ export interface ForumPost {
   authorVipBadge?: string;
   authorRole?: UserRole;
   text: string;
+  imageUrl?: string;
+  isPinned?: boolean;
+  pinnedAt?: number;
+  pinnedBy?: string;
   likedBy: string[];
   likesCount: number;
   commentsCount: number;

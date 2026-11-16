@@ -7,6 +7,7 @@ export interface ArabicSong {
   categoryLabel: string;
   duration: string;
   durationSeconds: number;
+  audioUrl?: string;
   melodyNotes?: number[]; // Audio frequencies in Hz for realistic playback synthesis
 }
 
@@ -195,18 +196,20 @@ class RealArabicAudioPlayer {
 
 export const realArabicAudioPlayer = new RealArabicAudioPlayer();
 
-// Backwards-compatible song player mapping songs to authentic high-fidelity live music streams
+// Backwards-compatible song player mapping songs to complete verified Archive.org MP3 tracks
 export const arabicMelodySynth = {
   playSong(song: ArabicSong) {
-    let url = 'https://medinatarab.ice.infomaniak.ch/medinatarab-128.mp3'; // Tarab default
-    if (song.category === 'levantine' || song.artist.includes('فيروز')) {
-      url = 'https://stream.zeno.fm/xkhnk4vee18uv'; // Fairuz 24/7
-    } else if (song.category === 'classic' || song.artist.includes('عمرو دياب') || song.category === 'modern') {
-      url = 'https://stream.zeno.fm/8a4eqkd0pnhvv'; // 90s FM Egypt
+    let url = 'https://archive.org/download/umm-kulthum-enta-el-hobal-ahat/01%20Inta%20Al%20Hob.mp3';
+    if (song.audioUrl) {
+      url = song.audioUrl;
+    } else if (song.category === 'levantine' || song.artist.includes('فيروز')) {
+      url = 'https://archive.org/download/y-2meta.app-amr-diab-amarain-official-music-video-hd-version-128-kbps/Y2meta.app%20-%20Nancy%20Ajram%20-%20Aam%20Betghayar%20_%20Romanized%20Lyrics%20_%20%D9%86%D8%A7%D9%86%D8%B3%D9%8A%20%D8%B9%D8%AC%D8%B1%D9%85%20-%20%D8%B9%D9%85%20%D8%A8%D8%AA%D8%BA%D9%8A%D9%91%D8%B1%20%28128%20kbps%29.mp3';
+    } else if (song.artist.includes('عمرو دياب') || song.category === 'modern') {
+      url = 'https://archive.org/download/ragein/01%20Ragein.mp3';
     } else if (song.category === 'khaleeji') {
-      url = 'http://philae.shoutca.st:8250/stream'; // Rotana FM
-    } else if (song.category === 'tarab') {
-      url = 'https://medinatarab.ice.infomaniak.ch/medinatarab-128.mp3'; // Tarab Zaman
+      url = 'https://archive.org/download/y-2meta.app-amr-diab-amarain-official-music-video-hd-version-128-kbps/Y2meta.app%20-%20%D8%B9%D8%A8%D8%AF%D8%A7%D9%84%D9%85%D8%AC%D9%8A%D8%AF%20%D8%B9%D8%A8%D8%AF%D8%A7%D9%84%D9%84%D9%87%20-%20%D9%8a%D8%A7%20%D8%A3%D8%A8%D9%86%20%D8%A7%D9%84%D8%A7%D9%88%D8%A7%D8%AF%D9%85%20%28%D8%A3%D9%84%D8%A8%D9%88%D9%85%20%D8%B9%D8%A7%D9%84%D9%85%20%D9%85%D9%88%D8%A7%D8%B2%D9%8a%29%20_%202021%20%28128%20kbps%29.mp3';
+    } else if (song.artist.includes('عبد الحليم') || song.category === 'classic') {
+      url = 'https://archive.org/download/y-2mate.com-ala-hesb-wedad-abdel-halim-hafez_202305/y2mate.com%20-%20Ala%20Hesb%20Wedad%20%20Abdel%20Halim%20Hafez%20%20%D8%B9%D9%84%D9%89%20%D8%AD%D8%B3%D8%A8%20%D9%88%D8%AF%D8%A7%D8%AF%20%D9%82%D9%84%D8%A8%D9%89%20%20%D8%B9%D8%A8%D8%AF%20%D8%A7%D9%84%D8%AD%D9%84%D9%8A%D9%85%20%D8%AD%D8%A7%D9%81%D8%B8.mp3';
     }
     realArabicAudioPlayer.playStream(url);
   },
