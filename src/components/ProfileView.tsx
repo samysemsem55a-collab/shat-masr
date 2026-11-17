@@ -15,7 +15,9 @@ import {
   Music,
   Play,
   Square,
-  Image as ImageIcon
+  Image as ImageIcon,
+  Moon,
+  Sun
 } from 'lucide-react';
 import { User } from '../types/chat';
 import { isUserAdminOrOwner } from '../data/seedData';
@@ -65,6 +67,8 @@ interface ProfileViewProps {
   onOpenWallet: () => void;
   onOpenVip: () => void;
   onLogout?: () => void;
+  isDarkMode?: boolean;
+  onToggleDarkMode?: () => void;
 }
 
 const ANIME_AVATARS = [
@@ -121,7 +125,15 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   onOpenWallet,
   onOpenVip,
   onLogout,
+  isDarkMode,
+  onToggleDarkMode,
 }) => {
+  const effectiveDarkMode = isDarkMode ?? (typeof document !== 'undefined' && document.documentElement.classList.contains('dark'));
+  const handleToggleDarkMode = () => {
+    if (onToggleDarkMode) {
+      onToggleDarkMode();
+    }
+  };
   const [activeTab, setActiveTab] = useState<'info' | 'appearance' | 'security'>('info');
   const [name, setName] = useState(currentUser.name);
   const [bio, setBio] = useState(currentUser.bio || '');
@@ -319,7 +331,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
               className="w-full h-full object-cover"
             />
           )}
-          <div className="absolute inset-0 bg-gradient-to-t from-white via-white/25 to-black/15" />
+          <div className="absolute inset-0 bg-gradient-to-t from-white dark:from-slate-900 via-white/25 dark:via-slate-900/35 to-black/15" />
         </div>
 
         {/* Profile Info Row */}
@@ -526,9 +538,43 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
           </div>
         )}
 
-        {/* TAB 2: Appearance & Customization (Rank Gated) */}
+        {/* TAB 2: Appearance & Customization */}
         {activeTab === 'appearance' && (
           <div className="bg-white border border-slate-200 rounded-3xl p-4 sm:p-5 space-y-4 shadow-sm">
+            {/* Dark Mode Toggle Setting Card */}
+            <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 border ${
+                  effectiveDarkMode
+                    ? 'bg-indigo-500/20 border-indigo-400/40 text-amber-300'
+                    : 'bg-indigo-100 border-indigo-200 text-indigo-600'
+                }`}>
+                  {effectiveDarkMode ? <Moon className="w-4 h-4" /> : <Sun className="w-4 h-4" />}
+                </div>
+                <div className="min-w-0">
+                  <h4 className="text-xs font-black text-slate-900">الوضع الليلي (Dark Mode)</h4>
+                  <p className="text-[10.5px] text-slate-500 leading-snug">
+                    {effectiveDarkMode
+                      ? 'مفعل — ألوان داكنة مريحة للعين ونصوص فاتحة واضحة'
+                      : 'معطل — التبديل إلى الثيم الداكن المريح للعين'}
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                role="switch"
+                aria-checked={effectiveDarkMode}
+                aria-label="تبديل الوضع الليلي"
+                onClick={handleToggleDarkMode}
+                className={`w-12 h-6.5 rounded-full transition-colors flex items-center p-1 shrink-0 cursor-pointer ${
+                  effectiveDarkMode ? 'bg-indigo-600 justify-end' : 'bg-slate-300 justify-start'
+                }`}
+              >
+                <span className="w-4.5 h-4.5 rounded-full bg-white shadow-md block" />
+              </button>
+            </div>
+
             {/* Fonts */}
             <div>
               <label className="text-xs font-bold text-slate-700 block mb-1.5 flex items-center gap-1.5">
@@ -783,9 +829,41 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
           </div>
         )}
 
-        {/* TAB 3: Security, Notifications & PWA */}
+        {/* TAB 3: Security, Notifications & App Settings */}
         {activeTab === 'security' && (
           <div className="bg-white border border-slate-200 rounded-3xl p-4 sm:p-5 space-y-4 shadow-sm">
+            {/* App Display & Theme Settings Card */}
+            <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 border ${
+                  effectiveDarkMode
+                    ? 'bg-indigo-500/20 border-indigo-400/40 text-amber-300'
+                    : 'bg-indigo-100 border-indigo-200 text-indigo-600'
+                }`}>
+                  {effectiveDarkMode ? <Moon className="w-4 h-4" /> : <Sun className="w-4 h-4" />}
+                </div>
+                <div className="min-w-0">
+                  <h4 className="text-xs font-black text-slate-900">مظهر التطبيق — الوضع الليلي 🌙</h4>
+                  <p className="text-[10.5px] text-slate-500">
+                    {effectiveDarkMode ? 'الثيم الداكن المريح للعين مفعل الآن' : 'تغيير ثيم التطبيق إلى الألوان الداكنة'}
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                role="switch"
+                aria-checked={effectiveDarkMode}
+                aria-label="تبديل الوضع الليلي"
+                onClick={handleToggleDarkMode}
+                className={`w-12 h-6.5 rounded-full transition-colors flex items-center p-1 shrink-0 cursor-pointer ${
+                  effectiveDarkMode ? 'bg-indigo-600 justify-end' : 'bg-slate-300 justify-start'
+                }`}
+              >
+                <span className="w-4.5 h-4.5 rounded-full bg-white shadow-md block" />
+              </button>
+            </div>
+
             {/* Notification Preferences Card */}
             <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-3">
               <div className="flex items-center gap-2 border-b border-slate-200 pb-2">

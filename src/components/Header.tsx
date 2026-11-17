@@ -12,7 +12,9 @@ import {
   LogOut,
   MoreVertical,
   ShoppingBag,
-  Trophy
+  Trophy,
+  Moon,
+  Sun
 } from 'lucide-react';
 import { User, UnreadSenderSummary } from '../types/chat';
 import { isUserAdminOrOwner } from '../data/seedData';
@@ -43,6 +45,8 @@ interface HeaderProps {
   onOpenSenderChat?: (sender: { senderId: string; senderName: string; senderAvatar: string }) => void;
   onClearAllUnreadMessages?: () => void;
   onOpenMessagesTab?: () => void;
+  isDarkMode?: boolean;
+  onToggleDarkMode?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = React.memo(({
@@ -65,7 +69,9 @@ export const Header: React.FC<HeaderProps> = React.memo(({
   totalUnreadMessagesCount = 0,
   onOpenSenderChat,
   onClearAllUnreadMessages,
-  onOpenMessagesTab
+  onOpenMessagesTab,
+  isDarkMode = false,
+  onToggleDarkMode
 }) => {
   const [isMoreMenuOpen, setIsMoreMenuOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -136,7 +142,7 @@ export const Header: React.FC<HeaderProps> = React.memo(({
   };
 
   return (
-    <header dir="rtl" className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-slate-200/90 px-2 sm:px-5 py-2 pt-[calc(env(safe-area-inset-top,0px)+0.5rem)] shadow-sm">
+    <header dir="rtl" className="sticky top-0 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-slate-200/90 dark:border-slate-800 px-2 sm:px-5 py-2 pt-[calc(env(safe-area-inset-top,0px)+0.5rem)] shadow-sm transition-colors duration-300">
       <div className="max-w-7xl mx-auto flex items-center justify-between gap-1.5 sm:gap-2">
         
         {/* Hidden File Input for Direct Avatar Upload */}
@@ -506,6 +512,35 @@ export const Header: React.FC<HeaderProps> = React.memo(({
                     <Share2 className="w-3.5 h-3.5 text-indigo-600" />
                     <span>مشاركة الرابط</span>
                   </button>
+
+                  {onToggleDarkMode && (
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={isDarkMode}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onToggleDarkMode();
+                      }}
+                      className="w-full px-3 py-2 rounded-xl hover:bg-slate-100 text-slate-700 text-xs font-bold flex items-center justify-between transition cursor-pointer"
+                    >
+                      <span className="flex items-center gap-2">
+                        {isDarkMode ? (
+                          <Sun className="w-3.5 h-3.5 text-amber-400" />
+                        ) : (
+                          <Moon className="w-3.5 h-3.5 text-indigo-600" />
+                        )}
+                        <span>{isDarkMode ? 'الوضع النهاري' : 'الوضع الليلي'}</span>
+                      </span>
+                      <span
+                        className={`w-9 h-5 rounded-full p-0.5 transition-colors flex items-center ${
+                          isDarkMode ? 'bg-indigo-600 justify-end' : 'bg-slate-300 justify-start'
+                        }`}
+                      >
+                        <span className="w-4 h-4 rounded-full bg-white shadow-sm block" />
+                      </span>
+                    </button>
+                  )}
 
                   <div
                     className="md:hidden pt-1 border-t border-slate-100"

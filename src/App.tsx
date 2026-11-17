@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Toaster, toast } from 'sonner';
+import { Toaster, toast, type ToasterProps } from 'sonner';
 import { X, Check, RefreshCw, UserPlus, MessageCircle, Sparkles } from 'lucide-react';
 import { Header } from './components/Header';
 import { BottomNav, NavTab } from './components/BottomNav';
@@ -127,6 +127,36 @@ export default function App() {
       return u;
     }
   });
+
+  const [isDarkMode, setIsDarkMode] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('shat_masr_theme') === 'dark';
+    } catch {
+      return false;
+    }
+  });
+
+  useEffect(() => {
+    const root = document.documentElement;
+    root.classList.toggle('dark', isDarkMode);
+    root.classList.toggle('light', !isDarkMode);
+    try {
+      localStorage.setItem('shat_masr_theme', isDarkMode ? 'dark' : 'light');
+    } catch {}
+    const themeMeta = document.querySelector('meta[name="theme-color"]');
+    if (themeMeta) {
+      themeMeta.setAttribute('content', isDarkMode ? '#0b1222' : '#4f46e5');
+    }
+  }, [isDarkMode]);
+
+  const toggleDarkMode = useCallback(() => {
+    sounds.playMessageSent();
+    setIsDarkMode((prev) => {
+      const next = !prev;
+      toast.success(next ? 'تم تفعيل الوضع الليلي المريح للعين 🌙' : 'تم التبديل إلى الوضع النهاري الفاتح ☀️');
+      return next;
+    });
+  }, []);
 
   const [targetChatUser, setTargetChatUser] = useState<User | null>(null);
   const [isInsidePrivateChat, setIsInsidePrivateChat] = useState<boolean>(false);
@@ -1914,11 +1944,35 @@ export default function App() {
     setIsWelcomeAuthOpen(true);
   }, []);
 
+  const toasterOptions: ToasterProps['toastOptions'] = useMemo(
+    () => ({
+      className: 'shat-toast-fade transition-all duration-300 ease-out',
+      style: {
+        fontFamily: 'Cairo, Tajawal, sans-serif',
+        borderRadius: '1rem',
+        boxShadow: isDarkMode
+          ? '0 14px 32px -8px rgba(2, 6, 23, 0.55)'
+          : '0 12px 30px -8px rgba(15, 23, 42, 0.18)',
+        transition: 'opacity 0.3s cubic-bezier(0.22, 1, 0.36, 1), transform 0.3s cubic-bezier(0.22, 1, 0.36, 1)',
+        transitionDuration: '300ms'
+      }
+    }),
+    [isDarkMode]
+  );
+
   // Mandatory Registration Gate: prevent seeing chat or online users until Name + Age + Gender (or Google Login) is completed
   if (!isProfileReady) {
     return (
-      <div className={`min-h-screen original-app-bg text-slate-900 ${fontClass}`}>
-        <Toaster position="top-center" dir="rtl" richColors />
+      <div className={`min-h-screen original-app-bg text-slate-900 dark:text-slate-100 transition-colors duration-300 ${fontClass}`}>
+        <Toaster
+          position="top-center"
+          dir="rtl"
+          richColors
+          closeButton
+          expand={false}
+          theme={isDarkMode ? 'dark' : 'light'}
+          toastOptions={toasterOptions}
+        />
         <WelcomeAuthModal
           isOpen={true}
           allowClose={false}
@@ -1937,7 +1991,7 @@ export default function App() {
   }
 
   return (
-    <div className={`min-h-screen original-app-bg text-slate-900 ${fontClass}`}>
+    <div className={`min-h-screen original-app-bg text-slate-900 dark:text-slate-100 transition-colors duration-300 ${fontClass}`}>
       
       {/* Sonner Professional Toast Notifications */}
       <Toaster
@@ -1946,16 +2000,8 @@ export default function App() {
         richColors
         closeButton
         expand={false}
-        toastOptions={{
-          className: 'transition-all duration-300 ease-out',
-          style: {
-            fontFamily: 'Cairo, Tajawal, sans-serif',
-            borderRadius: '1rem',
-            boxShadow: '0 12px 30px -8px rgba(15, 23, 42, 0.18)',
-            transition: 'opacity 0.3s cubic-bezier(0.22, 1, 0.36, 1), transform 0.3s cubic-bezier(0.22, 1, 0.36, 1)',
-            transitionDuration: '300ms'
-          }
-        }}
+        theme={isDarkMode ? 'dark' : 'light'}
+        toastOptions={toasterOptions}
       />
 
       {/* Live Floating Top Notification Banners (Global Join, DM Notice, Friend Request, App Update) */}
@@ -2149,6 +2195,8 @@ export default function App() {
           onOpenSenderChat={handleOpenIncomingChat}
           onClearAllUnreadMessages={clearAllUnreadMessages}
           onOpenMessagesTab={openMessagesDrawer}
+          isDarkMode={isDarkMode}
+          onToggleDarkMode={toggleDarkMode}
         />
       )}
 
@@ -2279,6 +2327,8 @@ export default function App() {
                   onOpenWallet={openWallet}
                   onOpenVip={openVip}
                   onLogout={handleLogout}
+                  isDarkMode={isDarkMode}
+                  onToggleDarkMode={toggleDarkMode}
                 />
               )}
             </>

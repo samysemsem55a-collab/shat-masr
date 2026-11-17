@@ -21,7 +21,7 @@ export const BottomNav: React.FC<BottomNavProps> = React.memo(({
   unreadChatsCount,
 }) => {
   return (
-    <nav className="fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-lg border-t border-slate-200 px-2 py-1.5 shadow-[0_-4px_20px_rgba(15,23,42,0.06)]">
+    <nav className="fixed bottom-0 left-0 right-0 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur-lg border-t border-slate-200 dark:border-slate-800 px-2 py-1.5 shadow-[0_-4px_20px_rgba(15,23,42,0.06)] dark:shadow-[0_-4px_24px_rgba(2,6,23,0.55)] transition-colors duration-300">
       <div className="max-w-md mx-auto flex items-center justify-around">
         
         {/* Rooms / المجلس */}
@@ -29,14 +29,14 @@ export const BottomNav: React.FC<BottomNavProps> = React.memo(({
           onClick={() => onTabChange('rooms')}
           className={`flex flex-col items-center justify-center py-1 px-3 rounded-xl transition-all ${
             currentTab === 'rooms'
-              ? 'text-indigo-600 font-black bg-indigo-50/80'
-              : 'text-slate-500 hover:text-slate-800'
+              ? 'text-indigo-600 dark:text-indigo-300 font-black bg-indigo-50/80 dark:bg-indigo-500/15'
+              : 'text-slate-500 dark:text-slate-300 hover:text-slate-800 dark:hover:text-white'
           }`}
         >
           <div className="relative">
             <Compass className="w-4 h-4 sm:w-5 sm:h-5" />
             {currentTab === 'rooms' && (
-              <span className="absolute -bottom-0.5 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full bg-indigo-600"></span>
+              <span className="absolute -bottom-0.5 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full bg-indigo-600 dark:bg-indigo-400"></span>
             )}
           </div>
           <span className="text-[10px] sm:text-[11px] mt-0.5 leading-tight">معاينة الغرف</span>
@@ -47,8 +47,8 @@ export const BottomNav: React.FC<BottomNavProps> = React.memo(({
           onClick={() => onTabChange('chat')}
           className={`flex flex-col items-center justify-center py-1 px-3 rounded-xl transition-all ${
             currentTab === 'chat'
-              ? 'text-indigo-600 font-black bg-indigo-50/80'
-              : 'text-slate-500 hover:text-slate-800'
+              ? 'text-indigo-600 dark:text-indigo-300 font-black bg-indigo-50/80 dark:bg-indigo-500/15'
+              : 'text-slate-500 dark:text-slate-300 hover:text-slate-800 dark:hover:text-white'
           }`}
         >
           <div className="relative">
@@ -59,7 +59,7 @@ export const BottomNav: React.FC<BottomNavProps> = React.memo(({
               </span>
             )}
             {currentTab === 'chat' && (
-              <span className="absolute -bottom-0.5 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full bg-indigo-600"></span>
+              <span className="absolute -bottom-0.5 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full bg-indigo-600 dark:bg-indigo-400"></span>
             )}
           </div>
           <span className="text-[10px] sm:text-[11px] mt-0.5 leading-tight">محادثة خاصة</span>
@@ -70,15 +70,15 @@ export const BottomNav: React.FC<BottomNavProps> = React.memo(({
           onClick={() => onTabChange('games')}
           className={`flex flex-col items-center justify-center py-1 px-3 rounded-xl transition-all ${
             currentTab === 'games'
-              ? 'text-purple-600 font-black bg-purple-50/80'
-              : 'text-slate-500 hover:text-slate-800'
+              ? 'text-purple-600 dark:text-purple-300 font-black bg-purple-50/80 dark:bg-purple-500/15'
+              : 'text-slate-500 dark:text-slate-300 hover:text-slate-800 dark:hover:text-white'
           }`}
         >
           <div className="relative">
             <Gamepad2 className="w-4 h-4 sm:w-5 sm:h-5" />
             <Sparkles className="w-2.5 h-2.5 text-amber-500 absolute -top-0.5 -right-1 animate-pulse" />
             {currentTab === 'games' && (
-              <span className="absolute -bottom-0.5 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full bg-purple-600"></span>
+              <span className="absolute -bottom-0.5 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full bg-purple-600 dark:bg-purple-400"></span>
             )}
           </div>
           <span className="text-[10px] sm:text-[11px] mt-0.5 leading-tight">القطع والألعاب</span>

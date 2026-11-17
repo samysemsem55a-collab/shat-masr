@@ -1250,10 +1250,10 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
       {/* 1. COMPACT SINGLE-ROW SLIM HEADER (Maximizes Message Viewport) */}
       <header className={`backdrop-blur-md border-b px-2 sm:px-3 py-1.5 pt-[calc(env(safe-area-inset-top,0px)+0.35rem)] flex items-center justify-between gap-1.5 shrink-0 shadow-xs z-20 ${
         room.id === 'room_egypt'
-          ? 'bg-gradient-to-l from-amber-500/15 via-white/95 to-rose-500/15 border-amber-200/90'
+          ? 'bg-gradient-to-l from-amber-500/15 via-white/95 dark:via-slate-900/95 to-rose-500/15 border-amber-200/90 dark:border-slate-800'
           : room.id === 'room_egypt2'
-          ? 'bg-gradient-to-l from-sky-500/15 via-white/95 to-teal-500/15 border-sky-200/90'
-          : 'bg-gradient-to-l from-emerald-500/15 via-white/95 to-slate-500/10 border-emerald-200/90'
+          ? 'bg-gradient-to-l from-sky-500/15 via-white/95 dark:via-slate-900/95 to-teal-500/15 border-sky-200/90 dark:border-slate-800'
+          : 'bg-gradient-to-l from-emerald-500/15 via-white/95 dark:via-slate-900/95 to-slate-500/10 border-emerald-200/90 dark:border-slate-800'
       }`}>
         {/* Right (RTL): Back + Room Avatar + Title + Compact Online/Visitors Pills */}
         <div className="flex items-center gap-1.5 min-w-0 flex-1">
@@ -1785,6 +1785,7 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.18, ease: 'easeOut' }}
+              data-preserve-light={!isDarkRoomBg ? 'true' : undefined}
               className={`chat-msg-row flex items-start gap-2 justify-start group rounded-xl transition-colors ${msgTextOutlineClass} ${
                 vipBorderClass ? `${vipBorderClass} py-1.5 px-2.5` : 'py-1 px-1.5'
               } ${
