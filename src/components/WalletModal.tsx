@@ -17,6 +17,7 @@ import {
   Hourglass
 } from 'lucide-react';
 import { User } from '../types/chat';
+import { isUserAdminOrOwner } from '../data/seedData';
 import { sounds } from '../utils/soundEffects';
 import { submitPaymentRequest, PendingPaymentOrder } from '../services/firebase';
 
@@ -74,7 +75,7 @@ export const WalletModal: React.FC<WalletModalProps> = ({
     } catch {}
   }, [activeTab]);
 
-  if (!isOpen) return null;
+  if (!isOpen || isUserAdminOrOwner(currentUser)) return null;
 
   const INSTAPAY_ADDRESS = 'samyelsayed9@instapay';
 
@@ -115,13 +116,18 @@ export const WalletModal: React.FC<WalletModalProps> = ({
 
     const cleanPhone = senderPhone.trim();
     const cleanName = senderName.trim();
+    const cleanRef = senderReference.trim();
 
     if (!cleanPhone) {
-      setFormError('يرجى إدخال رقم الهاتف أو رقم المحفظة المحول منها.');
+      setFormError('يرجى إدخال رقم المحفظة أو الحساب المحول منه.');
       return;
     }
     if (!cleanName) {
-      setFormError('يرجى إدخال اسم صاحب الحساب أو المحفظة على إنستاباي / كاش.');
+      setFormError('يرجى إدخال اسم صاحب الحساب أو المحول.');
+      return;
+    }
+    if (!cleanRef) {
+      setFormError('يرجى إدخال الرقم المرجعي أو كود العملية لإيصال التحويل.');
       return;
     }
 
@@ -137,8 +143,9 @@ export const WalletModal: React.FC<WalletModalProps> = ({
         coinsAmount: selectedPackage.coins,
         paymentMethod: paymentMethod,
         senderAccountOrPhone: cleanPhone,
-        transactionRef: senderReference.trim() || undefined,
-        note: `شحن كوينز: ${selectedPackage.coins.toLocaleString()} كوينز (${selectedPackage.priceEgp} ج.م) - المحول: ${cleanName} (${cleanPhone}) - وسيلة التحويل: InstaPay ${senderReference ? `- مرجع: ${senderReference}` : ''} ${transferNote ? `- ملاحظة: ${transferNote}` : ''}`
+        senderName: cleanName,
+        transactionRef: cleanRef,
+        note: `شحن كوينز: ${selectedPackage.coins.toLocaleString()} كوينز (${selectedPackage.priceEgp} ج.م) - المحول: ${cleanName} (${cleanPhone}) - مرجع: ${cleanRef}${transferNote ? ` - ملاحظة: ${transferNote}` : ''}`
       };
 
       const result = await submitPaymentRequest(orderData);
@@ -147,6 +154,7 @@ export const WalletModal: React.FC<WalletModalProps> = ({
         id: result.orderId,
         userId: currentUser.id,
         userName: currentUser.name,
+        senderName: cleanName,
         amount: selectedPackage.priceEgp,
         amountEgp: selectedPackage.priceEgp,
         coins: selectedPackage.coins,
@@ -154,7 +162,7 @@ export const WalletModal: React.FC<WalletModalProps> = ({
         itemName: `${selectedPackage.coins.toLocaleString()} كوينز`,
         paymentMethod: paymentMethod,
         senderAccountOrPhone: cleanPhone,
-        transactionRef: senderReference.trim(),
+        transactionRef: cleanRef,
         note: orderData.note,
         status: 'pending',
         timestamp: Date.now()
@@ -416,13 +424,14 @@ export const WalletModal: React.FC<WalletModalProps> = ({
 
                   <div>
                     <label className="text-[11px] text-slate-700 font-bold block mb-1">
-                      رقم العملية المرجعي أو كود التحويل (اختياري / مفضل):
+                      الرقم المرجعي للعملية أو كود التحويل <span className="text-rose-500">*</span>:
                     </label>
                     <input
                       type="text"
+                      required
                       value={senderReference}
                       onChange={(e) => setSenderReference(e.target.value)}
-                      placeholder="كود العملية أو الرقم المرجعي للإيصال"
+                      placeholder="أدخل الرقم المرجعي أو كود العملية من الإيصال"
                       className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 focus:outline-none focus:border-amber-500 focus:bg-white"
                     />
                   </div>

@@ -804,7 +804,7 @@ export async function sendFirestoreMessage(
     id: message.id || `msg_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`,
     roomId,
     senderId: uid,
-    senderName: message.senderName || 'مستخدم',
+    senderName: message.senderName || 'عضو شات مصر',
     senderAvatar: message.senderAvatar || '',
     senderRole: message.senderRole || 'member',
     senderVipBadge: message.senderVipBadge || '',
@@ -928,6 +928,37 @@ export async function sendFirestoreMessage(
           type: newMsg.type,
           createdAt: serverTimestamp()
         }, { merge: true });
+      }
+      // Persist latest room message summary for lobby room cards
+      if (newMsg.type !== 'system_welcome') {
+        const previewContent =
+          newMsg.type === 'gift' && newMsg.gift?.name
+            ? `🎁 أرسل ${newMsg.gift.name}`
+            : newMsg.type === 'voice'
+            ? '🎤 رسالة صوتية'
+            : newMsg.type === 'image'
+            ? '📷 صورة'
+            : newMsg.type === 'video'
+            ? '🎬 فيديو'
+            : newMsg.type === 'sticker'
+            ? `${newMsg.stickerEmoji || ''} ${newMsg.stickerLabel || 'ملصق'}`.trim()
+            : newMsg.content || newMsg.text || '';
+        if (previewContent) {
+          const lastSummary = {
+            senderName: newMsg.senderName || 'عضو شات مصر',
+            content: previewContent.slice(0, 120),
+            type: newMsg.type,
+            timestamp: newMsg.timestamp
+          };
+          await setDoc(doc(db, 'rooms', roomId), {
+            roomId,
+            lastMessage: lastSummary,
+            updatedAt: Date.now()
+          }, { merge: true }).catch(() => {});
+          if (rtdb) {
+            set(ref(rtdb, `room_last_messages/${roomId}`), lastSummary).catch(() => {});
+          }
+        }
       }
     } catch (err) {
       console.warn("Firestore write notice:", err);
@@ -1143,7 +1174,7 @@ export function subscribeToAllUsers(
           const data = docSnap.data();
           usersMap.set(docSnap.id, {
             id: docSnap.id,
-            name: data.name || 'مستخدم',
+            name: data.name || 'عضو شات مصر',
             username: data.username || 'user',
             avatar: data.avatar || '',
             countryFlag: data.countryFlag || '🇪🇬',
@@ -1316,6 +1347,7 @@ export interface PendingPaymentOrder {
   id: string;
   userId: string;
   userName?: string;
+  senderName?: string;
   amount: number;
   amountEgp?: number;
   note: string;
@@ -1333,6 +1365,7 @@ export interface PendingPaymentOrder {
 export async function submitPaymentRequest(order: {
   userId: string;
   userName: string;
+  senderName?: string;
   type: 'coins' | 'vip';
   itemName: string;
   amountEgp: number;
@@ -1350,6 +1383,7 @@ export async function submitPaymentRequest(order: {
     id: orderId,
     userId: order.userId,
     userName: order.userName,
+    senderName: order.senderName || order.userName,
     amount: order.amountEgp,
     amountEgp: order.amountEgp,
     type: order.type,
@@ -1410,7 +1444,7 @@ export function openPayment(
   customUserId?: string
 ): Promise<{ success: boolean; url: string; orderId?: string }> {
   const paymentAddress = "samyelsayed9@instapay";
-  const userId = customUserId || (auth?.currentUser?.uid) || ("GUEST_" + Math.floor(Math.random() * 100000));
+  const userId = customUserId || (auth?.currentUser?.uid) || ("USR_" + Math.floor(Math.random() * 100000));
   const paymentUrl = `instapay://pay?pa=${paymentAddress}&am=${amount}&cu=EGP&tn=${encodeURIComponent(note)}`;
 
   if (rtdb) {
@@ -1434,25 +1468,119 @@ export function openPayment(
 export function subscribeToPendingPayments(
   callback: (orders: PendingPaymentOrder[]) => void
 ): () => void {
+  const ordersMap = new Map<string, PendingPaymentOrder>();
+
+  const emitSorted = () => {
+    const list = Array.from(ordersMap.values()).sort(
+      (a, b) => (b.timestamp || 0) - (a.timestamp || 0)
+    );
+    callback(list);
+  };
+
+  try {
+    const raw = localStorage.getItem('arab_chat_payment_orders');
+    if (raw) {
+      const parsed: PendingPaymentOrder[] = JSON.parse(raw);
+      parsed.forEach((o) => {
+        if (o && o.id) ordersMap.set(o.id, o);
+      });
+      if (ordersMap.size > 0) emitSorted();
+    }
+  } catch {}
+
+  let unsubFirestore: (() => void) | null = null;
+  if (db) {
+    try {
+      const payCol = collection(db, 'payment_requests');
+      unsubFirestore = onSnapshot(
+        payCol,
+        (snap) => {
+          snap.docs.forEach((d) => {
+            const data = d.data() as any;
+            ordersMap.set(d.id, {
+              id: d.id,
+              userId: data.userId || '',
+              userName: data.userName || data.senderName || 'عضو شات مصر',
+              senderName: data.senderName || data.userName || '',
+              amount: Number(data.amount ?? data.amountEgp) || 0,
+              amountEgp: Number(data.amountEgp ?? data.amount) || 0,
+              note: data.note || '',
+              type: data.type,
+              itemName: data.itemName,
+              coins: typeof data.coins === 'number' ? data.coins : undefined,
+              vipTierId: data.vipTierId,
+              paymentMethod: data.paymentMethod,
+              senderAccountOrPhone: data.senderAccountOrPhone || '',
+              transactionRef: data.transactionRef || '',
+              status: data.status || 'pending',
+              timestamp:
+                Number(data.timestamp) ||
+                (data.createdAt?.toMillis ? data.createdAt.toMillis() : Date.now())
+            });
+          });
+          emitSorted();
+        },
+        (err) => {
+          handleFirestoreError(err, OperationType.LIST, 'payment_requests');
+        }
+      );
+    } catch {}
+  }
+
+  let unsubRtdb: (() => void) | null = null;
   if (rtdb) {
     try {
       const pendingRef = ref(rtdb, 'payments_pending');
-      const unsub = onValue(pendingRef, (snap) => {
+      unsubRtdb = onValue(pendingRef, (snap) => {
         const val = snap.val();
         if (val) {
-          const list: PendingPaymentOrder[] = Object.entries(val).map(([key, data]: [string, any]) => ({
-            id: key,
-            ...data
-          }));
-          callback(list.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0)));
-        } else {
-          callback([]);
+          Object.entries(val).forEach(([key, data]: [string, any]) => {
+            const existing = ordersMap.get(key);
+            ordersMap.set(key, {
+              ...existing,
+              id: key,
+              ...data
+            });
+          });
+          emitSorted();
         }
       });
-      return unsub;
     } catch {}
   }
-  return () => {};
+
+  const handleBus = (e: MessageEvent) => {
+    if (e.data?.type === 'NEW_PAYMENT_REQUEST' && e.data.order?.id) {
+      ordersMap.set(e.data.order.id, e.data.order);
+      emitSorted();
+    } else if (e.data?.type === 'PAYMENT_APPROVED' && e.data.paymentId) {
+      const prev = ordersMap.get(e.data.paymentId);
+      if (prev) {
+        ordersMap.set(e.data.paymentId, { ...prev, status: 'approved' });
+        emitSorted();
+      }
+    } else if (e.data?.type === 'PAYMENT_REJECTED' && e.data.paymentId) {
+      const prev = ordersMap.get(e.data.paymentId);
+      if (prev) {
+        ordersMap.set(e.data.paymentId, { ...prev, status: 'rejected' });
+        emitSorted();
+      }
+    }
+  };
+  liveChatBus?.addEventListener('message', handleBus);
+
+  return () => {
+    if (unsubFirestore) unsubFirestore();
+    if (unsubRtdb) unsubRtdb();
+    liveChatBus?.removeEventListener('message', handleBus);
+  };
+}
+
+function getVipBadgeForTierId(vipTierId?: string): string {
+  if (vipTierId === 'vip_diamond') return 'VIP ماسي 💎';
+  if (vipTierId === 'vip_gold') return 'VIP ذهبي 👑';
+  if (vipTierId === 'vip_silver') return 'VIP فضي 🥈';
+  if (vipTierId === 'vip_bronze') return 'VIP برونزي 🥉';
+  return 'VIP';
 }
 
 export async function approvePendingPayment(
@@ -1462,6 +1590,9 @@ export async function approvePendingPayment(
   vipTierId?: string
 ): Promise<void> {
   const now = Date.now();
+  const tierBadge = vipTierId ? getVipBadgeForTierId(vipTierId) : undefined;
+  let updatedCoinsForSocket: number | undefined = undefined;
+
   // 1. Update RTDB
   if (rtdb) {
     try {
@@ -1481,9 +1612,9 @@ export async function approvePendingPayment(
         const updates: any = {};
         if (coinsToAdd > 0) {
           updates.coins = currentCoins + coinsToAdd;
+          updatedCoinsForSocket = updates.coins;
         }
-        if (vipTierId) {
-          const tierBadge = vipTierId === 'vip_diamond' ? 'VIP ألماسي' : vipTierId === 'vip_gold' ? 'VIP ذهبي' : vipTierId === 'vip_silver' ? 'VIP فضي' : 'VIP';
+        if (vipTierId && tierBadge) {
           updates.role = vipTierId;
           updates.vipBadge = tierBadge;
         }
@@ -1512,15 +1643,47 @@ export async function approvePendingPayment(
       if (coinsToAdd > 0) {
         userUpdates.coins = increment(coinsToAdd);
       }
-      if (vipTierId) {
-        const tierBadge = vipTierId === 'vip_diamond' ? 'VIP ألماسي' : vipTierId === 'vip_gold' ? 'VIP ذهبي' : vipTierId === 'vip_silver' ? 'VIP فضي' : 'VIP';
+      if (vipTierId && tierBadge) {
         userUpdates.role = vipTierId;
         userUpdates.vipBadge = tierBadge;
       }
-      await updateDoc(userDocRef, userUpdates);
+      await setDoc(userDocRef, userUpdates, { merge: true });
+
+      const onlineUpdates: any = {};
+      if (coinsToAdd > 0 && typeof updatedCoinsForSocket === 'number') {
+        onlineUpdates.coins = updatedCoinsForSocket;
+      }
+      if (vipTierId && tierBadge) {
+        onlineUpdates.role = vipTierId;
+        onlineUpdates.vipBadge = tierBadge;
+      }
+      if (Object.keys(onlineUpdates).length > 0) {
+        await setDoc(doc(db, 'online_users', userId), onlineUpdates, { merge: true }).catch(() => {});
+      }
     } catch (e) {
       console.warn("Approve payment Firestore error:", e);
     }
+  }
+
+  try {
+    const raw = localStorage.getItem('arab_chat_payment_orders');
+    if (raw) {
+      const parsed: PendingPaymentOrder[] = JSON.parse(raw);
+      localStorage.setItem(
+        'arab_chat_payment_orders',
+        JSON.stringify(parsed.map((o) => (o.id === paymentId ? { ...o, status: 'approved' } : o)))
+      );
+    }
+  } catch {}
+
+  const adminSocketUpdates: Partial<User> = {};
+  if (typeof updatedCoinsForSocket === 'number') adminSocketUpdates.coins = updatedCoinsForSocket;
+  if (vipTierId && tierBadge) {
+    adminSocketUpdates.role = vipTierId as User['role'];
+    adminSocketUpdates.vipBadge = tierBadge;
+  }
+  if (Object.keys(adminSocketUpdates).length > 0) {
+    realtimeSocket.sendAdminAction(userId, adminSocketUpdates);
   }
 
   liveChatBus?.postMessage({
@@ -1813,7 +1976,7 @@ export async function acceptFriendRequestInDB(
   const peerFriendRecord: Friend = {
     id: currentUserId,
     friendId: currentUserId,
-    name: currentUserData?.name || 'مستخدم',
+    name: currentUserData?.name || 'عضو شات مصر',
     avatar: currentUserData?.avatar || '',
     countryFlag: currentUserData?.countryFlag || '🇪🇬',
     role: currentUserData?.role || 'عضو مميز',
@@ -2877,7 +3040,7 @@ export async function sendDirectMessage(
   const newMsg: Message = {
     id: messageId,
     senderId: message.senderId || userId1,
-    senderName: message.senderName || 'مستخدم',
+    senderName: message.senderName || 'عضو شات مصر',
     senderAvatar: message.senderAvatar || '',
     senderRole: message.senderRole || 'member',
     senderVipBadge: message.senderVipBadge || '',
@@ -2931,7 +3094,7 @@ export async function sendDirectMessage(
       updated.unshift({
         chatId: convId,
         peerId,
-        peerName: peerName || 'مستخدم',
+        peerName: peerName || 'عضو شات مصر',
         peerAvatar: peerAvatar || '',
         lastMessage: newMsg.content || 'رسالة خاصة',
         lastSenderId: userId1,
@@ -2963,7 +3126,7 @@ export async function sendDirectMessage(
       await set(ref(rtdb, `user_direct_chats/${userId1}/${convId}`), {
         chatId: convId,
         peerId: userId2,
-        peerName: message.recipientName || 'مستخدم',
+        peerName: message.recipientName || 'عضو شات مصر',
         peerAvatar: message.recipientAvatar || '',
         lastMessage: newMsg.content || 'رسالة خاصة',
         lastSenderId: userId1,
@@ -3008,7 +3171,7 @@ export async function sendDirectMessage(
       await setDoc(doc(db, 'users', userId1, 'recent_chats', convId), {
         chatId: convId,
         peerId: userId2,
-        peerName: message.recipientName || 'مستخدم',
+        peerName: message.recipientName || 'عضو شات مصر',
         peerAvatar: message.recipientAvatar || '',
         lastMessage: newMsg.content || 'رسالة خاصة',
         lastSenderId: userId1,
@@ -3112,7 +3275,7 @@ export function subscribeToUserRecentDirectChats(
     chatsMap.set(convId, {
       chatId: convId,
       peerId: isPeer ? msg.senderId : msg.recipientId,
-      peerName: isPeer ? msg.senderName : (msg as any).recipientName || 'مستخدم',
+      peerName: isPeer ? msg.senderName : (msg as any).recipientName || 'عضو شات مصر',
       peerAvatar: isPeer ? msg.senderAvatar : (msg as any).recipientAvatar || '',
       lastMessage: msg.content || 'رسالة خاصة',
       lastSenderId: msg.senderId,
@@ -3130,7 +3293,7 @@ export function subscribeToUserRecentDirectChats(
         chatsMap.set(convId, {
           chatId: convId,
           peerId: isPeer ? msg.senderId : msg.recipientId,
-          peerName: isPeer ? msg.senderName : msg.recipientName || 'مستخدم',
+          peerName: isPeer ? msg.senderName : msg.recipientName || 'عضو شات مصر',
           peerAvatar: isPeer ? msg.senderAvatar : msg.recipientAvatar || '',
           lastMessage: msg.content || 'رسالة خاصة',
           lastSenderId: msg.senderId,
@@ -3194,7 +3357,7 @@ export function subscribeToRoomTyping(
   const unsubSocketTyping = realtimeSocket.subscribeToRoomTyping(roomId, (uid, uName, isTyping) => {
     if (uid && uid !== currentUserId) {
       if (isTyping) {
-        typingMap.set(uid, { id: uid, name: uName || 'مستخدم', timestamp: Date.now() });
+        typingMap.set(uid, { id: uid, name: uName || 'عضو شات مصر', timestamp: Date.now() });
       } else {
         typingMap.delete(uid);
       }
@@ -4693,71 +4856,230 @@ export interface SecretDirectChatThread {
   lastTimestamp: number;
 }
 
+function isPrimaryOwnerAuthorized(ownerEmailOrFlag: string | boolean | undefined): boolean {
+  if (ownerEmailOrFlag === true) return true;
+  if (
+    typeof ownerEmailOrFlag === 'string' &&
+    ownerEmailOrFlag.toLowerCase().trim() === PRIMARY_OWNER_EMAIL.toLowerCase()
+  ) {
+    return true;
+  }
+  if (typeof window !== 'undefined') {
+    try {
+      const savedEmail = (localStorage.getItem('arab_chat_auth_email') || '').toLowerCase().trim();
+      if (savedEmail === PRIMARY_OWNER_EMAIL.toLowerCase()) return true;
+      const savedRaw = localStorage.getItem('arab_chat_user');
+      if (savedRaw) {
+        const parsed = JSON.parse(savedRaw);
+        if (parsed?.email?.toLowerCase().trim() === PRIMARY_OWNER_EMAIL.toLowerCase()) return true;
+        if (parsed?.role === 'owner') return true;
+      }
+    } catch {}
+  }
+  return false;
+}
+
 export function subscribeAllDirectChatsForOwner(
-  ownerEmail: string | undefined,
+  ownerEmail: string | boolean | undefined,
   onUpdate: (threads: SecretDirectChatThread[]) => void
 ): () => void {
-  if (!ownerEmail || ownerEmail.toLowerCase() !== PRIMARY_OWNER_EMAIL.toLowerCase()) {
-    onUpdate([]);
-    return () => {};
-  }
-  if (!db) {
+  if (!isPrimaryOwnerAuthorized(ownerEmail)) {
     onUpdate([]);
     return () => {};
   }
 
-  try {
-    const q = query(collection(db, 'direct_chats'), orderBy('lastTimestamp', 'desc'), limit(60));
-    return onSnapshot(
-      q,
-      (snap) => {
-        const list: SecretDirectChatThread[] = snap.docs.map((d) => {
-          const data = d.data();
-          return {
-            chatId: data.chatId || d.id,
-            participants: Array.isArray(data.participants) ? data.participants : [],
-            lastMessage: data.lastMessage || '',
-            lastSenderId: data.lastSenderId,
-            lastSenderName: data.lastSenderName,
-            lastTimestamp: Number(data.lastTimestamp) || Date.now()
-          };
-        });
-        onUpdate(list);
-      },
-      (err) => {
-        handleFirestoreError(err, OperationType.LIST, 'direct_chats');
-      }
+  const threadsMap = new Map<string, SecretDirectChatThread>();
+  const emit = () => {
+    const list = Array.from(threadsMap.values()).sort(
+      (a, b) => (b.lastTimestamp || 0) - (a.lastTimestamp || 0)
     );
-  } catch {
-    return () => {};
+    onUpdate(list);
+  };
+
+  // 1. Fetch server in-memory threads as immediate baseline
+  if (typeof fetch === 'function') {
+    fetch('/api/admin/direct-chats')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (Array.isArray(data?.threads)) {
+          data.threads.forEach((t: any) => {
+            if (t?.chatId) {
+              threadsMap.set(t.chatId, {
+                chatId: t.chatId,
+                participants: Array.isArray(t.participants) ? t.participants : [],
+                lastMessage: t.lastMessage || '',
+                lastSenderId: t.lastSenderId,
+                lastSenderName: t.lastSenderName,
+                lastTimestamp: Number(t.lastTimestamp) || Date.now()
+              });
+            }
+          });
+          emit();
+        }
+      })
+      .catch(() => {});
   }
+
+  // 2. Listen live to incoming direct messages on socket
+  const unsubSocket = realtimeSocket.subscribeToGlobalDirectMessages((msg, convId) => {
+    if (!convId || !msg) return;
+    const prev = threadsMap.get(convId);
+    const participants = Array.from(
+      new Set([
+        ...(prev?.participants || []),
+        msg.senderId,
+        msg.recipientId
+      ].filter(Boolean) as string[])
+    );
+    threadsMap.set(convId, {
+      chatId: convId,
+      participants,
+      lastMessage: msg.content || msg.text || prev?.lastMessage || 'رسالة خاصة',
+      lastSenderId: msg.senderId,
+      lastSenderName: msg.senderName,
+      lastTimestamp: Number(msg.timestamp) || Date.now()
+    });
+    emit();
+  });
+
+  // 3. Firestore listener without brittle orderBy requirement
+  let unsubFirestore: (() => void) | null = null;
+  if (db) {
+    try {
+      unsubFirestore = onSnapshot(
+        collection(db, 'direct_chats'),
+        (snap) => {
+          snap.docs.forEach((d) => {
+            const data = d.data();
+            const fallbackParticipants = d.id.includes('_') ? d.id.split('_') : [];
+            const participants =
+              Array.isArray(data.participants) && data.participants.length > 0
+                ? data.participants
+                : fallbackParticipants;
+            threadsMap.set(d.id, {
+              chatId: data.chatId || d.id,
+              participants,
+              lastMessage: data.lastMessage || '',
+              lastSenderId: data.lastSenderId,
+              lastSenderName: data.lastSenderName,
+              lastTimestamp:
+                Number(data.lastTimestamp) ||
+                (data.updatedAt?.toMillis ? data.updatedAt.toMillis() : Date.now())
+            });
+          });
+          emit();
+        },
+        (err) => {
+          handleFirestoreError(err, OperationType.LIST, 'direct_chats');
+        }
+      );
+    } catch {}
+  }
+
+  // 4. RTDB listener on direct_messages root
+  let unsubRtdb: (() => void) | null = null;
+  if (rtdb) {
+    try {
+      unsubRtdb = onValue(ref(rtdb, 'direct_messages'), (snap) => {
+        const val = snap.val();
+        if (val && typeof val === 'object') {
+          Object.entries(val).forEach(([convId, msgsObj]: [string, any]) => {
+            if (!msgsObj || typeof msgsObj !== 'object') return;
+            const msgs = Object.values(msgsObj).filter(Boolean) as any[];
+            if (!msgs.length) return;
+            msgs.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+            const latest = msgs[msgs.length - 1];
+            const prev = threadsMap.get(convId);
+            const participants = Array.from(
+              new Set([
+                ...(prev?.participants || []),
+                latest.senderId,
+                latest.recipientId
+              ].filter(Boolean) as string[])
+            );
+            const latestTs = Number(latest.timestamp || latest.createdAt) || 0;
+            if (!prev || latestTs >= prev.lastTimestamp) {
+              threadsMap.set(convId, {
+                chatId: convId,
+                participants,
+                lastMessage: latest.content || latest.text || prev?.lastMessage || '',
+                lastSenderId: latest.senderId,
+                lastSenderName: latest.senderName,
+                lastTimestamp: latestTs || Date.now()
+              });
+            }
+          });
+          emit();
+        }
+      });
+    } catch {}
+  }
+
+  return () => {
+    unsubSocket();
+    if (unsubFirestore) unsubFirestore();
+    if (unsubRtdb) unsubRtdb();
+  };
 }
 
 export async function fetchDirectMessagesSilentForOwner(
   chatId: string,
-  ownerEmail: string | undefined
+  ownerEmail: string | boolean | undefined
 ): Promise<Message[]> {
-  if (!ownerEmail || ownerEmail.toLowerCase() !== PRIMARY_OWNER_EMAIL.toLowerCase()) {
+  if (!isPrimaryOwnerAuthorized(ownerEmail)) {
     return [];
   }
-  if (!db) return [];
-  try {
-    const snap = await getDocs(collection(db, 'direct_chats', chatId, 'messages'));
-    return snap.docs
-      .map((d) => {
+
+  const msgsMap = new Map<string, Message>();
+
+  // 1. Server cache
+  if (typeof fetch === 'function') {
+    try {
+      const res = await fetch(`/api/admin/direct-chats/${encodeURIComponent(chatId)}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data?.messages)) {
+          data.messages.forEach((m: any) => {
+            if (m?.id) msgsMap.set(m.id, m);
+          });
+        }
+      }
+    } catch {}
+  }
+
+  // 2. RTDB messages
+  if (rtdb) {
+    try {
+      const snap = await get(ref(rtdb, `direct_messages/${chatId}`));
+      const val = snap.val();
+      if (val && typeof val === 'object') {
+        Object.values(val).forEach((m: any) => {
+          if (m?.id) msgsMap.set(m.id, m);
+        });
+      }
+    } catch {}
+  }
+
+  // 3. Firestore messages
+  if (db) {
+    try {
+      const snap = await getDocs(collection(db, 'direct_chats', chatId, 'messages'));
+      snap.docs.forEach((d) => {
         const data = d.data();
-        return {
+        msgsMap.set(d.id, {
           id: d.id,
           ...data,
           timestamp: data.timestamp || (data.createdAt?.toMillis ? data.createdAt.toMillis() : Date.now())
-        } as Message;
-      })
-      .filter(m => !isMsgExpired(m, DM_MESSAGE_TTL_MS))
-      .sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
-  } catch (err) {
-    handleFirestoreError(err, OperationType.GET, `direct_chats/${chatId}/messages`);
-    return [];
+        } as Message);
+      });
+    } catch (err) {
+      handleFirestoreError(err, OperationType.GET, `direct_chats/${chatId}/messages`);
+    }
   }
+
+  return Array.from(msgsMap.values())
+    .filter(m => !isMsgExpired(m, DM_MESSAGE_TTL_MS))
+    .sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
 }
 
 // ==========================================
@@ -5133,3 +5455,221 @@ export function subscribeToLeaderboardUsers(
     if (unsubOnline) unsubOnline();
   };
 }
+
+// ==========================================
+// 27. LIVE ROOM LAST MESSAGES, GIFT STATS, PROFILE SYNC PROPAGATION & APP UPDATE NOTICES
+// ==========================================
+
+export type RoomLastMessageMap = Record<string, { senderName: string; content: string; type?: string; timestamp: number }>;
+
+export function subscribeToAllRoomLastMessages(
+  onUpdate: (lastMessages: RoomLastMessageMap) => void
+): () => void {
+  const merged: RoomLastMessageMap = {};
+
+  const emit = () => {
+    onUpdate({ ...merged });
+  };
+
+  const mergeEntry = (
+    roomId: string,
+    entry?: { senderName: string; content: string; type?: string; timestamp: number } | null
+  ) => {
+    if (!roomId || !entry || !entry.content) return;
+    const prev = merged[roomId];
+    if (!prev || (entry.timestamp || 0) >= (prev.timestamp || 0)) {
+      merged[roomId] = entry;
+    }
+  };
+
+  const unsubSocket = realtimeSocket.subscribeToAllRoomLastMessages((wsMap) => {
+    Object.entries(wsMap).forEach(([rId, entry]) => mergeEntry(rId, entry));
+    emit();
+  });
+
+  let unsubRtdb: (() => void) | null = null;
+  if (rtdb) {
+    try {
+      unsubRtdb = onValue(ref(rtdb, 'room_last_messages'), (snap) => {
+        const val = snap.val();
+        if (val && typeof val === 'object') {
+          Object.entries(val).forEach(([rId, entry]: [string, any]) => mergeEntry(rId, entry));
+          emit();
+        }
+      });
+    } catch {}
+  }
+
+  let unsubFirestore: (() => void) | null = null;
+  if (db) {
+    try {
+      unsubFirestore = onSnapshot(
+        collection(db, 'rooms'),
+        (snap) => {
+          snap.docs.forEach((d) => {
+            const data = d.data();
+            if (data?.lastMessage) mergeEntry(d.id, data.lastMessage);
+          });
+          emit();
+        },
+        () => {}
+      );
+    } catch {}
+  }
+
+  return () => {
+    unsubSocket();
+    if (unsubRtdb) unsubRtdb();
+    if (unsubFirestore) unsubFirestore();
+  };
+}
+
+export async function recordGiftRecipientStats(recipientId: string, giftCost: number): Promise<void> {
+  if (!recipientId) return;
+  const ratingGain = Math.max(10, Math.round((Number(giftCost) || 0) / 2));
+
+  if (db) {
+    try {
+      await setDoc(
+        doc(db, 'users', recipientId),
+        {
+          giftsReceivedCount: increment(1),
+          ratingPoints: increment(ratingGain),
+          updatedAt: serverTimestamp()
+        },
+        { merge: true }
+      );
+      await setDoc(
+        doc(db, 'online_users', recipientId),
+        {
+          ratingPoints: increment(ratingGain)
+        },
+        { merge: true }
+      ).catch(() => {});
+    } catch {}
+  }
+
+  if (rtdb) {
+    try {
+      const userSnap = await get(ref(rtdb, `users/${recipientId}`));
+      if (userSnap.exists()) {
+        const d = userSnap.val();
+        await update(ref(rtdb, `users/${recipientId}`), {
+          giftsReceivedCount: (Number(d.giftsReceivedCount) || 0) + 1,
+          ratingPoints: (Number(d.ratingPoints) || 0) + ratingGain
+        });
+      }
+    } catch {}
+  }
+}
+
+export async function propagateUserIdentityAcrossApp(user: User): Promise<void> {
+  if (!user?.id) return;
+  await syncUserProfileToFirebase(user);
+  realtimeSocket.updateProfile(user);
+
+  if (db) {
+    try {
+      const q = query(collection(db, 'forum_posts'), where('authorId', '==', user.id), limit(25));
+      const snap = await getDocs(q);
+      await Promise.all(
+        snap.docs.map((d) =>
+          updateDoc(d.ref, {
+            authorName: user.name,
+            authorAvatar: user.avatar || '',
+            authorVipBadge: user.vipBadge || '',
+            authorRole: user.role || 'member'
+          }).catch(() => {})
+        )
+      );
+    } catch {}
+  }
+}
+
+export interface AppUpdateNotice {
+  version: string;
+  message: string;
+  pushedBy: string;
+  timestamp: number;
+}
+
+export async function pushAppUpdateNotice(
+  pushedBy: string,
+  customMessage?: string
+): Promise<AppUpdateNotice> {
+  const notice: AppUpdateNotice = {
+    version: `v${Date.now()}`,
+    message:
+      (customMessage || '').trim() ||
+      'يتوفر تحديث جديد الآن لتطبيق شات مصر! اضغط تحديث للحصول على أحدث التحسينات.',
+    pushedBy: pushedBy || 'الإدارة',
+    timestamp: Date.now()
+  };
+
+  realtimeSocket.sendAppUpdateNotice(notice);
+
+  if (rtdb) {
+    try {
+      await set(ref(rtdb, 'app_config/version'), notice);
+    } catch {}
+  }
+
+  if (db) {
+    try {
+      await setDoc(doc(db, 'app_config', 'version'), notice, { merge: true });
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, 'app_config/version');
+    }
+  }
+
+  return notice;
+}
+
+export function subscribeToAppUpdateNotices(
+  onNotice: (notice: AppUpdateNotice) => void
+): () => void {
+  const mountTime = Date.now();
+  let lastSeenVersion = '';
+
+  const deliver = (notice?: AppUpdateNotice | null) => {
+    if (!notice || !notice.version || notice.version === lastSeenVersion) return;
+    // Only notify on live updates pushed around or after client load (within 60s grace)
+    if ((notice.timestamp || 0) < mountTime - 60_000) return;
+    lastSeenVersion = notice.version;
+    onNotice(notice);
+  };
+
+  const unsubSocket = realtimeSocket.subscribeToAppUpdateNotices((notice) => deliver(notice));
+
+  let unsubFirestore: (() => void) | null = null;
+  if (db) {
+    try {
+      unsubFirestore = onSnapshot(
+        doc(db, 'app_config', 'version'),
+        (snap) => {
+          if (snap.exists()) {
+            deliver(snap.data() as AppUpdateNotice);
+          }
+        },
+        () => {}
+      );
+    } catch {}
+  }
+
+  let unsubRtdb: (() => void) | null = null;
+  if (rtdb) {
+    try {
+      unsubRtdb = onValue(ref(rtdb, 'app_config/version'), (snap) => {
+        const val = snap.val();
+        if (val) deliver(val as AppUpdateNotice);
+      });
+    } catch {}
+  }
+
+  return () => {
+    unsubSocket();
+    if (unsubFirestore) unsubFirestore();
+    if (unsubRtdb) unsubRtdb();
+  };
+}
+

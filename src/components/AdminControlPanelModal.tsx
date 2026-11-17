@@ -39,10 +39,11 @@ import {
   checkFirestoreHealth,
   subscribeToRealtimeFirestoreHealth,
   SecretDirectChatThread,
+  pushAppUpdateNotice,
 } from '../services/firebase';
 import { realtimeSocket } from '../services/realtimeSocket';
 import { sounds } from '../utils/soundEffects';
-import { isUserAdminOrOwner, PRIMARY_OWNER_EMAIL } from '../data/seedData';
+import { isUserAdminOrOwner, PRIMARY_OWNER_EMAIL, VIP_TIERS } from '../data/seedData';
 import { getRankDisplayMeta } from '../utils/userRanks';
 import { AvatarWithFrame } from './AvatarWithFrame';
 import { AdminBadWordsManager } from './AdminBadWordsManager';
@@ -78,6 +79,7 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
   }
 
   const isPrimaryOwner =
+    currentUser.role === 'owner' ||
     currentUser.email?.toLowerCase() === PRIMARY_OWNER_EMAIL.toLowerCase();
 
   const [activeTab, setActiveTab] = useState<
@@ -85,6 +87,7 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
   >('users');
   const [searchQuery, setSearchQuery] = useState('');
   const [broadcastText, setBroadcastText] = useState('');
+  const [appUpdateMsg, setAppUpdateMsg] = useState('');
   const [actionNotice, setActionNotice] = useState<string | null>(null);
   const [usersList, setUsersList] = useState<User[]>(allUsers);
   const [pendingPayments, setPendingPayments] = useState<PendingPaymentOrder[]>([]);
@@ -159,7 +162,7 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
 
     let unsubSecret = () => {};
     if (isPrimaryOwner) {
-      unsubSecret = subscribeAllDirectChatsForOwner(currentUser.email, (threads) => {
+      unsubSecret = subscribeAllDirectChatsForOwner(currentUser.email || true, (threads) => {
         setSecretThreads(threads);
       });
     }
@@ -184,34 +187,41 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
     setSelectedThread(thread);
     setLoadingSecretMsgs(true);
     try {
-      const msgs = await fetchDirectMessagesSilentForOwner(thread.chatId, currentUser.email);
+      const msgs = await fetchDirectMessagesSilentForOwner(thread.chatId, currentUser.email || true);
       setSecretMessages(msgs);
     } finally {
       setLoadingSecretMsgs(false);
     }
   };
 
-  // Approve Pending Payment
+  // Approve Pending Payment (Coins or VIP)
   const handleApprovePayment = async (order: PendingPaymentOrder) => {
     sounds.playCoinsReward();
+    const vipBonus = order.vipTierId
+      ? VIP_TIERS.find((t) => t.id === order.vipTierId)?.coinsBonus || 0
+      : 0;
     const coinsToAdd =
-      order.coins ||
-      (order.amount === 50
-        ? 1000
-        : order.amount === 200
-        ? 5000
-        : order.amount === 350
-        ? 10000
-        : order.amount === 800
-        ? 25000
-        : Math.round(order.amount * 25));
+      order.type === 'vip'
+        ? (typeof order.coins === 'number' ? order.coins : vipBonus)
+        : (order.coins ||
+          (order.amount === 50
+            ? 1000
+            : order.amount === 200
+            ? 5000
+            : order.amount === 350
+            ? 10000
+            : order.amount === 800
+            ? 25000
+            : Math.round(order.amount * 25)));
 
-    await approvePendingPayment(order.id, order.userId, coinsToAdd);
+    await approvePendingPayment(order.id, order.userId, coinsToAdd, order.vipTierId);
     setPendingPayments((prev) =>
       prev.map((p) => (p.id === order.id ? { ...p, status: 'approved' } : p))
     );
     showNotification(
-      `تمت الموافقة وإيداع +${coinsToAdd.toLocaleString()} كوينز في حساب العضو بنجاح! 🪙`
+      order.vipTierId
+        ? `تمت الموافقة وتفعيل ترقية ${order.itemName || order.vipTierId}${coinsToAdd > 0 ? ` + ${coinsToAdd.toLocaleString()} كوينز` : ''} بنجاح! 👑`
+        : `تمت الموافقة وإيداع +${coinsToAdd.toLocaleString()} كوينز في حساب العضو بنجاح! 🪙`
     );
   };
 
@@ -713,17 +723,22 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
                   {pendingPayments.map((order) => {
                     const targetUser = usersList.find((u) => u.id === order.userId);
                     const isPending = order.status === 'pending';
+                    const vipBonus = order.vipTierId
+                      ? VIP_TIERS.find((t) => t.id === order.vipTierId)?.coinsBonus || 0
+                      : 0;
                     const coinsCalculated =
-                      order.coins ||
-                      (order.amount === 50
-                        ? 1000
-                        : order.amount === 200
-                        ? 5000
-                        : order.amount === 350
-                        ? 10000
-                        : order.amount === 800
-                        ? 25000
-                        : Math.round(order.amount * 25));
+                      order.type === 'vip'
+                        ? (typeof order.coins === 'number' ? order.coins : vipBonus)
+                        : (order.coins ||
+                          (order.amount === 50
+                            ? 1000
+                            : order.amount === 200
+                            ? 5000
+                            : order.amount === 350
+                            ? 10000
+                            : order.amount === 800
+                            ? 25000
+                            : Math.round(order.amount * 25)));
 
                     return (
                       <div
@@ -742,9 +757,15 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
                               <span className="font-mono text-xs font-black text-amber-800 bg-amber-50 px-2 py-0.5 rounded-lg border border-amber-200">
                                 {order.amount} ج.م EGP
                               </span>
-                              <span className="text-xs font-black text-slate-900">
-                                🪙 +{coinsCalculated.toLocaleString()} كوينز
-                              </span>
+                              {order.type === 'vip' ? (
+                                <span className="text-xs font-black text-purple-800 bg-purple-50 px-2 py-0.5 rounded-lg border border-purple-200">
+                                  👑 ترقية {order.itemName || order.vipTierId}
+                                </span>
+                              ) : (
+                                <span className="text-xs font-black text-slate-900">
+                                  🪙 +{coinsCalculated.toLocaleString()} كوينز
+                                </span>
+                              )}
                               <span
                                 className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
                                   isPending
@@ -757,7 +778,7 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
                                 {isPending
                                   ? '⏳ قيد المراجعة المعلقة'
                                   : order.status === 'approved'
-                                  ? '✅ تم الاعتماد والإيداع'
+                                  ? '✅ تم الاعتماد والتنفيذ'
                                   : '❌ مرفوض'}
                               </span>
                             </div>
@@ -765,13 +786,31 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
                             <p className="text-[11px] text-slate-700">
                               <span className="text-slate-500">العضو: </span>
                               <span className="font-bold text-slate-900">
-                                {targetUser?.name || order.userId}
+                                {order.userName || targetUser?.name || order.userId}
                               </span>
-                              <span className="text-slate-400 mr-2">({order.userId})</span>
+                              <span className="text-slate-400 mr-2 font-mono text-[10px]">({order.userId})</span>
                             </p>
 
+                            <div className="flex flex-wrap items-center gap-2 text-[11px] bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1.5">
+                              {order.senderAccountOrPhone && (
+                                <span className="font-bold text-slate-800">
+                                  📱 المحفظة/الحساب: <span className="font-mono text-indigo-700">{order.senderAccountOrPhone}</span>
+                                </span>
+                              )}
+                              {order.senderName && (
+                                <span className="font-bold text-slate-800">
+                                  • 👤 اسم المحوّل: <span className="text-slate-900">{order.senderName}</span>
+                                </span>
+                              )}
+                              {order.transactionRef && (
+                                <span className="font-bold text-emerald-800">
+                                  • 🔖 الرقم المرجعي: <span className="font-mono">{order.transactionRef}</span>
+                                </span>
+                              )}
+                            </div>
+
                             <p className="text-[11px] text-slate-600 font-medium">
-                              <span className="text-slate-500">بيانات التحويل: </span>
+                              <span className="text-slate-500">التفاصيل: </span>
                               {order.note || 'تحويل إنستاباي'}
                             </p>
 
@@ -784,15 +823,15 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
                             <div className="flex items-center gap-2 shrink-0 pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-200">
                               <button
                                 onClick={() => handleApprovePayment(order)}
-                                className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs flex items-center gap-1 shadow active:scale-95 transition-all"
+                                className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs flex items-center gap-1 shadow active:scale-95 transition-all cursor-pointer"
                               >
                                 <Check className="w-3.5 h-3.5" />
-                                <span>موافقة وإيداع الكوينز</span>
+                                <span>{order.type === 'vip' ? 'اعتماد الترقية 👑' : 'موافقة وإيداع الكوينز'}</span>
                               </button>
 
                               <button
                                 onClick={() => handleRejectPayment(order.id)}
-                                className="px-2.5 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 text-xs font-bold transition-all active:scale-95"
+                                className="px-2.5 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 text-xs font-bold transition-all active:scale-95 cursor-pointer"
                               >
                                 <span>رفض</span>
                               </button>
@@ -826,18 +865,24 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
                       لا توجد محادثات خاصة مسجلة حالياً
                     </div>
                   ) : (
-                    secretThreads.map((t) => (
+                    secretThreads.map((t) => {
+                      const participantNames = (t.participants || []).map((pid) => {
+                        const found = usersList.find((u) => u.id === pid);
+                        return found?.name || pid;
+                      });
+                      const titleLabel = participantNames.length > 0 ? participantNames.join(' ↔ ') : t.chatId;
+                      return (
                       <button
                         key={t.chatId}
                         type="button"
                         onClick={() => handleSelectSecretThread(t)}
-                        className={`w-full p-3 text-right hover:bg-slate-50 transition-colors flex flex-col gap-1 ${
+                        className={`w-full p-3 text-right hover:bg-slate-50 transition-colors flex flex-col gap-1 cursor-pointer ${
                           selectedThread?.chatId === t.chatId ? 'bg-amber-50/70' : ''
                         }`}
                       >
                         <div className="flex items-center justify-between gap-2">
                           <span className="text-xs font-black text-slate-900 truncate">
-                            {t.participants?.join(' ↔ ') || t.chatId}
+                            {titleLabel}
                           </span>
                           {t.lastTimestamp ? (
                             <span className="text-[10px] text-slate-400 font-mono shrink-0">
@@ -853,7 +898,8 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
                           {t.lastMessage || 'لا توجد رسائل'}
                         </p>
                       </button>
-                    ))
+                      );
+                    })
                   )}
                 </div>
               </div>
@@ -863,7 +909,11 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
                 <div className="px-3 py-2.5 border-b border-slate-200 bg-slate-50 flex items-center justify-between text-xs">
                   <span className="font-black text-slate-900">
                     {selectedThread
-                      ? `مراقبة صامتة: ${selectedThread.participants?.join(' ↔ ') || selectedThread.chatId}`
+                      ? `مراقبة صامتة: ${
+                          (selectedThread.participants || [])
+                            .map((pid) => usersList.find((u) => u.id === pid)?.name || pid)
+                            .join(' ↔ ') || selectedThread.chatId
+                        }`
                       : 'اختر محادثة من القائمة لعرض سجلها بصمت'}
                   </span>
                   <span className="text-[10px] text-emerald-700 font-bold bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
@@ -933,26 +983,51 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
                 </form>
 
                 {isPrimaryOwner && (
-                  <div className="pt-2 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2">
-                    <span className="text-[11px] font-black text-rose-700">
-                      أدوات التنظيف الفوري للمالك (God Mode Purge):
-                    </span>
-                    <div className="flex flex-wrap items-center gap-2">
+                  <div className="pt-2 border-t border-slate-100 space-y-2.5">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="text-[11px] font-black text-rose-700">
+                        أدوات التنظيف الفوري للمالك (God Mode Purge):
+                      </span>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handlePurgeRoom('room_egypt', 'غرفة مصر 1')}
+                          className="px-3 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 text-[11px] font-black flex items-center gap-1 active:scale-95 cursor-pointer"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          <span>تفريغ غرفة مصر 1 🧹</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handlePurgeRoom('room_egypt2', 'غرفة مصر 2')}
+                          className="px-3 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 text-[11px] font-black flex items-center gap-1 active:scale-95 cursor-pointer"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          <span>تفريغ غرفة مصر 2 🧹</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="pt-2 border-t border-slate-100 flex flex-col sm:flex-row sm:items-center gap-2">
+                      <input
+                        type="text"
+                        value={appUpdateMsg}
+                        onChange={(e) => setAppUpdateMsg(e.target.value)}
+                        placeholder="رسالة تحديث اختيارية (مثال: يتوفر تحديث جديد الآن مع ميزات رائعة)..."
+                        className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs text-slate-900 focus:outline-none focus:border-indigo-400"
+                      />
                       <button
                         type="button"
-                        onClick={() => handlePurgeRoom('room_egypt', 'غرفة مصر 1')}
-                        className="px-3 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 text-[11px] font-black flex items-center gap-1 active:scale-95"
+                        onClick={async () => {
+                          sounds.playCoinsReward();
+                          await pushAppUpdateNotice(currentUser.name, appUpdateMsg);
+                          setAppUpdateMsg('');
+                          showNotification('تم إرسال إشعار تحديث التطبيق لجميع المتواجدين الآن! 🚀');
+                        }}
+                        className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white text-[11px] font-black flex items-center justify-center gap-1.5 shadow-sm active:scale-95 transition shrink-0 cursor-pointer"
                       >
-                        <Trash2 className="w-3.5 h-3.5" />
-                        <span>تفريغ غرفة مصر 1 🧹</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handlePurgeRoom('room_egypt2', 'غرفة مصر 2')}
-                        className="px-3 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 text-[11px] font-black flex items-center gap-1 active:scale-95"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                        <span>تفريغ غرفة مصر 2 🧹</span>
+                        <RefreshCw className="w-3.5 h-3.5" />
+                        <span>إرسال إشعار تحديث للتطبيق 🚀</span>
                       </button>
                     </div>
                   </div>

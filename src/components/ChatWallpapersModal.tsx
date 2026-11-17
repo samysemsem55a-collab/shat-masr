@@ -57,6 +57,7 @@ export const ChatWallpapersModal: React.FC<ChatWallpapersModalProps> = ({
     if (onUpdateUser) onUpdateUser(updatedUser);
     syncUserProfileToFirebase(updatedUser);
     localStorage.setItem('arab_chat_active_wallpaper', wallpaper.id);
+    onClose();
   };
 
   const handlePurchaseAndApply = async (wallpaper: ChatWallpaper) => {
@@ -83,6 +84,7 @@ export const ChatWallpapersModal: React.FC<ChatWallpapersModalProps> = ({
     await syncUserProfileToFirebase(updatedUser);
     localStorage.setItem('arab_chat_active_wallpaper', wallpaper.id);
     setPurchasingId(null);
+    onClose();
   };
 
   const filteredWallpapers = CHAT_WALLPAPERS.filter((wp) => {
@@ -177,22 +179,26 @@ export const ChatWallpapersModal: React.FC<ChatWallpapersModalProps> = ({
             </button>
           </div>
 
-          {/* User Coins Badge */}
-          <div className="flex items-center gap-2 shrink-0">
-            <div className="flex items-center gap-1 px-2.5 py-1 rounded-xl bg-amber-50 border border-amber-200 text-amber-700 text-xs font-black">
-              <span>🪙</span>
-              <span>{currentUser.coins.toLocaleString()} كوينز</span>
+          {/* User Coins Badge (Hidden for Owner) */}
+          {!isOwner && (
+            <div className="flex items-center gap-2 shrink-0">
+              <div className="flex items-center gap-1 px-2.5 py-1 rounded-xl bg-amber-50 border border-amber-200 text-amber-700 text-xs font-black">
+                <span>🪙</span>
+                <span>{currentUser.coins.toLocaleString()} كوينز</span>
+              </div>
+              {onOpenWallet && (
+                <button
+                  onClick={() => {
+                    onClose();
+                    onOpenWallet();
+                  }}
+                  className="px-2.5 py-1 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-black shadow-sm transition active:scale-95 cursor-pointer"
+                >
+                  شحن +
+                </button>
+              )}
             </div>
-            <button
-              onClick={() => {
-                onClose();
-                if (onOpenWallet) onOpenWallet();
-              }}
-              className="px-2.5 py-1 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-black shadow-sm transition active:scale-95"
-            >
-              شحن +
-            </button>
-          </div>
+          )}
 
         </div>
 
@@ -200,14 +206,14 @@ export const ChatWallpapersModal: React.FC<ChatWallpapersModalProps> = ({
         {notice && (
           <div className="mx-3 mt-2.5 p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-xs font-bold flex items-center justify-between gap-2 shrink-0">
             <span>{notice}</span>
-            {onOpenWallet && (
+            {!isOwner && onOpenWallet && (
               <button
                 onClick={() => {
                   setNotice(null);
                   onClose();
                   onOpenWallet();
                 }}
-                className="px-2.5 py-1 rounded-lg bg-amber-500 text-white text-[11px] font-black shrink-0"
+                className="px-2.5 py-1 rounded-lg bg-amber-500 text-white text-[11px] font-black shrink-0 cursor-pointer"
               >
                 شحن رصيد
               </button>
@@ -248,10 +254,17 @@ export const ChatWallpapersModal: React.FC<ChatWallpapersModalProps> = ({
             return (
               <div
                 key={wallpaper.id}
-                className={`rounded-2xl border transition-all overflow-hidden flex flex-col justify-between ${
+                onClick={() => {
+                  if (isUnlocked) {
+                    handleApplyWallpaper(wallpaper);
+                  } else {
+                    handlePurchaseAndApply(wallpaper);
+                  }
+                }}
+                className={`rounded-2xl border transition-all overflow-hidden flex flex-col justify-between cursor-pointer ${
                   isActive
-                    ? 'border-emerald-500 bg-emerald-50/30 shadow-md'
-                    : 'border-slate-200 bg-white hover:border-indigo-300 shadow-sm'
+                    ? 'border-emerald-500 bg-emerald-50/30 shadow-md ring-2 ring-emerald-400/30'
+                    : 'border-slate-200 bg-white hover:border-indigo-400 shadow-sm'
                 }`}
               >
                 {/* Visual Preview Box */}
@@ -313,39 +326,43 @@ export const ChatWallpapersModal: React.FC<ChatWallpapersModalProps> = ({
                     </div>
 
                     {/* Action Button */}
-                    <div className="flex items-center gap-1.5">
+                    <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
                       {/* Live Preview Button */}
                       <button
+                        type="button"
                         onClick={() => setPreviewWallpaper(wallpaper)}
                         title="معاينة"
-                        className="p-1.5 rounded-xl bg-slate-100 text-slate-600 hover:text-slate-900 border border-slate-200"
+                        className="p-1.5 rounded-xl bg-slate-100 text-slate-600 hover:text-slate-900 border border-slate-200 cursor-pointer"
                       >
                         <Eye className="w-3.5 h-3.5" />
                       </button>
 
                       {isActive ? (
                         <button
-                          disabled
-                          className="px-3 py-1.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-bold flex items-center gap-1 cursor-default"
+                          type="button"
+                          onClick={() => handleApplyWallpaper(wallpaper)}
+                          className="px-3.5 py-1.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-700 text-xs font-black flex items-center gap-1 cursor-pointer"
                         >
                           <Check className="w-3.5 h-3.5" />
-                          <span>مُفعلة</span>
+                          <span>تطبيق الخلفية</span>
                         </button>
                       ) : isUnlocked ? (
                         <button
+                          type="button"
                           onClick={() => handleApplyWallpaper(wallpaper)}
-                          className="px-3.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-black shadow-sm transition active:scale-95 flex items-center gap-1"
+                          className="px-3.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-black shadow-sm transition active:scale-95 flex items-center gap-1 cursor-pointer"
                         >
-                          <span>تطبيق كخلفية</span>
+                          <span>تطبيق الخلفية</span>
                         </button>
                       ) : (
                         <button
+                          type="button"
                           onClick={() => handlePurchaseAndApply(wallpaper)}
                           disabled={isPurchasing}
-                          className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-500 hover:from-amber-400 hover:to-yellow-400 text-slate-950 text-xs font-black shadow-sm transition active:scale-95 flex items-center gap-1"
+                          className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-500 hover:from-amber-400 hover:to-yellow-400 text-slate-950 text-xs font-black shadow-sm transition active:scale-95 flex items-center gap-1 cursor-pointer"
                         >
                           <Coins className="w-3.5 h-3.5 fill-slate-950" />
-                          <span>{isPurchasing ? 'جاري الشراء...' : `شراء وتفعيل (${wallpaper.priceCoins})`}</span>
+                          <span>{isPurchasing ? 'جاري الشراء...' : `تطبيق الخلفية (${wallpaper.priceCoins})`}</span>
                         </button>
                       )}
                     </div>

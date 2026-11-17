@@ -103,6 +103,7 @@ interface PinnedRoomMessage {
 
 // Stores
 const messagesByRoom: Map<string, ChatMessage[]> = new Map();
+const lastMessageByRoom: Map<string, { senderName: string; content: string; type?: string; timestamp: number }> = new Map();
 const pinnedMessageByRoom: Map<string, PinnedRoomMessage | null> = new Map();
 const roomBackgroundByRoom: Map<string, string> = new Map();
 const roomLockByRoom: Map<string, boolean> = new Map();
@@ -110,6 +111,8 @@ const directMessagesByConv: Map<string, any[]> = new Map();
 const roomOccupants: Map<string, Map<string, RoomOccupant>> = new Map();
 const usersStore: Map<string, UserProfile> = new Map();
 const userReportsStore: any[] = [];
+const announcedGlobalJoinIds: Set<string> = new Set();
+let latestAppUpdateNotice: { version: string; message: string; pushedBy: string; timestamp: number } | null = null;
 const socketToUser: Map<WebSocket, { userId: string; sessionId?: string; roomId?: string }> = new Map();
 // Global map of connected sockets by userId
 const connectedUsers: Map<string, { ws: WebSocket; user: UserProfile; lastSeen: number }> = new Map();
@@ -328,6 +331,16 @@ wss.on('connection', (ws: WebSocket) => {
     type: 'ALL_ROOM_LOCKS',
     locks: Object.fromEntries(roomLockByRoom)
   }));
+  ws.send(JSON.stringify({
+    type: 'ALL_ROOM_LAST_MESSAGES',
+    lastMessages: Object.fromEntries(lastMessageByRoom)
+  }));
+  if (latestAppUpdateNotice) {
+    ws.send(JSON.stringify({
+      type: 'APP_UPDATE_NOTICE',
+      notice: latestAppUpdateNotice
+    }));
+  }
 
   ws.on('message', (raw) => {
     try {
@@ -344,6 +357,27 @@ wss.on('connection', (ws: WebSocket) => {
             const prevInfo = socketToUser.get(ws);
             socketToUser.set(ws, { userId: user.id, sessionId: user.sessionId, roomId: prevInfo?.roomId });
             connectedUsers.set(user.id, { ws, user: merged, lastSeen: Date.now() });
+
+            // Broadcast instant Global Join notification once per registered non-guest user session
+            const cleanName = typeof merged.name === 'string' ? merged.name.trim() : '';
+            const isRegisteredRealUser =
+              !merged.isGuest &&
+              cleanName.length >= 2 &&
+              !cleanName.startsWith('زائر_') &&
+              cleanName !== 'ضيف عربي';
+            if (isRegisteredRealUser && !announcedGlobalJoinIds.has(merged.id)) {
+              announcedGlobalJoinIds.add(merged.id);
+              broadcastToAll({
+                type: 'GLOBAL_USER_JOINED',
+                user: {
+                  id: merged.id,
+                  name: cleanName,
+                  avatar: merged.avatar,
+                  role: merged.role,
+                  vipBadge: merged.vipBadge
+                }
+              }, ws);
+            }
 
             // Deliver any non-expired direct messages targeting this user or their active sessionId
             directMessagesByConv.forEach((msgs, convId) => {
@@ -557,6 +591,36 @@ wss.on('connection', (ws: WebSocket) => {
             roomId,
             message: completeMsg
           });
+
+          // Update & broadcast latest room message summary for lobby room cards
+          if (completeMsg.type !== 'system_welcome') {
+            const previewContent =
+              completeMsg.type === 'gift' && completeMsg.gift?.name
+                ? `🎁 أرسل ${completeMsg.gift.name}`
+                : completeMsg.type === 'voice'
+                ? '🎤 رسالة صوتية'
+                : completeMsg.type === 'image'
+                ? '📷 صورة'
+                : completeMsg.type === 'video'
+                ? '🎬 فيديو'
+                : completeMsg.type === 'sticker'
+                ? `${completeMsg.stickerEmoji || ''} ${completeMsg.stickerLabel || 'ملصق'}`.trim()
+                : completeMsg.content || completeMsg.text || '';
+            if (previewContent) {
+              const lastMsgSummary = {
+                senderName: completeMsg.senderName || 'عضو',
+                content: previewContent.slice(0, 120),
+                type: completeMsg.type,
+                timestamp: completeMsg.timestamp
+              };
+              lastMessageByRoom.set(roomId, lastMsgSummary);
+              broadcastToAll({
+                type: 'ROOM_LAST_MESSAGE_UPDATED',
+                roomId,
+                lastMessage: lastMsgSummary
+              });
+            }
+          }
 
           console.log(`[Message] ${completeMsg.senderName} in ${roomId}: ${completeMsg.content.substring(0, 30)}`);
           break;
@@ -1081,6 +1145,35 @@ wss.on('connection', (ws: WebSocket) => {
           break;
         }
 
+        case 'APP_UPDATE_NOTICE': {
+          const { version, message, pushedBy } = payload || {};
+          latestAppUpdateNotice = {
+            version: String(version || `v${Date.now()}`),
+            message: String(message || 'تم إصدار تحديث جديد للتطبيق بمميزات وتحسينات أسرع!'),
+            pushedBy: String(pushedBy || 'الإدارة'),
+            timestamp: Date.now()
+          };
+          broadcastToAll({
+            type: 'APP_UPDATE_NOTICE',
+            notice: latestAppUpdateNotice
+          });
+          break;
+        }
+
+        case 'TICTACTOE_SIGNAL': {
+          const { targetUserId, signal } = payload || {};
+          if (targetUserId && signal) {
+            const delivered = sendToUser(targetUserId, {
+              type: 'TICTACTOE_SIGNAL',
+              signal
+            });
+            if (!delivered) {
+              broadcastToAll({ type: 'TICTACTOE_SIGNAL', signal }, ws);
+            }
+          }
+          break;
+        }
+
         default:
           break;
       }
@@ -1146,6 +1239,39 @@ app.get('/api/health', (_req: Request, res: Response) => {
 
 app.get('/api/admin/reports', (_req: Request, res: Response) => {
   res.json({ reports: userReportsStore });
+});
+
+app.get('/api/admin/direct-chats', (_req: Request, res: Response) => {
+  const threads: any[] = [];
+  directMessagesByConv.forEach((msgs, convId) => {
+    const active = msgs.filter(m => !isMessageExpired(m, DM_MESSAGE_TTL_MS));
+    if (!active.length) return;
+    const latest = active[active.length - 1];
+    const participants = Array.from(
+      new Set(
+        active
+          .flatMap((m) => [m.senderId, m.recipientId])
+          .filter(Boolean)
+      )
+    );
+    threads.push({
+      chatId: convId,
+      participants,
+      lastMessage: latest.content || latest.text || 'رسالة خاصة',
+      lastSenderId: latest.senderId,
+      lastSenderName: latest.senderName,
+      lastTimestamp: latest.timestamp || latest.createdAt || Date.now(),
+      messages: active
+    });
+  });
+  threads.sort((a, b) => (b.lastTimestamp || 0) - (a.lastTimestamp || 0));
+  res.json({ threads });
+});
+
+app.get('/api/admin/direct-chats/:convId', (req: Request, res: Response) => {
+  const convId = req.params.convId;
+  const msgs = (directMessagesByConv.get(convId) || []).filter(m => !isMessageExpired(m, DM_MESSAGE_TTL_MS));
+  res.json({ convId, messages: msgs });
 });
 
 app.get('/api/messages/:roomId', (req: Request, res: Response) => {

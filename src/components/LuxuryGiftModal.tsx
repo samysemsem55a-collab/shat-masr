@@ -19,7 +19,8 @@ interface LuxuryGiftModalProps {
   onClose: () => void;
   currentUser: User;
   speakers: SpeakerSeat[];
-  onSendGift: (gift: GiftItem, recipientName: string) => void;
+  roomUsers?: User[];
+  onSendGift: (gift: GiftItem, recipientName: string, recipientId?: string) => void;
   onOpenWallet: () => void;
   preselectedRecipient?: User | null;
 }
@@ -29,6 +30,7 @@ export const LuxuryGiftModal: React.FC<LuxuryGiftModalProps> = ({
   onClose,
   currentUser,
   speakers,
+  roomUsers = [],
   onSendGift,
   onOpenWallet,
   preselectedRecipient = null,
@@ -61,9 +63,13 @@ export const LuxuryGiftModal: React.FC<LuxuryGiftModalProps> = ({
   if (!isOpen) return null;
 
   const isOwner = isUserAdminOrOwner(currentUser);
-  const isPreselectedInSpeakers = Boolean(
+  const otherRoomUsers = roomUsers.filter(
+    (u) => u && u.id !== currentUser.id && u.id !== 'system_bot'
+  );
+  const isPreselectedListed = Boolean(
     preselectedRecipient?.name &&
-      speakers.some(s => s.user && s.user.id !== currentUser.id && s.user.name === preselectedRecipient.name)
+      (speakers.some(s => s.user && s.user.id !== currentUser.id && s.user.name === preselectedRecipient.name) ||
+        otherRoomUsers.some(u => u.name === preselectedRecipient.name))
   );
 
   const handleSend = () => {
@@ -88,7 +94,12 @@ export const LuxuryGiftModal: React.FC<LuxuryGiftModalProps> = ({
       origin: { y: 0.6 }
     });
 
-    onSendGift(selectedGift, selectedRecipient);
+    const targetRecipientId =
+      (preselectedRecipient?.name === selectedRecipient ? preselectedRecipient.id : undefined) ||
+      otherRoomUsers.find((u) => u.name === selectedRecipient)?.id ||
+      speakers.find((s) => s.user?.name === selectedRecipient)?.user?.id;
+
+    onSendGift(selectedGift, selectedRecipient, targetRecipientId);
     onClose();
   };
 
@@ -155,14 +166,19 @@ export const LuxuryGiftModal: React.FC<LuxuryGiftModalProps> = ({
             >
               {preselectedRecipient?.name &&
                 preselectedRecipient.id !== currentUser.id &&
-                !isPreselectedInSpeakers && (
+                !isPreselectedListed && (
                   <option value={preselectedRecipient.name}>
                     🎁 {preselectedRecipient.name} ({preselectedRecipient.countryFlag || '🇪🇬'})
                   </option>
                 )}
               <option value="مضيف المجلس 👑">مضيف المجلس 👑</option>
+              {otherRoomUsers.map((u) => (
+                <option key={`room_user_${u.id}`} value={u.name}>
+                  👤 {u.name} ({u.countryFlag || '🇪🇬'})
+                </option>
+              ))}
               {speakers
-                .filter(s => s.user && s.user.id !== currentUser.id)
+                .filter(s => s.user && s.user.id !== currentUser.id && !otherRoomUsers.some(ru => ru.id === s.user!.id))
                 .map(s => (
                   <option key={s.seatId} value={s.user!.name}>
                     المقعد #{s.seatId}: {s.user!.name} ({s.user!.countryFlag})

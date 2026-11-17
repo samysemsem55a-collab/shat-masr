@@ -76,6 +76,7 @@ interface PrivateChatViewProps {
   unreadMessagesBySender?: UnreadSenderSummary[];
   onMarkSenderRead?: (senderId: string) => void;
   onClearAllUnreadMessages?: () => void;
+  onOpenUserProfile?: (user: User) => void;
   isDrawer?: boolean;
   onCloseDrawer?: () => void;
 }
@@ -105,6 +106,7 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
   unreadMessagesBySender = [],
   onMarkSenderRead,
   onClearAllUnreadMessages,
+  onOpenUserProfile,
   isDrawer = false,
   onCloseDrawer
 }) => {
@@ -223,6 +225,7 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
   // 3. Handle External Navigation from UserProfileModal or OnlineUsersModal
   useEffect(() => {
     if (targetUser && targetUser.id !== currentUser.id) {
+      onMarkSenderRead?.(targetUser.id);
       const isOnline = globalOnlineUsers.some(u => u.id === targetUser.id) || targetUser.isOnline;
       const targetContact: ChatContact = {
         id: targetUser.id,
@@ -237,7 +240,7 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
       };
       setActiveContact(targetContact);
     }
-  }, [targetUser, currentUser.id, globalOnlineUsers]);
+  }, [targetUser, currentUser.id, globalOnlineUsers, onMarkSenderRead]);
 
   // 4. Real-time Messages for Active 1-on-1 Chat
   const [messages, setMessages] = useState<Message[]>([]);
@@ -947,7 +950,7 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                         onMarkSenderRead?.(chat.peerId);
                         setActiveContact({
                           id: chat.peerId,
-                          name: chat.peerName || 'مستخدم',
+                          name: chat.peerName || 'عضو شات مصر',
                           countryFlag: chat.peerCountryFlag || '🌍',
                           avatar: chat.peerAvatar || '',
                           role: chat.peerRole || 'عضو',
@@ -968,7 +971,7 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                           user={
                             globalOnlineUsers.find(u => u.id === chat.peerId) || {
                               id: chat.peerId,
-                              name: chat.peerName || 'مستخدم',
+                              name: chat.peerName || 'عضو شات مصر',
                               avatar: chat.peerAvatar || '',
                               role: (chat.peerRole as any) || 'member',
                               status: peerOnline ? 'online' : 'offline',
@@ -980,7 +983,7 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
 
                         <div className="min-w-0">
                           <div className="flex items-center gap-1.5">
-                            <h4 className="text-sm font-black text-slate-900 truncate">{chat.peerName || 'مستخدم'}</h4>
+                            <h4 className="text-sm font-black text-slate-900 truncate">{chat.peerName || 'عضو شات مصر'}</h4>
                             <span className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-50 border border-indigo-200 text-indigo-700 font-bold shrink-0">
                               محادثة مباشرة
                             </span>
@@ -1113,43 +1116,70 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                 <ArrowRight className="w-4 h-4" />
               </button>
 
-              <AvatarWithFrame
-                user={
-                  globalOnlineUsers.find(u => u.id === activeContact.id) || {
-                    id: activeContact.id,
-                    name: activeContact.name,
-                    avatar: activeContact.avatar,
-                    role: (activeContact.role as any) || 'member',
-                    status: activeContact.status,
-                  }
-                }
-                size="sm"
-                showOnlineDot
-              />
+              {(() => {
+                const resolvedPeerUser: User = globalOnlineUsers.find(u => u.id === activeContact.id) || {
+                  id: activeContact.id,
+                  name: activeContact.name,
+                  username: activeContact.name.toLowerCase().replace(/\s+/g, '_'),
+                  avatar: activeContact.avatar,
+                  bio: 'عضو في شات مصر',
+                  country: 'مصر',
+                  countryFlag: activeContact.countryFlag || '🇪🇬',
+                  role: 'member',
+                  coins: 0,
+                  earningsEgp: 0,
+                  earningsUsd: 0,
+                  vipBadge: '',
+                  frameStyle: 'border-slate-300',
+                  profileWallpaper: '',
+                  fontPreference: 'cairo',
+                  isOnline: activeContact.status === 'online',
+                  status: activeContact.status,
+                  joinedAt: '',
+                  gender: 'male',
+                  level: 1,
+                  likesReceived: 0,
+                  giftsReceivedCount: 0,
+                };
+                return (
+                  <button
+                    type="button"
+                    onClick={() => onOpenUserProfile?.(resolvedPeerUser)}
+                    className="flex items-center gap-2 min-w-0 flex-1 text-right cursor-pointer group"
+                    title="عرض الملف الشخصي والخيارات"
+                  >
+                    <AvatarWithFrame
+                      user={resolvedPeerUser}
+                      size="sm"
+                      showOnlineDot
+                    />
 
-              <div className="min-w-0 flex-1 text-right">
-                <h3 className="text-xs sm:text-sm font-black text-slate-900 flex items-center gap-1 min-w-0">
-                  <span className="truncate">{activeContact.name}</span>
-                  <span className="shrink-0">{activeContact.countryFlag}</span>
-                </h3>
-                {isPeerTyping ? (
-                  <span className="text-[10px] sm:text-[11px] text-amber-600 font-bold flex items-center gap-1.5 animate-pulse truncate">
-                    <span>جاري الكتابة...</span>
-                    <span className="flex items-center gap-0.5 shrink-0">
-                      <span className="w-1 h-1 rounded-full bg-amber-500 animate-bounce" style={{ animationDelay: '0ms' }}></span>
-                      <span className="w-1 h-1 rounded-full bg-amber-500 animate-bounce" style={{ animationDelay: '150ms' }}></span>
-                      <span className="w-1 h-1 rounded-full bg-amber-500 animate-bounce" style={{ animationDelay: '300ms' }}></span>
-                    </span>
-                  </span>
-                ) : activeContact.status === 'online' ? (
-                  <span className="text-[9.5px] sm:text-[10px] text-emerald-600 font-bold flex items-center gap-1 truncate">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shrink-0"></span>
-                    <span className="truncate">متصل الآن • خاص مشفر</span>
-                  </span>
-                ) : (
-                  <span className="text-[9.5px] sm:text-[10px] text-slate-500 font-medium block truncate">خاص مشفر • غير متصل</span>
-                )}
-              </div>
+                    <div className="min-w-0 flex-1 text-right">
+                      <h3 className="text-xs sm:text-sm font-black text-slate-900 flex items-center gap-1 min-w-0 group-hover:text-indigo-700 transition-colors">
+                        <span className="truncate">{activeContact.name}</span>
+                        <span className="shrink-0">{activeContact.countryFlag}</span>
+                      </h3>
+                      {isPeerTyping ? (
+                        <span className="text-[10px] sm:text-[11px] text-amber-600 font-bold flex items-center gap-1.5 animate-pulse truncate">
+                          <span>جاري الكتابة...</span>
+                          <span className="flex items-center gap-0.5 shrink-0">
+                            <span className="w-1 h-1 rounded-full bg-amber-500 animate-bounce" style={{ animationDelay: '0ms' }}></span>
+                            <span className="w-1 h-1 rounded-full bg-amber-500 animate-bounce" style={{ animationDelay: '150ms' }}></span>
+                            <span className="w-1 h-1 rounded-full bg-amber-500 animate-bounce" style={{ animationDelay: '300ms' }}></span>
+                          </span>
+                        </span>
+                      ) : activeContact.status === 'online' ? (
+                        <span className="text-[9.5px] sm:text-[10px] text-emerald-600 font-bold flex items-center gap-1 truncate">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shrink-0"></span>
+                          <span className="truncate">متصل الآن • خاص مشفر</span>
+                        </span>
+                      ) : (
+                        <span className="text-[9.5px] sm:text-[10px] text-slate-500 font-medium block truncate">خاص مشفر • غير متصل</span>
+                      )}
+                    </div>
+                  </button>
+                );
+              })()}
             </div>
 
             {/* Header Left Actions (RTL): Natural Wallpaper, Coins Transfer, Gift, Audio Call */}
@@ -1326,17 +1356,17 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                       e.preventDefault();
                       setActiveContextMenu({ msg, x: e.clientX, y: e.clientY });
                     }}
-                    className={`max-w-[85%] sm:max-w-[75%] rounded-2xl px-3.5 py-2.5 text-xs sm:text-sm space-y-1 shadow-md cursor-pointer select-text transition-transform active:scale-[0.99] ${
+                    className={`max-w-[85%] sm:max-w-[75%] rounded-2xl px-3.5 py-2.5 text-xs sm:text-sm space-y-1 cursor-pointer select-text transition-transform active:scale-[0.99] ${
                     msg.type === 'sticker'
-                      ? 'bg-white/95 text-slate-900 border-2 border-indigo-200/80 shadow-md'
+                      ? 'bg-white/95 text-slate-900 border border-indigo-200/80 shadow-xs'
                       : isMe
-                      ? 'bg-gradient-to-r from-indigo-600 via-purple-600 to-indigo-700 text-white rounded-tr-none shadow-indigo-900/30'
-                      : 'bg-white/95 text-slate-900 border-2 border-amber-300/80 rounded-tl-none shadow-amber-900/10'
+                      ? 'bg-gradient-to-br from-sky-50 via-indigo-50 to-blue-100/95 text-slate-900 border border-sky-200/90 rounded-tr-none shadow-xs'
+                      : 'bg-white/95 text-slate-900 border border-slate-200/90 rounded-tl-none shadow-xs'
                   }`}
                     title="اضغط مطولاً لخيارات الرسالة (حذف / نسخ)"
                   >
                     {msg.type === 'sticker' ? (
-                      <p className={`leading-relaxed whitespace-pre-wrap font-medium ${isMe ? 'text-white' : 'text-slate-900'}`}>
+                      <p className="leading-relaxed whitespace-pre-wrap font-medium text-slate-900">
                         <InlineRichText text={msg.stickerEmoji || msg.content || '✨'} />
                         {msg.stickerLabel ? ` ${msg.stickerLabel}` : ''}
                       </p>
@@ -1409,31 +1439,31 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                               }
                             }
                           }}
-                          className={`p-1.5 rounded-full ${isMe ? 'bg-white text-indigo-700' : 'bg-amber-600 text-white'}`}
+                          className={`p-1.5 rounded-full ${isMe ? 'bg-indigo-600 text-white' : 'bg-amber-600 text-white'}`}
                         >
                           {playingVoiceId === msg.id ? <Pause className="w-3 h-3" /> : <Play className="w-3 h-3" />}
                         </button>
-                        <span className={`text-[11px] font-bold ${isMe ? 'text-white' : 'text-slate-800'}`}>
+                        <span className="text-[11px] font-bold text-slate-800">
                           تسجيل صوتي ({msg.audioDuration ? `0:${msg.audioDuration.toString().padStart(2, '0')}` : '0:05'})
                         </span>
                       </div>
                     ) : (
-                      <p className={`leading-relaxed whitespace-pre-wrap font-medium ${isMe ? 'text-white' : 'text-slate-900'}`}>
+                      <p className="leading-relaxed whitespace-pre-wrap font-medium text-slate-900">
                         <InlineRichText text={msg.content || msg.text || ''} />
                       </p>
                     )}
 
-                    <div className={`flex items-center justify-end gap-1 text-[10px] ${msg.type === 'sticker' ? 'text-slate-500' : isMe ? 'text-white/85' : 'text-slate-500'}`}>
+                    <div className="flex items-center justify-end gap-1 text-[10px] text-slate-500">
                       <span>{new Date(msg.timestamp).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })}</span>
                       {isMe && (
                         <span className="inline-flex items-center gap-0.5">
                           {msg.status === 'read' ? (
                             <>
-                              <CheckCheck className="w-3.5 h-3.5 text-cyan-200" />
-                              <span className="text-[9px] font-bold text-cyan-100">تم القراءة</span>
+                              <CheckCheck className="w-3.5 h-3.5 text-indigo-600" />
+                              <span className="text-[9px] font-bold text-indigo-700">تم القراءة</span>
                             </>
                           ) : (
-                            <Check className="w-3.5 h-3.5 text-slate-200" />
+                            <Check className="w-3.5 h-3.5 text-slate-400" />
                           )}
                         </span>
                       )}

@@ -63,6 +63,12 @@ class RealtimeSocketManager {
   private consentSignalListeners: Set<(signal: { kind: 'request' | 'response'; payload: any }) => void> = new Set();
   private luxuryGiftListeners: Map<string, Set<(giftData: any) => void>> = new Map();
   private roomPurgedListeners: Map<string, Set<() => void>> = new Map();
+  private globalJoinListeners: Set<(user: { id: string; name: string; avatar?: string; role?: string; vipBadge?: string }) => void> = new Set();
+  private allRoomLastMessageListeners: Set<(lastMessages: Record<string, { senderName: string; content: string; type?: string; timestamp: number }>) => void> = new Set();
+  private latestRoomLastMessages: Record<string, { senderName: string; content: string; type?: string; timestamp: number }> = {};
+  private appUpdateNoticeListeners: Set<(notice: { version: string; message: string; pushedBy: string; timestamp: number }) => void> = new Set();
+  private latestAppUpdateNotice: { version: string; message: string; pushedBy: string; timestamp: number } | null = null;
+  private ticTacToeSignalListeners: Set<(signal: any) => void> = new Set();
   private isConnectedState = false;
   private latestCumulativeVisitorsCount = 15480;
 
@@ -98,6 +104,8 @@ class RealtimeSocketManager {
         (!prevUser ||
           prevUser.id !== user.id ||
           prevUser.name !== user.name ||
+          prevUser.avatar !== user.avatar ||
+          prevUser.isGuest !== user.isGuest ||
           prevUser.sessionId !== user.sessionId)
       ) {
         this.send('USER_REGISTER', { user });
@@ -447,6 +455,48 @@ class RealtimeSocketManager {
       case 'ROOM_PURGED': {
         if (action.roomId) {
           this.roomPurgedListeners.get(action.roomId)?.forEach(cb => cb());
+        }
+        break;
+      }
+
+      case 'GLOBAL_USER_JOINED': {
+        if (action.user && action.user.name) {
+          this.globalJoinListeners.forEach(cb => cb(action.user));
+        }
+        break;
+      }
+
+      case 'ALL_ROOM_LAST_MESSAGES': {
+        const lastMessages = (action.lastMessages && typeof action.lastMessages === 'object')
+          ? (action.lastMessages as Record<string, { senderName: string; content: string; type?: string; timestamp: number }>)
+          : {};
+        this.latestRoomLastMessages = { ...lastMessages };
+        this.allRoomLastMessageListeners.forEach(cb => cb({ ...this.latestRoomLastMessages }));
+        break;
+      }
+
+      case 'ROOM_LAST_MESSAGE_UPDATED': {
+        if (action.roomId && action.lastMessage) {
+          this.latestRoomLastMessages = {
+            ...this.latestRoomLastMessages,
+            [action.roomId]: action.lastMessage
+          };
+          this.allRoomLastMessageListeners.forEach(cb => cb({ ...this.latestRoomLastMessages }));
+        }
+        break;
+      }
+
+      case 'APP_UPDATE_NOTICE': {
+        if (action.notice) {
+          this.latestAppUpdateNotice = action.notice;
+          this.appUpdateNoticeListeners.forEach(cb => cb(action.notice));
+        }
+        break;
+      }
+
+      case 'TICTACTOE_SIGNAL': {
+        if (action.signal) {
+          this.ticTacToeSignalListeners.forEach(cb => cb(action.signal));
         }
         break;
       }
@@ -887,6 +937,54 @@ class RealtimeSocketManager {
     this.luxuryGiftListeners.get(roomId)!.add(callback);
     return () => {
       this.luxuryGiftListeners.get(roomId)?.delete(callback);
+    };
+  }
+
+  subscribeToGlobalUserJoined(
+    callback: (user: { id: string; name: string; avatar?: string; role?: string; vipBadge?: string }) => void
+  ): () => void {
+    this.globalJoinListeners.add(callback);
+    return () => {
+      this.globalJoinListeners.delete(callback);
+    };
+  }
+
+  subscribeToAllRoomLastMessages(
+    callback: (lastMessages: Record<string, { senderName: string; content: string; type?: string; timestamp: number }>) => void
+  ): () => void {
+    this.allRoomLastMessageListeners.add(callback);
+    if (Object.keys(this.latestRoomLastMessages).length > 0) {
+      callback({ ...this.latestRoomLastMessages });
+    }
+    return () => {
+      this.allRoomLastMessageListeners.delete(callback);
+    };
+  }
+
+  sendAppUpdateNotice(notice: { version?: string; message?: string; pushedBy?: string }) {
+    this.send('APP_UPDATE_NOTICE', notice);
+  }
+
+  subscribeToAppUpdateNotices(
+    callback: (notice: { version: string; message: string; pushedBy: string; timestamp: number }) => void
+  ): () => void {
+    this.appUpdateNoticeListeners.add(callback);
+    if (this.latestAppUpdateNotice) {
+      callback(this.latestAppUpdateNotice);
+    }
+    return () => {
+      this.appUpdateNoticeListeners.delete(callback);
+    };
+  }
+
+  sendTicTacToeSignal(targetUserId: string, signal: any) {
+    this.send('TICTACTOE_SIGNAL', { targetUserId, signal });
+  }
+
+  subscribeToTicTacToeSignals(callback: (signal: any) => void): () => void {
+    this.ticTacToeSignalListeners.add(callback);
+    return () => {
+      this.ticTacToeSignalListeners.delete(callback);
     };
   }
 }

@@ -87,6 +87,7 @@ export const Header: React.FC<HeaderProps> = React.memo(({
   }, []);
 
   const isEffectiveOnline = isBrowserOnline && currentUser.status !== 'offline';
+  const isOwner = isUserAdminOrOwner(currentUser);
   const rankMeta = getRankDisplayMeta(currentUser.role, currentUser.vipBadge);
   const isPrivileged = hasPrivilegedRank(currentUser.role);
 
@@ -256,17 +257,19 @@ export const Header: React.FC<HeaderProps> = React.memo(({
                 </button>
               )}
 
-              <button 
-                type="button"
-                onClick={onOpenVip}
-                title="ترقية الرتبة VIP"
-                className="h-9 px-2.5 rounded-xl bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-700 active:scale-95 transition-all flex items-center gap-1 shrink-0 whitespace-nowrap cursor-pointer"
-              >
-                <Crown className="w-3.5 h-3.5 text-amber-500 fill-amber-400 shrink-0" />
-                <span className="text-xs font-black">VIP</span>
-              </button>
+              {!isOwner && (
+                <button 
+                  type="button"
+                  onClick={onOpenVip}
+                  title="ترقية الرتبة VIP"
+                  className="h-9 px-2.5 rounded-xl bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-700 active:scale-95 transition-all flex items-center gap-1 shrink-0 whitespace-nowrap cursor-pointer"
+                >
+                  <Crown className="w-3.5 h-3.5 text-amber-500 fill-amber-400 shrink-0" />
+                  <span className="text-xs font-black">VIP</span>
+                </button>
+              )}
 
-              {isUserAdminOrOwner(currentUser) && onOpenAdmin && (
+              {isOwner && onOpenAdmin && (
                 <button
                   type="button"
                   onClick={onOpenAdmin}
@@ -278,15 +281,17 @@ export const Header: React.FC<HeaderProps> = React.memo(({
                 </button>
               )}
 
-              <button 
-                type="button"
-                onClick={onOpenWallet}
-                title="المحفظة وشحن الكوينز"
-                className="h-9 px-2.5 rounded-xl bg-amber-50/80 hover:bg-amber-100 border border-amber-200 text-amber-800 text-xs font-black flex items-center gap-1 transition-colors shrink-0 whitespace-nowrap tabular-nums cursor-pointer"
-              >
-                <span>🪙</span>
-                <span>{currentUser.coins.toLocaleString()}</span>
-              </button>
+              {!isOwner && (
+                <button 
+                  type="button"
+                  onClick={onOpenWallet}
+                  title="المحفظة وشحن الكوينز"
+                  className="h-9 px-2.5 rounded-xl bg-amber-50/80 hover:bg-amber-100 border border-amber-200 text-amber-800 text-xs font-black flex items-center gap-1 transition-colors shrink-0 whitespace-nowrap tabular-nums cursor-pointer"
+                >
+                  <span>🪙</span>
+                  <span>{currentUser.coins.toLocaleString()}</span>
+                </button>
+              )}
 
               <PWAInstallButton />
             </div>
@@ -379,26 +384,28 @@ export const Header: React.FC<HeaderProps> = React.memo(({
               <Share2 className="w-4 h-4" />
             </button>
 
-            {/* Distinctive Store & Coins Recharge Button (1-Tap Direct Access next to Three-Dots Menu) */}
-            <button
-              type="button"
-              onClick={() => {
-                setIsMoreMenuOpen(false);
-                onOpenWallet();
-              }}
-              title="المتجر وشحن الكوينز"
-              aria-label="المتجر وشحن الكوينز"
-              className="relative w-9 h-9 sm:w-auto sm:px-2.5 rounded-xl bg-gradient-to-tr from-amber-500 via-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white border border-amber-400/70 shadow-sm shadow-amber-500/20 flex items-center justify-center gap-1.5 transition-all shrink-0 whitespace-nowrap active:scale-95 cursor-pointer"
-            >
-              <ShoppingBag className="w-4 h-4 shrink-0" />
-              <span className="hidden sm:inline text-xs font-black">المتجر</span>
-              <span
-                className="sm:hidden absolute -top-1 -left-1 text-[9px] leading-none bg-white rounded-full p-0.5 shadow-xs border border-amber-200 pointer-events-none"
-                aria-hidden="true"
+            {/* Distinctive Store & Coins Recharge Button (Hidden for Owner) */}
+            {!isOwner && (
+              <button
+                type="button"
+                onClick={() => {
+                  setIsMoreMenuOpen(false);
+                  onOpenWallet();
+                }}
+                title="المتجر وشحن الكوينز"
+                aria-label="المتجر وشحن الكوينز"
+                className="relative w-9 h-9 sm:w-auto sm:px-2.5 rounded-xl bg-gradient-to-tr from-amber-500 via-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white border border-amber-400/70 shadow-sm shadow-amber-500/20 flex items-center justify-center gap-1.5 transition-all shrink-0 whitespace-nowrap active:scale-95 cursor-pointer"
               >
-                🪙
-              </span>
-            </button>
+                <ShoppingBag className="w-4 h-4 shrink-0" />
+                <span className="hidden sm:inline text-xs font-black">المتجر</span>
+                <span
+                  className="sm:hidden absolute -top-1 -left-1 text-[9px] leading-none bg-white rounded-full p-0.5 shadow-xs border border-amber-200 pointer-events-none"
+                  aria-hidden="true"
+                >
+                  🪙
+                </span>
+              </button>
+            )}
 
             {/* Far-Left More Options Menu Toggle Button (...) */}
             <div className="relative shrink-0" ref={moreMenuRef}>
@@ -420,20 +427,22 @@ export const Header: React.FC<HeaderProps> = React.memo(({
                   className="absolute left-0 mt-1.5 w-52 rounded-2xl bg-white border border-slate-200 shadow-xl p-1.5 space-y-1 z-50 text-right animate-in fade-in zoom-in-95"
                   onClick={() => setIsMoreMenuOpen(false)}
                 >
-                  {/* Mobile-only quick actions (moved from removed lower header row) */}
-                  <button
-                    type="button"
-                    onClick={onOpenWallet}
-                    className="md:hidden w-full px-3 py-2 rounded-xl hover:bg-amber-50 text-amber-800 text-xs font-black flex items-center justify-between transition"
-                  >
-                    <span className="flex items-center gap-2">
-                      <span>🪙</span>
-                      <span>المحفظة والكوينز</span>
-                    </span>
-                    <span className="tabular-nums text-[11px] bg-amber-100 px-1.5 py-0.5 rounded-md">
-                      {currentUser.coins.toLocaleString()}
-                    </span>
-                  </button>
+                  {/* Mobile-only quick actions */}
+                  {!isOwner && (
+                    <button
+                      type="button"
+                      onClick={onOpenWallet}
+                      className="md:hidden w-full px-3 py-2 rounded-xl hover:bg-amber-50 text-amber-800 text-xs font-black flex items-center justify-between transition"
+                    >
+                      <span className="flex items-center gap-2">
+                        <span>🪙</span>
+                        <span>المحفظة والكوينز</span>
+                      </span>
+                      <span className="tabular-nums text-[11px] bg-amber-100 px-1.5 py-0.5 rounded-md">
+                        {currentUser.coins.toLocaleString()}
+                      </span>
+                    </button>
+                  )}
 
                   {onOpenLeaderboard && (
                     <button
@@ -446,16 +455,18 @@ export const Header: React.FC<HeaderProps> = React.memo(({
                     </button>
                   )}
 
-                  <button
-                    type="button"
-                    onClick={onOpenVip}
-                    className="md:hidden w-full px-3 py-2 rounded-xl hover:bg-amber-50 text-amber-700 text-xs font-black flex items-center gap-2 transition"
-                  >
-                    <Crown className="w-3.5 h-3.5 text-amber-500 fill-amber-400" />
-                    <span>ترقية VIP</span>
-                  </button>
+                  {!isOwner && (
+                    <button
+                      type="button"
+                      onClick={onOpenVip}
+                      className="md:hidden w-full px-3 py-2 rounded-xl hover:bg-amber-50 text-amber-700 text-xs font-black flex items-center gap-2 transition"
+                    >
+                      <Crown className="w-3.5 h-3.5 text-amber-500 fill-amber-400" />
+                      <span>ترقية VIP</span>
+                    </button>
+                  )}
 
-                  {isUserAdminOrOwner(currentUser) && onOpenAdmin && (
+                  {isOwner && onOpenAdmin && (
                     <button
                       type="button"
                       onClick={onOpenAdmin}

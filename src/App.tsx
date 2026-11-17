@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Toaster, toast } from 'sonner';
+import { X, Check, RefreshCw, UserPlus, MessageCircle, Sparkles } from 'lucide-react';
 import { Header } from './components/Header';
 import { BottomNav, NavTab } from './components/BottomNav';
 import { RoomsView } from './components/RoomsView';
@@ -60,7 +61,12 @@ import {
   setRoomBackgroundTheme,
   setRoomLockState,
   subscribeToAllRoomLocks,
-  contributeToSharedRoomMission
+  contributeToSharedRoomMission,
+  subscribeToAllRoomLastMessages,
+  recordGiftRecipientStats,
+  propagateUserIdentityAcrossApp,
+  subscribeToAppUpdateNotices,
+  AppUpdateNotice
 } from './services/firebase';
 
 function areUserListsEqual(a: User[], b: User[]): boolean {
@@ -257,6 +263,25 @@ export default function App() {
   // Friend Requests State
   const [pendingFriendRequests, setPendingFriendRequests] = useState<FriendRequest[]>([]);
   const [isFriendRequestsOpen, setIsFriendRequestsOpen] = useState(false);
+
+  // Real-time Top Floating Banners (Global Join, DM Notice, Friend Request, App Update)
+  const [globalJoinBanner, setGlobalJoinBanner] = useState<{ id: string; name: string; avatar?: string } | null>(null);
+  const globalJoinTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const [dmTopBanner, setDmTopBanner] = useState<{
+    id: string;
+    senderId: string;
+    senderName: string;
+    senderAvatar: string;
+    preview: string;
+  } | null>(null);
+  const dmTopBannerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const [friendReqBanner, setFriendReqBanner] = useState<FriendRequest | null>(null);
+  const friendReqBannerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const seenFriendBannerIdsRef = useRef<Set<string>>(new Set());
+
+  const [appUpdateNotice, setAppUpdateNotice] = useState<AppUpdateNotice | null>(null);
 
   // Modals State
   const [isAdminOpen, setIsAdminOpen] = useState(false);
@@ -495,26 +520,62 @@ export default function App() {
       });
     });
 
-    // Listen to friend requests in real-time (strictly pending & deduplicated)
+    // Listen to incoming friend requests in real-time (strictly pending & deduplicated)
     const unsubFriend = realtimeSocket.subscribeToFriendRequests((req) => {
       if (req.receiverId === currentUserRef.current.id && req.status === 'pending') {
+        if (!seenFriendBannerIdsRef.current.has(req.id)) {
+          seenFriendBannerIdsRef.current.add(req.id);
+          setFriendReqBanner(req);
+          if (friendReqBannerTimerRef.current) clearTimeout(friendReqBannerTimerRef.current);
+          friendReqBannerTimerRef.current = setTimeout(() => {
+            setFriendReqBanner((curr) => (curr?.id === req.id ? null : curr));
+          }, 10000);
+        }
         setPendingFriendRequests(prev => {
           if (prev.some(r => r.id === req.id || (r.senderId === req.senderId && r.status === 'pending'))) {
             return prev;
           }
           sounds.playMessageReceived();
-          toast.info(`طلب صداقة جديد من ${req.senderName} 🤝`, {
-            id: `friend_req_${req.id}`,
-            description: 'اضغط على عرض الطلب للقبول أو الرفض',
-            duration: 6500,
-            action: {
-              label: 'عرض وقبول',
-              onClick: () => setIsFriendRequestsOpen(true)
-            }
-          });
           return [req, ...prev];
         });
       }
+    });
+
+    // Global Join Top Banner (auto-dismiss after 5s)
+    const unsubGlobalJoin = realtimeSocket.subscribeToGlobalUserJoined((joined) => {
+      const me = currentUserRef.current;
+      if (!joined?.name || joined.id === me.id) return;
+      setGlobalJoinBanner({ id: joined.id, name: joined.name, avatar: joined.avatar });
+      if (globalJoinTimerRef.current) clearTimeout(globalJoinTimerRef.current);
+      globalJoinTimerRef.current = setTimeout(() => {
+        setGlobalJoinBanner((curr) => (curr?.id === joined.id ? null : curr));
+      }, 5000);
+    });
+
+    // Real-time App Update Notice Banner
+    const unsubAppUpdate = subscribeToAppUpdateNotices((notice) => {
+      setAppUpdateNotice(notice);
+    });
+
+    // Live Last Message Preview across all rooms
+    const unsubRoomLastMsgs = subscribeToAllRoomLastMessages((lastMsgMap) => {
+      setRooms(prev => {
+        let changed = false;
+        const next = prev.map(r => {
+          const lm = lastMsgMap[r.id];
+          if (!lm) return r;
+          if (
+            r.lastMessage?.timestamp === lm.timestamp &&
+            r.lastMessage?.content === lm.content &&
+            r.lastMessage?.senderName === lm.senderName
+          ) {
+            return r;
+          }
+          changed = true;
+          return { ...r, lastMessage: lm };
+        });
+        return changed ? next : prev;
+      });
     });
 
     // Listen to room background theme updates across all rooms (silent no-op if unchanged)
@@ -557,11 +618,24 @@ export default function App() {
       });
     });
 
-    // Listen to incoming WebRTC calls targeting current user
+    // Listen to incoming WebRTC calls targeting current user (and clear on call_end / call_reject)
     const unsubCalls = realtimeSocket.subscribeToCallSignals((signal) => {
       const me = currentUserRef.current;
-      if (!signal || signal.type !== 'call_offer') return;
+      if (!signal) return;
       if (signal.targetUserId && signal.targetUserId !== me.id) return;
+
+      if (signal.type === 'call_end' || signal.type === 'call_reject') {
+        setIncomingCall((prev) => {
+          if (!prev) return null;
+          if (!signal.fromUserId || prev.peer.id === signal.fromUserId || signal.targetUserId === me.id) {
+            return null;
+          }
+          return prev;
+        });
+        return;
+      }
+
+      if (signal.type !== 'call_offer') return;
       if (!signal.fromUserId || signal.fromUserId === me.id) return;
 
       sounds.playMessageReceived();
@@ -601,6 +675,9 @@ export default function App() {
       unsubFirestorePresence();
       unsubAdmin();
       unsubFriend();
+      unsubGlobalJoin();
+      unsubAppUpdate();
+      unsubRoomLastMsgs();
       unsubRoomBgs();
       unsubRoomLocks();
       unsubCalls();
@@ -674,7 +751,7 @@ export default function App() {
               ...prev,
               [rawMsg.senderId]: {
                 senderId: rawMsg.senderId,
-                senderName: rawMsg.senderName || existing?.senderName || 'مستخدم',
+                senderName: rawMsg.senderName || existing?.senderName || 'عضو شات مصر',
                 senderAvatar: rawMsg.senderAvatar || existing?.senderAvatar || '',
                 count: (existing?.count || 0) + 1,
                 lastMessage: msgPreview,
@@ -704,7 +781,7 @@ export default function App() {
           const nextRecent = [
             {
               peerId: rawMsg.senderId,
-              peerName: rawMsg.senderName || 'مستخدم',
+              peerName: rawMsg.senderName || 'عضو شات مصر',
               peerAvatar: rawMsg.senderAvatar || '',
               lastMessage: rawMsg.content || rawMsg.text || 'رسالة جديدة',
               lastTimestamp: rawMsg.timestamp || Date.now(),
@@ -729,7 +806,7 @@ export default function App() {
 
         const toastPayload = {
           senderId: rawMsg.senderId,
-          senderName: rawMsg.senderName || 'مستخدم',
+          senderName: rawMsg.senderName || 'عضو شات مصر',
           senderAvatar: rawMsg.senderAvatar || ''
         };
 
@@ -759,19 +836,23 @@ export default function App() {
           });
         } else if (dmNotifsEnabled && !isViewingThisSender) {
           sounds.playMessageReceived();
-          toast(`💬 رسالة خاصة من ${toastPayload.senderName}`, {
-            id: `dm_${rawMsg.id}`,
-            description: rawMsg.content || rawMsg.text || 'أرسل لك رسالة خاصة جديدة',
-            duration: 6000,
-            action: {
-              label: 'رد فوراً ✉️',
-              onClick: () => handleOpenIncomingChat(toastPayload)
-            }
+          const previewText = rawMsg.content || rawMsg.text || 'رسالة جديدة';
+          const bannerId = rawMsg.id || `dm_${Date.now()}`;
+          setDmTopBanner({
+            id: bannerId,
+            senderId: toastPayload.senderId,
+            senderName: toastPayload.senderName,
+            senderAvatar: toastPayload.senderAvatar,
+            preview: previewText
           });
+          if (dmTopBannerTimerRef.current) clearTimeout(dmTopBannerTimerRef.current);
+          dmTopBannerTimerRef.current = setTimeout(() => {
+            setDmTopBanner((curr) => (curr?.id === bannerId ? null : curr));
+          }, 6000);
           if (typeof document !== 'undefined' && document.hidden) {
             triggerExternalBrowserNotification(
-              `💬 رسالة جديدة من ${toastPayload.senderName}`,
-              rawMsg.content || rawMsg.text || 'أرسل لك رسالة خاصة جديدة',
+              `أرسل إليك ${toastPayload.senderName} رسالة خاصة`,
+              previewText,
               { senderId: rawMsg.senderId },
               () => handleOpenIncomingChat(toastPayload)
             );
@@ -814,7 +895,7 @@ export default function App() {
           const found = globalOnlineUsers.find(u => u.id === data.senderId);
           handleOpenIncomingChat({
             senderId: data.senderId,
-            senderName: found?.name || 'مستخدم',
+            senderName: found?.name || 'عضو شات مصر',
             senderAvatar: found?.avatar || '',
           });
         }
@@ -865,7 +946,20 @@ export default function App() {
   useEffect(() => {
     if (!isProfileReady || !currentUser.id) return;
     const unsub = subscribeToFriendRequests(currentUser.id, (reqs) => {
-      setPendingFriendRequests(reqs.filter(r => r.status === 'pending'));
+      const pending = reqs.filter(r => r.status === 'pending');
+      setPendingFriendRequests(pending);
+      if (pending.length > 0) {
+        const newest = pending[0];
+        if (!seenFriendBannerIdsRef.current.has(newest.id)) {
+          seenFriendBannerIdsRef.current.add(newest.id);
+          sounds.playMessageReceived();
+          setFriendReqBanner(newest);
+          if (friendReqBannerTimerRef.current) clearTimeout(friendReqBannerTimerRef.current);
+          friendReqBannerTimerRef.current = setTimeout(() => {
+            setFriendReqBanner((curr) => (curr?.id === newest.id ? null : curr));
+          }, 10000);
+        }
+      }
     });
     return () => unsub();
   }, [currentUser.id, isProfileReady]);
@@ -1222,8 +1316,8 @@ export default function App() {
     }
   };
 
-  // Send Luxury Gift Handler (Admin/Owner bypass: Requirement 2)
-  const handleSendGift = async (gift: GiftItem, recipientName: string) => {
+  // Send Luxury Gift Handler (Admin/Owner bypass + recipient stats update)
+  const handleSendGift = async (gift: GiftItem, recipientName: string, recipientId?: string) => {
     if (!activeRoom) return;
 
     const isOwner = isUserAdminOrOwner(currentUser);
@@ -1248,6 +1342,10 @@ export default function App() {
     setCurrentUser(updatedUser);
     syncUserProfileToFirebase(updatedUser);
 
+    if (recipientId && recipientId !== currentUser.id) {
+      recordGiftRecipientStats(recipientId, gift.cost).catch(() => {});
+    }
+
     // Track Daily Mission: "إرسال هدية مميزة"
     updateMissionProgress('send_gift', 1);
 
@@ -1271,6 +1369,7 @@ export default function App() {
       senderId: currentUser.id,
       senderName: currentUser.name,
       recipientName,
+      recipientId,
     });
     try {
       const channel = new BroadcastChannel('arab_egypt_chat_bus');
@@ -1290,7 +1389,7 @@ export default function App() {
       senderVipBadge: currentUser.vipBadge,
       badges: updatedUser.badges,
       type: 'gift',
-      content: `أرسل هدية ${gift.name} بقيمة ${gift.cost} كوينز!`,
+      content: `أرسل هدية ${gift.name} إلى ${recipientName} بقيمة ${gift.cost} كوينز!`,
       gift: {
         giftId: gift.id,
         name: gift.name,
@@ -1340,7 +1439,7 @@ export default function App() {
     }
   }, []);
 
-  // Direct Avatar Photo Upload Callback with immediate Firebase & WebSocket sync
+  // Direct Avatar Photo Upload Callback with immediate Firebase & WebSocket propagation across the whole app
   const handleAvatarChanged = useCallback((newAvatarUrl: string) => {
     const me = currentUserRef.current;
     const updated: User = {
@@ -1350,7 +1449,7 @@ export default function App() {
     setCurrentUser(updated);
     sounds.playCoinsReward();
     realtimeSocket.updateAvatar(me.id, newAvatarUrl);
-    syncUserProfileToFirebase(updated);
+    propagateUserIdentityAcrossApp(updated).catch(() => {});
     toast.success('تم تحديث صورتك الشخصية بنجاح 📸');
 
     // Track Daily Mission: "تحديث الصورة والملف الشخصي"
@@ -1495,9 +1594,15 @@ export default function App() {
     setIsLogoutModalOpen(true);
   }, []);
 
-  // Stable UI callbacks for frozen Home Page / Header / BottomNav
-  const openWallet = useCallback(() => setIsWalletOpen(true), []);
-  const openVip = useCallback(() => setIsVipOpen(true), []);
+  // Stable UI callbacks for frozen Home Page / Header / BottomNav (Owner excluded from wallet & VIP purchase screens)
+  const openWallet = useCallback(() => {
+    if (isUserAdminOrOwner(currentUserRef.current)) return;
+    setIsWalletOpen(true);
+  }, []);
+  const openVip = useCallback(() => {
+    if (isUserAdminOrOwner(currentUserRef.current)) return;
+    setIsVipOpen(true);
+  }, []);
   const openProfileTab = useCallback(() => setCurrentTab('profile'), []);
   const openNotifications = useCallback(() => setIsNotificationsOpen(true), []);
   const openOnlineUsers = useCallback(() => setIsOnlineUsersOpen(true), []);
@@ -1625,6 +1730,7 @@ export default function App() {
   const handleAcceptFriendRequest = async (req: FriendRequest) => {
     sounds.playCoinsReward();
     setPendingFriendRequests(prev => prev.filter(r => r.id !== req.id));
+    setFriendReqBanner(curr => (curr?.id === req.id ? null : curr));
     await acceptFriendRequestInDB(
       currentUser.id,
       {
@@ -1642,6 +1748,7 @@ export default function App() {
 
   const handleDeclineFriendRequest = async (reqId: string, senderId?: string) => {
     setPendingFriendRequests(prev => prev.filter(r => r.id !== reqId));
+    setFriendReqBanner(curr => (curr?.id === reqId ? null : curr));
     await declineFriendRequestInDB(currentUser.id, reqId, senderId);
     toast.info('تم رفض طلب الصداقة');
   };
@@ -1715,6 +1822,146 @@ export default function App() {
         }}
       />
 
+      {/* Live Floating Top Notification Banners (Global Join, DM Notice, Friend Request, App Update) */}
+      <div
+        dir="rtl"
+        className="fixed top-3 left-1/2 -translate-x-1/2 z-[115] w-[calc(100%-1.5rem)] max-w-md flex flex-col gap-2 pointer-events-none"
+      >
+        {/* App Update Push Banner */}
+        {appUpdateNotice && (
+          <div className="pointer-events-auto flex items-center justify-between gap-2.5 px-3.5 py-2.5 rounded-2xl bg-gradient-to-l from-indigo-600 via-purple-600 to-fuchsia-600 text-white shadow-2xl border border-white/25 animate-in slide-in-from-top-3">
+            <div className="flex items-center gap-2 min-w-0">
+              <Sparkles className="w-4 h-4 text-amber-300 shrink-0 animate-pulse" />
+              <p className="text-xs font-black truncate">{appUpdateNotice.message}</p>
+            </div>
+            <div className="flex items-center gap-1.5 shrink-0">
+              <button
+                type="button"
+                onClick={() => window.location.reload()}
+                className="px-2.5 py-1 rounded-xl bg-white text-indigo-700 hover:bg-amber-50 text-[11px] font-black flex items-center gap-1 shadow-sm active:scale-95 transition cursor-pointer"
+              >
+                <RefreshCw className="w-3 h-3" />
+                <span>تحديث الآن</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setAppUpdateNotice(null)}
+                aria-label="إغلاق"
+                className="p-1 rounded-full hover:bg-white/20 text-white/90 cursor-pointer"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Global User Join Banner (Auto-hides in 5s) */}
+        {globalJoinBanner && (
+          <div className="pointer-events-auto flex items-center justify-between gap-2 px-3.5 py-2 rounded-2xl bg-white/95 backdrop-blur-md border border-emerald-200 shadow-lg text-slate-900 animate-in slide-in-from-top-3">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping shrink-0" />
+              <span className="text-xs font-black text-emerald-800 truncate">
+                انضم {globalJoinBanner.name} إلى شات مصر
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setGlobalJoinBanner(null)}
+              aria-label="إغلاق"
+              className="p-1 rounded-full text-slate-400 hover:text-slate-700 cursor-pointer"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
+
+        {/* Incoming Private Message Top Banner */}
+        {dmTopBanner && (
+          <div
+            onClick={() => {
+              const target = {
+                senderId: dmTopBanner.senderId,
+                senderName: dmTopBanner.senderName,
+                senderAvatar: dmTopBanner.senderAvatar,
+              };
+              setDmTopBanner(null);
+              handleOpenIncomingChat(target);
+            }}
+            className="pointer-events-auto cursor-pointer flex items-center justify-between gap-2.5 px-3.5 py-2.5 rounded-2xl bg-white/95 backdrop-blur-md border border-indigo-200 shadow-xl text-slate-900 hover:bg-indigo-50/70 transition animate-in slide-in-from-top-3"
+          >
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="w-8 h-8 rounded-full bg-indigo-100 border border-indigo-200 flex items-center justify-center text-indigo-600 shrink-0 overflow-hidden">
+                {dmTopBanner.senderAvatar ? (
+                  <img src={dmTopBanner.senderAvatar} alt={dmTopBanner.senderName} className="w-full h-full object-cover" />
+                ) : (
+                  <MessageCircle className="w-4 h-4" />
+                )}
+              </div>
+              <div className="min-w-0">
+                <p className="text-xs font-black text-slate-900 truncate">
+                  أرسل إليك {dmTopBanner.senderName} رسالة خاصة
+                </p>
+                <p className="text-[11px] text-slate-500 truncate">{dmTopBanner.preview}</p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setDmTopBanner(null);
+              }}
+              aria-label="إغلاق"
+              className="p-1 rounded-full text-slate-400 hover:text-slate-700 shrink-0 cursor-pointer"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
+
+        {/* Incoming Friend Request Top Banner with Instant Accept / Decline */}
+        {friendReqBanner && (
+          <div className="pointer-events-auto flex items-center justify-between gap-2 px-3.5 py-2.5 rounded-2xl bg-white/95 backdrop-blur-md border border-amber-200 shadow-xl text-slate-900 animate-in slide-in-from-top-3">
+            <div className="flex items-center gap-2 min-w-0">
+              <div className="w-8 h-8 rounded-full bg-amber-100 border border-amber-200 flex items-center justify-center text-amber-600 shrink-0 overflow-hidden">
+                {friendReqBanner.senderAvatar ? (
+                  <img src={friendReqBanner.senderAvatar} alt={friendReqBanner.senderName} className="w-full h-full object-cover" />
+                ) : (
+                  <UserPlus className="w-4 h-4" />
+                )}
+              </div>
+              <p className="text-xs font-black text-slate-900 truncate">
+                أرسل لك {friendReqBanner.senderName} طلب صداقة
+              </p>
+            </div>
+            <div className="flex items-center gap-1 shrink-0">
+              <button
+                type="button"
+                onClick={() => handleAcceptFriendRequest(friendReqBanner)}
+                className="px-2.5 py-1 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-black flex items-center gap-1 shadow-xs active:scale-95 transition cursor-pointer"
+              >
+                <Check className="w-3 h-3" />
+                <span>قبول</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleDeclineFriendRequest(friendReqBanner.id, friendReqBanner.senderId)}
+                className="px-2.5 py-1 rounded-xl bg-rose-100 hover:bg-rose-200 text-rose-700 text-[11px] font-black active:scale-95 transition cursor-pointer"
+              >
+                رفض
+              </button>
+              <button
+                type="button"
+                onClick={() => setFriendReqBanner(null)}
+                aria-label="إغلاق"
+                className="p-1 rounded-full text-slate-400 hover:text-slate-700 cursor-pointer"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
       {/* 1. Top Header Bar: Unified compact mobile-responsive header - ONLY shown on main screen, hidden inside active room */}
       {!activeRoom && (
         <Header
@@ -1777,6 +2024,7 @@ export default function App() {
             onlineUsers={globalOnlineUsers}
             onSelectRoom={handleSelectRoom}
             onOpenPrivateChatWith={handleOpenPrivateChatWith}
+            onOpenUserProfile={(u) => setSelectedProfileUser(u)}
             onOpenWallet={openWallet}
             onOpenVip={openVip}
             onOpenLeaderboard={openLeaderboard}
@@ -1811,12 +2059,13 @@ export default function App() {
               onSendGiftToUser={handleSendGiftToUser}
               onOpenOnlineUsers={openOnlineUsers}
               onUpdateUser={(updated) => {
-                setCurrentUser((prev) => ({ ...prev, ...updated }));
-                syncUserProfileToFirebase({ ...currentUser, ...updated });
+                const merged = { ...currentUserRef.current, ...updated };
+                setCurrentUser(merged);
+                propagateUserIdentityAcrossApp(merged).catch(() => {});
               }}
               onOpenWallet={() => {
                 setIsGiftModalOpen(false);
-                setIsWalletOpen(true);
+                openWallet();
               }}
             />
           ) : (
@@ -1832,9 +2081,11 @@ export default function App() {
                   }}
                   globalOnlineUsers={globalOnlineUsers}
                   onChatActiveChange={setIsInsidePrivateChat}
+                  onOpenUserProfile={(u) => setSelectedProfileUser(u)}
                   onUpdateUser={(updated) => {
-                    setCurrentUser((prev) => ({ ...prev, ...updated }));
-                    syncUserProfileToFirebase({ ...currentUser, ...updated });
+                    const merged = { ...currentUserRef.current, ...updated };
+                    setCurrentUser(merged);
+                    propagateUserIdentityAcrossApp(merged).catch(() => {});
                   }}
                   onPromptRegister={openExclusiveAuthModal}
                   unreadBySender={unreadCountsBySenderId}
@@ -1845,6 +2096,7 @@ export default function App() {
               {currentTab === 'games' && (
                 <GamesView
                   currentUser={currentUser}
+                  allOnlineUsers={globalOnlineUsers}
                   onUpdateCoins={(coins) => handleUpdateUserBalance(coins, currentUser.earningsEgp)}
                   onOpenWallet={openWallet}
                 />
@@ -1853,7 +2105,11 @@ export default function App() {
               {currentTab === 'profile' && (
                 <ProfileView
                   currentUser={currentUser}
-                  onUpdateUser={(updated) => setCurrentUser((prev) => ({ ...prev, ...updated }))}
+                  onUpdateUser={(updated) => {
+                    const merged = { ...currentUserRef.current, ...updated };
+                    setCurrentUser(merged);
+                    propagateUserIdentityAcrossApp(merged).catch(() => {});
+                  }}
                   onOpenWallet={openWallet}
                   onOpenVip={openVip}
                   onLogout={handleLogout}
@@ -1889,12 +2145,13 @@ export default function App() {
         }}
         currentUser={currentUser}
         speakers={activeRoom?.speakers || []}
+        roomUsers={roomActiveUsers}
         preselectedRecipient={giftRecipientUser}
         onSendGift={handleSendGift}
         onOpenWallet={() => {
           setIsGiftModalOpen(false);
           setGiftRecipientUser(null);
-          setIsWalletOpen(true);
+          openWallet();
         }}
       />
 
@@ -1913,7 +2170,7 @@ export default function App() {
         onUpgradeTier={handleUpgradeTier}
         onOpenWallet={() => {
           setIsVipOpen(false);
-          setIsWalletOpen(true);
+          openWallet();
         }}
       />
 
@@ -1928,7 +2185,7 @@ export default function App() {
       <NotificationsModal
         isOpen={isNotificationsOpen}
         onClose={() => setIsNotificationsOpen(false)}
-        onOpenWallet={() => setIsWalletOpen(true)}
+        onOpenWallet={openWallet}
       />
 
       {/* Online Users List Side Drawer with real presence occupants */}
@@ -1962,7 +2219,7 @@ export default function App() {
               isDrawer
               onCloseDrawer={() => setIsPrivateChatDrawerOpen(false)}
               currentUser={currentUser}
-              onOpenWallet={() => setIsWalletOpen(true)}
+              onOpenWallet={openWallet}
               targetUser={targetChatUser}
               onClearTargetUser={() => {
                 setTargetChatUser(null);
@@ -1970,9 +2227,14 @@ export default function App() {
               }}
               globalOnlineUsers={globalOnlineUsers}
               onChatActiveChange={setIsInsidePrivateChat}
+              onOpenUserProfile={(u) => {
+                setIsPrivateChatDrawerOpen(false);
+                setSelectedProfileUser(u);
+              }}
               onUpdateUser={(updated) => {
-                setCurrentUser((prev) => ({ ...prev, ...updated }));
-                syncUserProfileToFirebase({ ...currentUser, ...updated });
+                const merged = { ...currentUserRef.current, ...updated };
+                setCurrentUser(merged);
+                propagateUserIdentityAcrossApp(merged).catch(() => {});
               }}
               onPromptRegister={() => {
                 setIsPrivateChatDrawerOpen(false);

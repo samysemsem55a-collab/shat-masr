@@ -49,13 +49,13 @@ export const FloatingMiniRadioBar: React.FC<FloatingMiniRadioBarProps> = React.m
       >
         <p className="text-[11px] font-black text-slate-900 truncate">
           {radioSnap.activeTab === 'radio'
-            ? radioSnap.activeStation?.name || 'راديو شات مصر FM'
+            ? radioSnap.activeStation?.name || 'إذاعة القرآن الكريم من القاهرة'
             : radioSnap.activeSong?.title || 'مكتبة الأغاني'}
         </p>
         <p className="text-[9.5px] font-bold text-indigo-600 truncate">
           {radioSnap.isPlaying
-            ? 'يبث الآن مباشرة 🎵'
-            : 'اضغط لتشغيل راديو FM المباشر ▶️'}
+            ? 'يبث الآن • يمكنك تغيير المحطة أو القناة أو تشغيل أغنية'
+            : 'يمكنك تغيير المحطة أو القناة أو تشغيل أغنية'}
         </p>
       </button>
 

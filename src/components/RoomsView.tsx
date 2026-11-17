@@ -55,6 +55,7 @@ interface RoomsViewProps {
   totalActiveUsersCount?: number;
   cumulativeVisitorsCount?: number;
   onOpenOnlineUsers?: () => void;
+  onOpenUserProfile?: (user: User) => void;
 }
 
 function formatRelativeArabicTime(ts: number): string {
@@ -71,8 +72,10 @@ function formatRelativeArabicTime(ts: number): string {
 const ForumCommentsModal: React.FC<{
   post: ForumPost | null;
   currentUser: User;
+  onlineUsers: User[];
   onClose: () => void;
-}> = ({ post, currentUser, onClose }) => {
+  onOpenUserProfile?: (user: User) => void;
+}> = ({ post, currentUser, onlineUsers, onClose, onOpenUserProfile }) => {
   const [comments, setComments] = useState<ForumComment[]>([]);
   const [commentText, setCommentText] = useState('');
   const [isSending, setIsSending] = useState(false);
@@ -138,24 +141,72 @@ const ForumCommentsModal: React.FC<{
         {/* Comments List */}
         <div className="p-4 overflow-y-auto flex-1 space-y-2.5 bg-[#F8FAFC]">
           {comments.length > 0 ? (
-            comments.map((c) => (
-              <div key={c.id} className="flex items-start gap-2.5 bg-white rounded-2xl p-3 border border-slate-200 shadow-2xs">
-                <div className="w-8 h-8 rounded-full overflow-hidden bg-indigo-100 text-indigo-700 font-bold text-xs flex items-center justify-center shrink-0 border border-slate-200">
-                  {c.authorAvatar ? (
-                    <img src={c.authorAvatar} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                  ) : (
-                    <span>{(c.authorName || 'ع').charAt(0)}</span>
-                  )}
-                </div>
-                <div className="flex-1 min-w-0 text-right">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-xs font-black text-[#1E293B] truncate">{c.authorName}</span>
-                    <span className="text-[10px] text-slate-400 shrink-0">{formatRelativeArabicTime(c.createdAt)}</span>
+            comments.map((c) => {
+              const matchedOnline = onlineUsers.find((u) => u.id === c.authorId);
+              const commentAuthorUser: User = matchedOnline || {
+                id: c.authorId || `comment_${c.id}`,
+                name: c.authorName || 'عضو شات مصر',
+                username: (c.authorName || 'member').toLowerCase().replace(/\s+/g, '_'),
+                avatar: c.authorAvatar || '',
+                bio: 'عضو في منتدى شات مصر',
+                country: 'مصر',
+                countryFlag: '🇪🇬',
+                role: 'member',
+                coins: 0,
+                earningsEgp: 0,
+                earningsUsd: 0,
+                vipBadge: '',
+                frameStyle: 'border-slate-300',
+                profileWallpaper: '',
+                fontPreference: 'cairo',
+                isOnline: Boolean(matchedOnline),
+                status: matchedOnline ? 'online' : 'offline',
+                joinedAt: '',
+                gender: 'male',
+                level: 1,
+                likesReceived: 0,
+                giftsReceivedCount: 0,
+              };
+              return (
+                <div key={c.id} className="flex items-start gap-2.5 bg-white rounded-2xl p-2.5 border border-slate-200 shadow-2xs">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (onOpenUserProfile) {
+                        onClose();
+                        onOpenUserProfile(commentAuthorUser);
+                      }
+                    }}
+                    className="w-8 h-8 rounded-full overflow-hidden bg-indigo-100 text-indigo-700 font-bold text-xs flex items-center justify-center shrink-0 border border-slate-200 cursor-pointer hover:ring-2 hover:ring-indigo-400 transition"
+                    title="عرض الملف الشخصي"
+                  >
+                    {c.authorAvatar ? (
+                      <img src={c.authorAvatar} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                    ) : (
+                      <span>{(c.authorName || 'ع').charAt(0)}</span>
+                    )}
+                  </button>
+                  <div className="flex-1 min-w-0 text-right">
+                    <div className="flex items-center justify-between gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (onOpenUserProfile) {
+                            onClose();
+                            onOpenUserProfile(commentAuthorUser);
+                          }
+                        }}
+                        className="text-xs font-black text-[#1E293B] hover:text-indigo-700 hover:underline truncate cursor-pointer text-right"
+                      >
+                        {c.authorName}
+                      </button>
+                      <span className="text-[10px] text-slate-400 shrink-0">{formatRelativeArabicTime(c.createdAt)}</span>
+                    </div>
+                    <p className="text-xs text-slate-700 leading-relaxed mt-1 break-words">{c.text}</p>
                   </div>
-                  <p className="text-xs text-slate-700 leading-relaxed mt-1 break-words">{c.text}</p>
                 </div>
-              </div>
-            ))
+              );
+            })
           ) : (
             <div className="text-center py-8 space-y-1.5">
               <div className="text-2xl">💬</div>
@@ -196,7 +247,8 @@ const ForumLikesModal: React.FC<{
   onClose: () => void;
   onToggleLike: (post: ForumPost) => void;
   onOpenPrivateChatWith: (user: User) => void;
-}> = ({ post, currentUser, onlineUsers, onClose, onToggleLike, onOpenPrivateChatWith }) => {
+  onOpenUserProfile?: (user: User) => void;
+}> = ({ post, currentUser, onlineUsers, onClose, onToggleLike, onOpenPrivateChatWith, onOpenUserProfile }) => {
   if (!post) return null;
 
   const likedIds = Array.from(new Set(post.likedBy || []));
@@ -257,12 +309,45 @@ const ForumLikesModal: React.FC<{
             resolvedLikers.map((liker) => {
               const rankMeta = getRankDisplayMeta(liker.role, liker.vipBadge);
               const isMe = liker.id === currentUser.id;
+              const likerUserObj: User = liker.fullUser || {
+                id: liker.id,
+                name: liker.name,
+                username: liker.name.toLowerCase().replace(/\s+/g, '_'),
+                avatar: liker.avatar,
+                bio: 'عضو في منتدى شات مصر',
+                country: 'مصر',
+                countryFlag: liker.countryFlag || '🇪🇬',
+                role: liker.role,
+                coins: 0,
+                earningsEgp: 0,
+                earningsUsd: 0,
+                vipBadge: liker.vipBadge || '',
+                frameStyle: 'border-slate-300',
+                profileWallpaper: '',
+                fontPreference: 'cairo',
+                isOnline: true,
+                status: 'online',
+                joinedAt: '',
+                gender: liker.gender,
+                level: 1,
+                likesReceived: 0,
+                giftsReceivedCount: 0,
+              };
               return (
                 <div
                   key={liker.id}
                   className="p-2.5 rounded-2xl bg-white border border-slate-200 flex items-center justify-between gap-2 shadow-2xs"
                 >
-                  <div className="flex items-center gap-2.5 min-w-0">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (onOpenUserProfile) {
+                        onClose();
+                        onOpenUserProfile(likerUserObj);
+                      }
+                    }}
+                    className="flex items-center gap-2.5 min-w-0 text-right cursor-pointer group"
+                  >
                     <AvatarWithFrame
                       user={{
                         id: liker.id,
@@ -275,7 +360,7 @@ const ForumLikesModal: React.FC<{
                     />
                     <div className="min-w-0 text-right">
                       <div className="flex items-center gap-1.5 flex-wrap">
-                        <span className={`text-xs font-black truncate ${rankMeta.nameColorClass}`}>
+                        <span className={`text-xs font-black truncate group-hover:underline ${rankMeta.nameColorClass}`}>
                           {liker.name}
                         </span>
                         <span className="text-xs">{liker.countryFlag}</span>
@@ -290,7 +375,7 @@ const ForumLikesModal: React.FC<{
                         </span>
                       )}
                     </div>
-                  </div>
+                  </button>
 
                   {!isMe ? (
                     <button
@@ -428,17 +513,20 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
   totalActiveUsersCount = 1,
   cumulativeVisitorsCount = 15480,
   onOpenOnlineUsers,
+  onOpenUserProfile,
 }) => {
   const [forumPosts, setForumPosts] = useState<ForumPost[]>([]);
   const [postText, setPostText] = useState('');
   const [postImageUrl, setPostImageUrl] = useState<string>('');
   const [isPublishing, setIsPublishing] = useState(false);
-  const [forumFilter, setForumFilter] = useState<'trend' | 'all' | 'male' | 'female' | 'online'>('trend');
+  const [forumFilter, setForumFilter] = useState<'all' | 'trend' | 'male' | 'female' | 'online'>('all');
   const [commentsModalPostId, setCommentsModalPostId] = useState<string | null>(null);
   const [likesModalPostId, setLikesModalPostId] = useState<string | null>(null);
+  const [lightboxImageUrl, setLightboxImageUrl] = useState<string | null>(null);
   const [sharedMissions, setSharedMissions] = useState<SharedRoomMission[]>([]);
   const [showMobileMissions, setShowMobileMissions] = useState(false);
   const forumImageInputRef = React.useRef<HTMLInputElement>(null);
+  const isStrictOwner = isUserAdminOrOwner(currentUser);
 
   const activeCommentsPost = useMemo(
     () => forumPosts.find((p) => p.id === commentsModalPostId) || null,
@@ -578,7 +666,7 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
   return (
     <div className="pb-24 pt-2.5 px-2.5 sm:px-4 max-w-6xl mx-auto space-y-3" dir="rtl">
       {/* 1. Compact Live Stats & Quick Controls Strip */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+      <div className={`grid grid-cols-2 ${isStrictOwner ? 'sm:grid-cols-3' : 'sm:grid-cols-4'} gap-2`}>
         {/* Online Users */}
         <div
           onClick={onOpenOnlineUsers}
@@ -614,18 +702,20 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
           </div>
         </div>
 
-        {/* Quick Wallet */}
-        <button
-          type="button"
-          onClick={onOpenWallet}
-          className="px-3 py-2 rounded-xl bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-800 font-black text-xs flex items-center justify-between transition active:scale-95 cursor-pointer"
-        >
-          <span>شحن الكوينز 🪙</span>
-          <Coins className="w-4 h-4 text-amber-600" />
-        </button>
+        {/* Quick Wallet (Hidden completely for Owner) */}
+        {!isStrictOwner && (
+          <button
+            type="button"
+            onClick={onOpenWallet}
+            className="px-3 py-2 rounded-xl bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-800 font-black text-xs flex items-center justify-between transition active:scale-95 cursor-pointer"
+          >
+            <span>شحن الكوينز 🪙</span>
+            <Coins className="w-4 h-4 text-amber-600" />
+          </button>
+        )}
 
-        {/* Quick VIP, Leaderboard & Missions */}
-        <div className="flex items-center gap-1.5">
+        {/* Quick VIP (excluded for Owner), Leaderboard & Missions */}
+        <div className={`flex items-center gap-1.5 ${isStrictOwner ? 'col-span-2 sm:col-span-1' : ''}`}>
           {onOpenLeaderboard && (
             <button
               type="button"
@@ -637,14 +727,16 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
               <span>الكبار</span>
             </button>
           )}
-          <button
-            type="button"
-            onClick={onOpenVip}
-            className="flex-1 h-full px-2 py-2 rounded-xl bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 font-black text-xs flex items-center justify-center gap-1 transition active:scale-95 cursor-pointer"
-          >
-            <Crown className="w-3.5 h-3.5 text-amber-500 fill-amber-400" />
-            <span>VIP</span>
-          </button>
+          {!isStrictOwner && (
+            <button
+              type="button"
+              onClick={onOpenVip}
+              className="flex-1 h-full px-2 py-2 rounded-xl bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 font-black text-xs flex items-center justify-center gap-1 transition active:scale-95 cursor-pointer"
+            >
+              <Crown className="w-3.5 h-3.5 text-amber-500 fill-amber-400" />
+              <span>VIP</span>
+            </button>
+          )}
           {onOpenMissions && (
             <button
               type="button"
@@ -743,6 +835,14 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
                     <span>{Math.max(1, room.activeUsers || 1)} متصل</span>
                   </span>
                 </div>
+
+                {/* Live Room Last Message Preview */}
+                {room.lastMessage?.content && (
+                  <div className="relative z-10 flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-black/25 backdrop-blur-xs border border-white/15 text-[10.5px] text-white/95 truncate">
+                    <span className="font-black text-amber-300 shrink-0">{room.lastMessage.senderName}:</span>
+                    <span className="truncate opacity-95">{room.lastMessage.content}</span>
+                  </div>
+                )}
 
                 {/* Bottom Cover Footer & Compact Enter Button */}
                 <div className="relative z-10 flex items-center justify-between gap-2 pt-1 border-t border-white/15">
@@ -917,11 +1017,11 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
                 </div>
               </form>
 
-              {/* RTL Forum Filter Tabs: التريند (Default) | الكل | الشباب | البنات | المتواجدون الآن */}
+              {/* RTL Forum Filter Tabs: الكل (Default) | التريند | الشباب | البنات | المتواجدون الآن */}
               <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 pt-1.5 border-t border-slate-100 text-xs font-bold">
                 {[
-                  { id: 'trend', label: '🔥 التريند' },
                   { id: 'all', label: '🌟 الكل' },
+                  { id: 'trend', label: '🔥 التريند' },
                   { id: 'male', label: '👦 الشباب' },
                   { id: 'female', label: '👧 البنات' },
                   { id: 'online', label: '🟢 المتواجدون الآن' }
@@ -988,14 +1088,14 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
                 return (
                   <div
                     key={post.id}
-                    className={`rounded-2xl p-3.5 shadow-sm transition-all border ${
+                    className={`rounded-2xl p-2.5 sm:p-3 shadow-sm transition-all border ${
                       post.isPinned
                         ? 'bg-gradient-to-br from-amber-50/75 via-white to-rose-50/40 border-amber-300 ring-1 ring-amber-200'
                         : 'bg-white border-slate-200 hover:border-indigo-200'
                     }`}
                   >
                     {post.isPinned && (
-                      <div className="mb-2 inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-amber-100 border border-amber-300 text-amber-900 text-[10.5px] font-black">
+                      <div className="mb-1.5 inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-amber-100 border border-amber-300 text-amber-900 text-[10.5px] font-black">
                         <Pin className="w-3 h-3 text-amber-700" />
                         <span>منشور مثبت من الإدارة 📌</span>
                       </div>
@@ -1015,11 +1115,19 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
                           }}
                           size="sm"
                           showOnlineDot
+                          onClick={() => onOpenUserProfile?.(peerForDm)}
+                          title="عرض الملف الشخصي"
                         />
 
                         <div className="min-w-0 text-right">
                           <div className="flex items-center gap-1.5 flex-wrap">
-                            <span className={`text-xs sm:text-sm truncate ${authorRankMeta.nameColorClass}`}>{post.authorName}</span>
+                            <button
+                              type="button"
+                              onClick={() => onOpenUserProfile?.(peerForDm)}
+                              className={`text-xs sm:text-sm truncate cursor-pointer hover:underline ${authorRankMeta.nameColorClass}`}
+                            >
+                              {post.authorName}
+                            </button>
                             <span className="text-xs">{post.authorCountryFlag || '🇪🇬'}</span>
                             {authorRankMeta.isPrivileged && (
                               <span className={`text-[9.5px] px-1.5 py-0.5 rounded border font-black ${authorRankMeta.badgeClass}`}>
@@ -1067,17 +1175,25 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
                     </div>
 
                     {/* Post Body */}
-                    <p className="mt-2.5 text-xs sm:text-sm text-slate-800 leading-relaxed whitespace-pre-wrap break-words bg-slate-50/70 rounded-xl p-3 border border-slate-100">
+                    <p className="mt-2 text-xs sm:text-sm text-slate-800 leading-relaxed whitespace-pre-wrap break-words bg-slate-50/70 rounded-xl p-2.5 border border-slate-100">
                       {post.text}
                     </p>
 
                     {post.imageUrl && (
-                      <div className="mt-2 rounded-xl overflow-hidden border border-slate-200 bg-slate-50">
+                      <div
+                        onClick={() => setLightboxImageUrl(post.imageUrl || null)}
+                        className="mt-2 rounded-xl overflow-hidden border border-slate-200 bg-slate-100 cursor-zoom-in group relative"
+                        title="اضغط لتكبير الصورة"
+                      >
                         <img
                           src={post.imageUrl}
                           alt="صورة المنشور"
-                          className="w-full max-h-80 object-contain bg-slate-900/5"
+                          className="w-full max-h-44 sm:max-h-52 object-cover group-hover:scale-[1.01] transition-transform duration-200"
+                          loading="lazy"
                         />
+                        <span className="absolute bottom-2 left-2 px-2 py-0.5 rounded-lg bg-slate-900/65 text-white text-[10px] font-bold backdrop-blur-xs">
+                          🔍 تكبير
+                        </span>
                       </div>
                     )}
 
@@ -1228,14 +1344,41 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
         onClose={() => setLikesModalPostId(null)}
         onToggleLike={handleToggleLike}
         onOpenPrivateChatWith={onOpenPrivateChatWith}
+        onOpenUserProfile={onOpenUserProfile}
       />
 
       {/* Forum Comments Modal */}
       <ForumCommentsModal
         post={activeCommentsPost}
         currentUser={currentUser}
+        onlineUsers={onlineUsers}
         onClose={() => setCommentsModalPostId(null)}
+        onOpenUserProfile={onOpenUserProfile}
       />
+
+      {/* Full-Screen Forum Image Lightbox */}
+      {lightboxImageUrl && (
+        <div
+          onClick={() => setLightboxImageUrl(null)}
+          className="fixed inset-0 z-[80] bg-slate-950/90 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in"
+          dir="rtl"
+        >
+          <button
+            type="button"
+            onClick={() => setLightboxImageUrl(null)}
+            aria-label="إغلاق الصورة"
+            className="fixed top-4 left-4 w-10 h-10 rounded-full bg-white/15 hover:bg-white/25 text-white flex items-center justify-center transition cursor-pointer shadow-lg"
+          >
+            <X className="w-5 h-5" />
+          </button>
+          <img
+            src={lightboxImageUrl}
+            alt="عرض الصورة بالحجم الكامل"
+            onClick={(e) => e.stopPropagation()}
+            className="max-w-full max-h-[88vh] rounded-2xl shadow-2xl object-contain"
+          />
+        </div>
+      )}
     </div>
   );
 });

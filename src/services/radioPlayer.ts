@@ -125,7 +125,8 @@ class GlobalRadioPlayerService {
   private state: RadioPlayerSnapshot = {
     activeTab: 'radio',
     activeSong: ARABIC_100_SONGS[0],
-    activeStation: ARABIC_RADIO_STATIONS[0],
+    activeStation:
+      ARABIC_RADIO_STATIONS.find((s) => s.id === 'radio_quran_cairo') || ARABIC_RADIO_STATIONS[0],
     isPlaying: false,
     isLoading: false,
     currentTime: 0,

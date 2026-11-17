@@ -146,8 +146,8 @@ export const MusicRadioModal: React.FC<MusicRadioModalProps> = ({
                 <span>مشغل ومكتبة الموسيقى وراديو FM</span>
                 <Sparkles className="w-4 h-4 text-amber-200" />
               </h3>
-              <p className="text-[11px] text-white/90 font-medium">
-                يستمر التشغيل في الخلفية تلقائياً أثناء الدردشة والتصفح 🎶
+              <p className="text-[11px] text-white/95 font-bold">
+                يمكنك تغيير المحطة أو القناة أو تشغيل أغنية — يستمر التشغيل في الخلفية 🎶
               </p>
             </div>
           </div>

@@ -1,25 +1,16 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { 
-  User as UserIcon, 
   Crown, 
-  Sparkles, 
   Save, 
-  Share2, 
   Type, 
   Palette, 
-  Check, 
   Camera,
-  Upload,
   MessageSquare,
   MessageSquareOff,
   LogOut,
   X,
   Lock,
-  Flame,
-  Mic,
-  Trophy,
   Bell,
-  BellOff,
   Activity,
   Music,
   Play,
@@ -27,6 +18,7 @@ import {
   Image as ImageIcon
 } from 'lucide-react';
 import { User } from '../types/chat';
+import { isUserAdminOrOwner } from '../data/seedData';
 import { sounds } from '../utils/soundEffects';
 import {
   getRankDisplayMeta,
@@ -216,7 +208,8 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
     });
   };
 
-  const isVipUser = hasPrivilegedRank(currentUser.role);
+  const isStrictOwner = isUserAdminOrOwner(currentUser);
+  const isVipUser = hasPrivilegedRank(currentUser.role) || isStrictOwner;
   const rankMeta = getRankDisplayMeta(currentUser.role, currentUser.vipBadge);
 
   const countries = [
@@ -314,9 +307,9 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
 
       {/* Header Profile Hero Card */}
       <div className="relative overflow-hidden rounded-3xl border border-slate-200 shadow-md bg-white">
-        {/* Cover Wallpaper or Privileged Custom Banner */}
+        {/* Larger Top Cover Wallpaper or Privileged Custom Banner */}
         <div
-          className="h-28 sm:h-32 w-full overflow-hidden relative"
+          className="h-40 sm:h-52 w-full overflow-hidden relative"
           style={isVipUser ? resolveBannerStyle(profileBanner) : undefined}
         >
           {(!isVipUser || !resolveBannerStyle(profileBanner)) && (
@@ -326,14 +319,14 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
               className="w-full h-full object-cover"
             />
           )}
-          <div className="absolute inset-0 bg-gradient-to-t from-white via-white/30 to-black/15" />
+          <div className="absolute inset-0 bg-gradient-to-t from-white via-white/25 to-black/15" />
         </div>
 
         {/* Profile Info Row */}
-        <div className="px-4 pb-4 pt-0 relative -mt-10 flex flex-col sm:flex-row sm:items-end justify-between gap-3">
-          <div className="flex items-end gap-3">
+        <div className="px-4 sm:px-5 pb-4 pt-0 relative -mt-12 flex flex-col sm:flex-row sm:items-end justify-between gap-3">
+          <div className="flex items-end gap-3.5 min-w-0">
             {/* Avatar with Click to Change */}
-            <div className="relative group cursor-pointer" onClick={() => { setShowAvatarModal(true); setAvatarModalMode('choose'); }}>
+            <div className="relative group cursor-pointer shrink-0" onClick={() => { setShowAvatarModal(true); setAvatarModalMode('choose'); }}>
               <AvatarWithFrame
                 user={{ ...currentUser, avatar: avatarUrl, frameStyle: selectedFrame, status: activityStatus }}
                 size="lg"
@@ -344,7 +337,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
               </div>
             </div>
 
-            <div className="space-y-0.5">
+            <div className="space-y-1 min-w-0">
               <div className="flex items-center gap-1.5 flex-wrap">
                 <h2 className={`text-base sm:text-lg ${rankMeta.nameColorClass}`}>{name}</h2>
                 <span className="text-base">{countryFlag}</span>
@@ -353,7 +346,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                   <span>{currentStatusMeta.label}</span>
                 </span>
               </div>
-              <div className="flex items-center gap-1.5 text-xs">
+              <div className="flex items-center gap-1.5 text-xs flex-wrap">
                 {rankMeta.isPrivileged ? (
                   <span className={`px-2 py-0.5 rounded-full text-[10.5px] font-black border flex items-center gap-1 ${rankMeta.badgeClass}`}>
                     <span>{rankMeta.label}</span>
@@ -367,54 +360,34 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
-            <button
-              onClick={onOpenVip}
-              className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-500 hover:from-amber-400 hover:to-yellow-400 text-white font-black text-xs hover:scale-105 active:scale-95 transition-all shadow-sm"
-            >
-              ترقية VIP 👑
-            </button>
-            <button
-              onClick={onOpenWallet}
-              className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs shadow-sm"
-            >
-              المحفظة 🪙
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* Badges / Honors Card */}
-      <div className="bg-white border border-slate-200 rounded-3xl p-4 shadow-sm">
-        <div className="flex items-center justify-between mb-3 border-b border-slate-100 pb-2">
-          <div className="flex items-center gap-2">
-            <Trophy className="w-4 h-4 text-amber-500" />
-            <h3 className="text-xs sm:text-sm font-black text-slate-900">الأوسمة والتكريمات الملكية</h3>
-          </div>
-          <span className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 font-bold border border-indigo-200">
-            تفاعل مستمر
-          </span>
+          {!isStrictOwner && (
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={onOpenVip}
+                className="px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-white font-black text-xs active:scale-95 transition-all shadow-sm cursor-pointer"
+              >
+                ترقية VIP 👑
+              </button>
+              <button
+                type="button"
+                onClick={onOpenWallet}
+                className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs shadow-sm active:scale-95 transition-all cursor-pointer"
+              >
+                المحفظة 🪙
+              </button>
+            </div>
+          )}
         </div>
 
-        <div className="grid grid-cols-3 gap-2 text-center">
-          <div className="p-2.5 rounded-2xl bg-amber-50/60 border border-amber-200 flex flex-col items-center">
-            <Flame className="w-6 h-6 text-amber-500 mb-1" />
-            <span className="text-[11px] font-bold text-slate-900">أكثر الأعضاء نشاطاً</span>
-            <span className="text-[9px] text-amber-700 font-semibold mt-0.5">وسام التفاعل 🔥</span>
+        {/* Clean Integrated Bio Display directly beneath avatar/name */}
+        {bio.trim() && (
+          <div className="px-4 sm:px-5 pb-4 pt-1 border-t border-slate-100/80">
+            <p className="text-xs sm:text-[13px] text-slate-600 leading-relaxed">
+              {bio}
+            </p>
           </div>
-
-          <div className="p-2.5 rounded-2xl bg-purple-50/60 border border-purple-200 flex flex-col items-center">
-            <Mic className="w-6 h-6 text-purple-600 mb-1" />
-            <span className="text-[11px] font-bold text-slate-900">أفضل مذيع صوتي</span>
-            <span className="text-[9px] text-purple-700 font-semibold mt-0.5">وسام المايك 🎙️</span>
-          </div>
-
-          <div className="p-2.5 rounded-2xl bg-cyan-50/60 border border-cyan-200 flex flex-col items-center">
-            <Sparkles className="w-6 h-6 text-cyan-600 mb-1" />
-            <span className="text-[11px] font-bold text-slate-900">عضو محترف Pro</span>
-            <span className="text-[9px] text-cyan-700 font-semibold mt-0.5">وسام النخبة 🏆</span>
-          </div>
-        </div>
+        )}
       </div>
 
       {/* Simplified Tabs Navigation */}
@@ -490,20 +463,14 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
             </div>
 
             {/* Activity Status Dropdown (Synced in real-time with Firebase) */}
-            <div className="p-3 rounded-2xl bg-indigo-50/60 border border-indigo-100 space-y-1.5">
-              <div className="flex items-center justify-between">
-                <label
-                  htmlFor="profile-activity-status"
-                  className="text-xs font-black text-slate-800 flex items-center gap-1.5"
-                >
-                  <Activity className="w-4 h-4 text-indigo-600" />
-                  <span>حالة النشاط:</span>
-                </label>
-                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border flex items-center gap-1 ${currentStatusMeta.badgeClass}`}>
-                  <span className={`w-1.5 h-1.5 rounded-full ${currentStatusMeta.dotClass}`} />
-                  <span>{currentStatusMeta.label}</span>
-                </span>
-              </div>
+            <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200 space-y-1.5">
+              <label
+                htmlFor="profile-activity-status"
+                className="text-xs font-black text-slate-800 flex items-center gap-1.5"
+              >
+                <Activity className="w-4 h-4 text-indigo-600" />
+                <span>حالة النشاط:</span>
+              </label>
 
               <select
                 id="profile-activity-status"
@@ -517,10 +484,6 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                   </option>
                 ))}
               </select>
-
-              <p className="text-[10px] text-slate-500">
-                يتم تحديث حالتك في Firebase فوراً ليتمكن أصدقاؤك من رؤيتها بشكل لحظي.
-              </p>
             </div>
 
             <div>
@@ -903,7 +866,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
         {/* Global Fast Save Button */}
         <button
           type="submit"
-          className="w-full py-3 rounded-2xl bg-gradient-to-r from-emerald-600 via-teal-600 to-indigo-600 hover:from-emerald-500 hover:to-indigo-500 text-white font-black text-xs sm:text-sm flex items-center justify-center gap-2 shadow-md active:scale-95 transition-all cursor-pointer"
+          className="w-full py-3 rounded-2xl bg-indigo-600 hover:bg-indigo-500 text-white font-black text-xs sm:text-sm flex items-center justify-center gap-2 shadow-md active:scale-95 transition-all cursor-pointer"
         >
           <Save className="w-4 h-4" />
           <span>حفظ كافة التغييرات الآن 💾</span>

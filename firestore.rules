@@ -40,8 +40,8 @@ service cloud.firestore {
 
     match /rooms/{roomId} {
       allow read: if true;
-      allow create, update: if request.resource.data.keys().hasAll(['isLocked'])
-        && request.resource.data.isLocked is bool;
+      allow create, update: if !request.resource.data.keys().hasAny(['isLocked'])
+        || request.resource.data.isLocked is bool;
       allow delete: if false;
 
       match /messages/{messageId} {
@@ -107,6 +107,14 @@ service cloud.firestore {
     }
 
     match /user_reports/{reportId} {
+      allow read, write: if true;
+    }
+
+    match /app_config/{docId} {
+      allow read, write: if true;
+    }
+
+    match /tic_tac_toe_matches/{matchId} {
       allow read, write: if true;
     }
 

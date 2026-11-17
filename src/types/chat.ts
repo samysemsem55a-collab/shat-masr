@@ -160,6 +160,12 @@ export interface Room {
   allowedUserIds?: string[];
   joinRequests?: { userId: string; userName: string; userAvatar?: string; requestedAt: number }[];
   cameraRequests?: { userId: string; userName: string; requestedAt: number }[];
+  lastMessage?: {
+    senderName: string;
+    content: string;
+    type?: string;
+    timestamp: number;
+  };
 }
 
 export interface DailyMission {

@@ -13,7 +13,7 @@ import {
   ArrowRight
 } from 'lucide-react';
 import { User, VipTier } from '../types/chat';
-import { VIP_TIERS } from '../data/seedData';
+import { VIP_TIERS, isUserAdminOrOwner } from '../data/seedData';
 import { sounds } from '../utils/soundEffects';
 import { submitPaymentRequest } from '../services/firebase';
 
@@ -38,7 +38,7 @@ export const VipUpgradeModal: React.FC<VipUpgradeModalProps> = ({
   const [submittedOrderId, setSubmittedOrderId] = useState<string | null>(null);
   const [copiedInstapay, setCopiedInstapay] = useState(false);
 
-  if (!isOpen) return null;
+  if (!isOpen || isUserAdminOrOwner(currentUser)) return null;
 
   const INSTAPAY_ADDRESS = 'samyelsayed9@instapay';
 

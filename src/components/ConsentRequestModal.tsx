@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Phone, Video, Image as ImageIcon, Check, X, ShieldCheck } from 'lucide-react';
 import {
@@ -15,6 +15,14 @@ export const ConsentRequestModal: React.FC<ConsentRequestModalProps> = ({
   request,
   onRespond,
 }) => {
+  useEffect(() => {
+    if (!request) return;
+    const timer = setTimeout(() => {
+      onRespond(false);
+    }, 45000);
+    return () => clearTimeout(timer);
+  }, [request, onRespond]);
+
   return (
     <AnimatePresence>
       {request && (
@@ -33,9 +41,19 @@ export const ConsentRequestModal: React.FC<ConsentRequestModalProps> = ({
                 <ShieldCheck className="w-5 h-5 text-amber-200" />
                 <span className="text-xs font-black tracking-wide">طلب موافقة مسبقة 🔒</span>
               </div>
-              <span className="text-[10px] font-bold bg-black/25 px-2 py-0.5 rounded-full text-amber-100">
-                شات مصر الآمن
-              </span>
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] font-bold bg-black/25 px-2 py-0.5 rounded-full text-amber-100">
+                  شات مصر الآمن
+                </span>
+                <button
+                  type="button"
+                  onClick={() => onRespond(false)}
+                  aria-label="إغلاق الطلب"
+                  className="p-1 rounded-full bg-black/25 hover:bg-black/45 text-white transition cursor-pointer"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
             </div>
 
             <div className="p-5 flex flex-col items-center text-center space-y-4">

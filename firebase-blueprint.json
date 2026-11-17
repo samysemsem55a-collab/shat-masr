@@ -236,6 +236,33 @@
         "createdAt": { "type": "string" }
       },
       "required": ["senderId", "recipientId", "amount"]
+    },
+    "AppConfig": {
+      "title": "AppConfig",
+      "description": "Global application version and push-update announcement config",
+      "type": "object",
+      "properties": {
+        "version": { "type": "string", "maxLength": 50 },
+        "message": { "type": "string", "maxLength": 500 },
+        "pushedBy": { "type": "string", "maxLength": 100 },
+        "timestamp": { "type": "number" }
+      },
+      "required": ["version", "timestamp"]
+    },
+    "TicTacToeMatch": {
+      "title": "TicTacToeMatch",
+      "description": "Live multiplayer Tic-Tac-Toe match with coin wager",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "playerXId": { "type": "string", "maxLength": 128 },
+        "playerOId": { "type": "string", "maxLength": 128 },
+        "wagerCoins": { "type": "number" },
+        "winnerId": { "type": "string", "maxLength": 128 },
+        "status": { "type": "string", "maxLength": 30 },
+        "updatedAt": { "type": "number" }
+      },
+      "required": ["id", "status"]
     }
   },
   "firestore": {
@@ -249,7 +276,7 @@
     },
     "/rooms/{roomId}": {
       "schema": "RoomSettings",
-      "description": "Room lock state and settings controlled by room managers"
+      "description": "Room lock state, last message summary, and settings controlled by room managers"
     },
     "/rooms/{roomId}/messages/{messageId}": {
       "schema": "Message",
@@ -290,6 +317,14 @@
     "/coin_transfers/{transferId}": {
       "schema": "CoinTransfer",
       "description": "Peer-to-peer coin transfer ledger"
+    },
+    "/app_config/{docId}": {
+      "schema": "AppConfig",
+      "description": "App version and live update notice banner state"
+    },
+    "/tic_tac_toe_matches/{matchId}": {
+      "schema": "TicTacToeMatch",
+      "description": "Live multiplayer Tic-Tac-Toe game results and wagers"
     }
   }
 }
