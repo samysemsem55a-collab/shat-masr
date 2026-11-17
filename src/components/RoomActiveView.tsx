@@ -164,26 +164,41 @@ export const getRoomContainerStyle = (
   };
 };
 
+const DARK_PERSONAL_WALLPAPERS = new Set([
+  'wp_nature_nile_sunset',
+  'wp_nature_starry_oasis',
+  'wp_doodle_custom',
+  'wp_egypt_gold',
+  'wp_egypt_sunset',
+  'wp_doodle_arab',
+  'wp_cairo_night',
+  'wp_royal_palace',
+  'wp_alex_turquoise',
+  'wp_desert_stars',
+  'wp_fatimid_heritage',
+  'wp_minimal_dark',
+]);
+
 const SENDER_STYLE_PALETTE = [
-  { name: 'text-rose-600' },
-  { name: 'text-sky-600' },
-  { name: 'text-fuchsia-600' },
-  { name: 'text-teal-600' },
-  { name: 'text-indigo-600' },
-  { name: 'text-amber-700' },
-  { name: 'text-emerald-600' },
-  { name: 'text-purple-600' },
+  { name: 'text-rose-700 chat-text-outline-strong' },
+  { name: 'text-sky-800 chat-text-outline-strong' },
+  { name: 'text-fuchsia-800 chat-text-outline-strong' },
+  { name: 'text-teal-800 chat-text-outline-strong' },
+  { name: 'text-indigo-800 chat-text-outline-strong' },
+  { name: 'text-amber-800 chat-text-outline-strong' },
+  { name: 'text-emerald-800 chat-text-outline-strong' },
+  { name: 'text-purple-800 chat-text-outline-strong' },
 ];
 
 const SENDER_STYLE_PALETTE_DARK = [
-  { name: 'text-rose-300' },
-  { name: 'text-sky-300' },
-  { name: 'text-fuchsia-300' },
-  { name: 'text-teal-300' },
-  { name: 'text-indigo-300' },
-  { name: 'text-amber-300' },
-  { name: 'text-emerald-300' },
-  { name: 'text-purple-300' },
+  { name: 'text-rose-300 chat-text-outline-strong-dark' },
+  { name: 'text-sky-300 chat-text-outline-strong-dark' },
+  { name: 'text-fuchsia-300 chat-text-outline-strong-dark' },
+  { name: 'text-teal-300 chat-text-outline-strong-dark' },
+  { name: 'text-indigo-300 chat-text-outline-strong-dark' },
+  { name: 'text-amber-300 chat-text-outline-strong-dark' },
+  { name: 'text-emerald-300 chat-text-outline-strong-dark' },
+  { name: 'text-purple-300 chat-text-outline-strong-dark' },
 ];
 
 function getSenderChatStyle(
@@ -1225,7 +1240,9 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
     ? liveRoomBackgroundTheme
     : (room.backgroundTheme || 'default');
   const activeRoomBgThemeObj = getRoomBackgroundThemeById(effectiveRoomBackground);
-  const isDarkRoomBg = Boolean(activeRoomBgThemeObj?.isDark);
+  const isDarkRoomBg =
+    Boolean(activeRoomBgThemeObj?.isDark) ||
+    (effectiveRoomBackground === 'default' && Boolean(currentUser.chatWallpaper && DARK_PERSONAL_WALLPAPERS.has(currentUser.chatWallpaper)));
 
   return (
     <div style={getRoomContainerStyle(room.id, currentUser.chatWallpaper, effectiveRoomBackground)} className={`relative flex flex-col h-screen w-full bg-[#f6f8fc] overflow-hidden select-none transition-all duration-500 ${isDarkRoomBg ? 'text-white' : 'text-slate-900'}`}>
@@ -1609,7 +1626,7 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
         )}
 
         {/* Scrollable Messages Feed */}
-        <div className="relative z-10 flex-1 overflow-y-auto px-2.5 sm:px-3.5 py-1.5 space-y-1 scroll-smooth text-right">
+        <div className="relative z-10 flex-1 overflow-y-auto px-2.5 sm:px-3.5 py-2 space-y-1.5 scroll-smooth text-right">
         {displayedMessages.map((msg, idx) => {
           const isMe = msg.senderId === currentUser.id;
           const isPrivateMsg = msg.type === 'private' || msg.isPrivate;
@@ -1757,6 +1774,10 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
 
           const senderStyle = getSenderChatStyle(msg.senderId, msg.senderRole, msg.senderVipBadge, isDarkRoomBg);
           const isVipSender = senderStyle.isPrivileged;
+          const vipBorderClass = senderStyle.rankMeta.msgBorderClass;
+          const msgTextOutlineClass = isDarkRoomBg
+            ? 'chat-text-outline-strong-dark'
+            : 'chat-text-outline-strong';
 
           return (
             <motion.div
@@ -1764,14 +1785,18 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.18, ease: 'easeOut' }}
-              className={`flex items-start gap-2 justify-start group py-1 px-1.5 rounded-xl transition-colors ${
+              className={`chat-msg-row flex items-start gap-2 justify-start group rounded-xl transition-colors ${msgTextOutlineClass} ${
+                vipBorderClass ? `${vipBorderClass} py-1.5 px-2.5` : 'py-1 px-1.5'
+              } ${
                 highlightedMsgId === msg.id
-                  ? (isDarkRoomBg ? 'bg-amber-400/20 ring-1 ring-amber-400' : 'bg-amber-100/80 ring-1 ring-amber-400')
+                  ? (isDarkRoomBg
+                      ? 'bg-amber-400/20 ring-1 ring-amber-400'
+                      : 'bg-amber-100/60 ring-1 ring-amber-400')
                   : isPrivateMsg
-                  ? (isDarkRoomBg ? 'bg-amber-500/15 border border-amber-400/35 px-2' : 'bg-amber-50/75 border border-amber-200/70 px-2')
-                  : senderStyle.rowBg
-                  ? senderStyle.rowBg
-                  : (isDarkRoomBg ? 'hover:bg-white/[0.06]' : 'hover:bg-slate-900/[0.03]')
+                  ? `bg-transparent ${vipBorderClass ? '' : 'border-r-2 border-amber-500 pr-2'}`
+                  : isDarkRoomBg
+                  ? 'bg-transparent hover:bg-white/[0.06]'
+                  : 'bg-transparent hover:bg-slate-900/[0.04]'
               }`}
             >
               {/* Circular Avatar (Animated Gradient Ring strictly for VIP/Admin/Owner; plain for regular members/guests) */}
@@ -1849,19 +1874,25 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
                       e.stopPropagation();
                       scrollToMessage(msg.replyTo?.id);
                     }}
-                    className={`mb-1 pr-2 border-r-2 border-amber-500 text-[11px] cursor-pointer truncate ${
-                      isDarkRoomBg ? 'text-slate-200 hover:text-white' : 'text-slate-600 hover:text-slate-900'
+                    className={`mb-1 pr-2 border-r-2 border-amber-500 text-[11px] font-bold cursor-pointer truncate ${
+                      isDarkRoomBg
+                        ? 'text-white/95 hover:text-white chat-text-outline-dark'
+                        : 'text-slate-900 hover:text-slate-950 chat-text-outline-light'
                     }`}
                     title="اضغط للانتقال إلى الرسالة الأصلية"
                   >
-                    <span className={`font-bold ${isDarkRoomBg ? 'text-amber-300' : 'text-amber-700'}`}>رد على {msg.replyTo.senderName}: </span>
+                    <span className={`font-black ${isDarkRoomBg ? 'text-amber-300' : 'text-amber-800'}`}>رد على {msg.replyTo.senderName}: </span>
                     <span>{filterInappropriateText(msg.replyTo.content)}</span>
                   </div>
                 )}
 
                 {/* Voice Note Player OR Inline Sticker OR Classic Inline [Rank Icon] [Colored Name] : [Message Text with 1em Animated Emojis] [Flag] */}
                 {msg.type === 'sticker' ? (
-                  <p className={`text-[13.5px] sm:text-sm leading-relaxed font-semibold whitespace-pre-wrap break-words ${isDarkRoomBg ? 'text-white/95' : 'text-slate-900'}`}>
+                  <p className={`text-[13.5px] sm:text-sm leading-relaxed font-bold whitespace-pre-wrap break-words ${
+                    isDarkRoomBg
+                      ? 'text-white chat-text-outline-dark'
+                      : 'text-slate-950 chat-text-outline-light'
+                  }`}>
                     {isVipSender && senderStyle.badge && (
                       <span className="ml-0.5 text-xs align-middle select-none">
                         {senderStyle.badge}
@@ -1877,7 +1908,7 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
                     >
                       {msg.senderName}
                     </button>
-                    <span className={`font-bold mx-1 ${isDarkRoomBg ? 'text-slate-300' : 'text-slate-700'}`}>:</span>
+                    <span className={`font-black mx-1 ${isDarkRoomBg ? 'text-slate-100 chat-text-outline-dark' : 'text-slate-950 chat-text-outline-light'}`}>:</span>
                     <InlineRichText text={`${msg.stickerEmoji || msg.content || '✨'}${msg.stickerLabel ? ` ${msg.stickerLabel}` : ''}`} />
                   </p>
                 ) : msg.type === 'voice' ? (
@@ -1893,7 +1924,7 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
                       {isVipSender && senderStyle.badge && <span className="ml-0.5">{senderStyle.badge}</span>}
                       {msg.senderName}
                     </button>
-                    <span className={`font-bold ${isDarkRoomBg ? 'text-slate-300' : 'text-slate-700'}`}>:</span>
+                    <span className={`font-black ${isDarkRoomBg ? 'text-slate-100 chat-text-outline-dark' : 'text-slate-950 chat-text-outline-light'}`}>:</span>
                     <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full bg-white/95 border border-slate-200 shadow-2xs">
                       <button
                         type="button"
@@ -1913,7 +1944,7 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
                         <span className={`w-0.5 h-3 rounded-full ${playingVoiceId === msg.id ? 'animate-soundwave-4 bg-amber-500' : 'bg-slate-400'}`}></span>
                       </div>
 
-                      <span className="text-[10px] font-mono text-slate-600">
+                      <span className="text-[10px] font-mono text-slate-700 font-bold [text-shadow:none]">
                         {msg.audioDuration ? `0:${msg.audioDuration < 10 ? '0' : ''}${msg.audioDuration}` : '0:05'}
                       </span>
                     </div>
@@ -1923,14 +1954,18 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
                         e.stopPropagation();
                         setActiveContextMenu({ msg, x: e.clientX, y: e.clientY });
                       }}
-                      className={`p-0.5 transition-colors ${isDarkRoomBg ? 'text-slate-300/80 hover:text-rose-400' : 'text-slate-400 hover:text-rose-600'}`}
+                      className={`p-0.5 transition-colors ${isDarkRoomBg ? 'text-slate-200/80 hover:text-rose-400' : 'text-slate-600 hover:text-rose-600'}`}
                       title="خيارات الرسالة"
                     >
                       <Flag className="w-3 h-3 fill-current" />
                     </button>
                   </div>
                 ) : (
-                  <p className={`text-[13.5px] sm:text-sm leading-relaxed font-semibold whitespace-pre-wrap break-words ${isDarkRoomBg ? 'text-white/95' : 'text-slate-900'}`}>
+                  <p className={`text-[13.5px] sm:text-sm leading-relaxed font-bold whitespace-pre-wrap break-words ${
+                    isDarkRoomBg
+                      ? 'text-white chat-text-outline-dark'
+                      : 'text-slate-950 chat-text-outline-light'
+                  }`}>
                     {/* Strict Rank Emblem: only for Privileged VIP/Admin/Owner roles */}
                     {isVipSender && senderStyle.badge && (
                       <span className="ml-0.5 text-xs align-middle select-none">
@@ -1950,16 +1985,16 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
                       {msg.senderName}
                     </button>
 
-                    <span className={`font-bold mx-1 ${isDarkRoomBg ? 'text-slate-300' : 'text-slate-700'}`}>:</span>
+                    <span className={`font-black mx-1 ${isDarkRoomBg ? 'text-slate-100 chat-text-outline-dark' : 'text-slate-950 chat-text-outline-light'}`}>:</span>
 
                     {isPrivateMsg && (
-                      <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 ml-1 rounded bg-amber-100 text-amber-800 text-[10px] font-black align-middle">
+                      <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 ml-1 rounded bg-amber-100/95 text-amber-900 text-[10px] font-black align-middle border border-amber-300/80 [text-shadow:none]">
                         همس خاص 🔒
                       </span>
                     )}
 
                     {/* Message Body Text with 1em Inline Animated Emojis */}
-                    <span className={`font-semibold ${isDarkRoomBg ? 'text-white/95' : 'text-slate-900'}`}>
+                    <span className={`font-bold ${isDarkRoomBg ? 'text-white chat-text-outline-dark' : 'text-slate-950 chat-text-outline-light'}`}>
                       <InlineRichText text={filterInappropriateText(msg.content)} />
                     </span>
 
@@ -1970,7 +2005,7 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
                         e.stopPropagation();
                         setActiveContextMenu({ msg, x: e.clientX, y: e.clientY });
                       }}
-                      className={`inline-flex items-center justify-center mr-1.5 align-middle transition-colors ${isDarkRoomBg ? 'text-slate-300/80 hover:text-rose-400' : 'text-slate-400 hover:text-rose-600'}`}
+                      className={`inline-flex items-center justify-center mr-1.5 align-middle transition-colors ${isDarkRoomBg ? 'text-slate-200/80 hover:text-rose-400' : 'text-slate-600 hover:text-rose-600'}`}
                       title="خيارات الرسالة / إبلاغ / تثبيت"
                     >
                       <Flag className="w-3 h-3 fill-current" />
@@ -1978,9 +2013,9 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
                   </p>
                 )}
 
-                {/* Always-Visible Expressions & Reactions Row Below Message */}
-                <div className="flex items-center gap-1.5 mt-1 flex-wrap">
-                  {/* Active Reaction Count Chips */}
+                {/* Always-Visible Transparent & Compact Expressions & Reactions Row Below Message */}
+                <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                  {/* Active Reaction Count Chips (Floating & Transparent) */}
                   {msg.reactions && Object.entries(msg.reactions).map(([emoji, count]) => {
                     if (count <= 0) return null;
                     const userReacted = msg.userReactions && msg.userReactions[currentUser.id] === emoji;
@@ -1999,24 +2034,24 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
                           if (usersList.length > 0) setReactionUsersModal({ emoji, users: usersList });
                         }}
                         title={`تفاعل: ${usersList.join('، ') || emoji}`}
-                        className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold border flex items-center gap-1 transition-all active:scale-95 ${
+                        className={`px-0.5 py-0 text-[10px] font-black flex items-center gap-0.5 bg-transparent border-0 transition-transform active:scale-90 hover:scale-110 cursor-pointer ${
                           userReacted
-                            ? 'bg-indigo-100 border-indigo-400 text-indigo-800 shadow-2xs'
-                            : 'bg-white/95 border-slate-200 text-slate-700 hover:border-slate-300'
+                            ? isDarkRoomBg
+                              ? 'text-sky-300 chat-text-outline-dark scale-105'
+                              : 'text-indigo-700 chat-text-outline-light scale-105'
+                            : isDarkRoomBg
+                            ? 'text-slate-100 chat-text-outline-dark'
+                            : 'text-slate-900 chat-text-outline-light'
                         }`}
                       >
-                        <span>{emoji}</span>
+                        <span className="text-[11px] leading-none">{emoji}</span>
                         <span className="tabular-nums">{count}</span>
                       </button>
                     );
                   })}
 
-                  {/* Always-visible Quick Expressions Strip below every message */}
-                  <div className={`inline-flex items-center gap-0.5 backdrop-blur-xs rounded-full px-1.5 py-0.5 border shadow-2xs ${
-                    isDarkRoomBg
-                      ? 'bg-slate-900/65 border-white/15'
-                      : 'bg-white/85 border-slate-200/80'
-                  }`}>
+                  {/* Always-visible Transparent Quick Expressions Strip */}
+                  <div className="inline-flex items-center gap-1 bg-transparent px-0 py-0">
                     {['❤️', '👍', '😂', '🔥', '👏', '🌹'].map((em) => {
                       const isPicked = msg.userReactions && msg.userReactions[currentUser.id] === em;
                       return (
@@ -2030,8 +2065,8 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
                               contributeToSharedRoomMission('likes', currentUser.id, 1).catch(() => {});
                             }
                           }}
-                          className={`hover:scale-125 active:scale-90 text-[11px] transition-transform px-0.5 rounded-full ${
-                            isPicked ? 'bg-indigo-100 ring-1 ring-indigo-300 scale-110' : 'opacity-85 hover:opacity-100'
+                          className={`hover:scale-125 active:scale-90 text-[10.5px] leading-none transition-transform p-0 bg-transparent border-0 cursor-pointer ${
+                            isPicked ? 'scale-115 opacity-100 drop-shadow-xs' : 'opacity-80 hover:opacity-100'
                           }`}
                           title={`إضافة تعبير ${em}`}
                         >
@@ -2042,17 +2077,21 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
                   </div>
 
                   {/* Quick Actions (Timestamp, Read Status, Reply, Pin for Moderators) */}
-                  <div className="flex items-center gap-1.5 text-[10px] opacity-85 sm:opacity-0 sm:group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
-                    <span className="text-slate-400 font-medium tabular-nums">
+                  <div className="flex items-center gap-1.5 text-[10px] opacity-90 sm:opacity-0 sm:group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+                    <span className={`font-bold tabular-nums ${
+                      isDarkRoomBg
+                        ? 'text-slate-100 chat-text-outline-dark'
+                        : 'text-slate-900 chat-text-outline-light'
+                    }`}>
                       {new Date(msg.timestamp).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })}
                     </span>
 
                     {isMe && (
                       <span className="inline-flex items-center">
                         {msg.status === 'read' ? (
-                          <CheckCheck className="w-3 h-3 text-sky-600" />
+                          <CheckCheck className={`w-3 h-3 ${isDarkRoomBg ? 'text-sky-300' : 'text-sky-700'}`} />
                         ) : msg.status === 'sent' ? (
-                          <Check className="w-3 h-3 text-slate-400" />
+                          <Check className={`w-3 h-3 ${isDarkRoomBg ? 'text-slate-200' : 'text-slate-700'}`} />
                         ) : (
                           <Clock className="w-2.5 h-2.5 text-amber-500 animate-spin" />
                         )}
@@ -2065,7 +2104,11 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
                         e.stopPropagation();
                         updateReplyingTo(msg);
                       }}
-                      className="text-slate-500 hover:text-indigo-600 font-bold flex items-center gap-0.5"
+                      className={`font-black flex items-center gap-0.5 ${
+                        isDarkRoomBg
+                          ? 'text-slate-100 hover:text-indigo-300 chat-text-outline-dark'
+                          : 'text-slate-900 hover:text-indigo-700 chat-text-outline-light'
+                      }`}
                       title="رد على الرسالة"
                     >
                       <Reply className="w-2.5 h-2.5" />
@@ -2079,10 +2122,10 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
                           e.stopPropagation();
                           pinnedMessage?.id === msg.id ? handleUnpin() : handlePinExistingMessage(msg);
                         }}
-                        className={`font-bold flex items-center gap-0.5 ${
+                        className={`font-black flex items-center gap-0.5 ${
                           pinnedMessage?.id === msg.id
-                            ? 'text-amber-600'
-                            : 'text-slate-500 hover:text-amber-600'
+                            ? isDarkRoomBg ? 'text-amber-300 chat-text-outline-dark' : 'text-amber-800 chat-text-outline-light'
+                            : isDarkRoomBg ? 'text-slate-100 hover:text-amber-300 chat-text-outline-dark' : 'text-slate-900 hover:text-amber-800 chat-text-outline-light'
                         }`}
                         title={
                           pinnedMessage?.id === msg.id
@@ -2170,34 +2213,17 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
         </div>
       )}
 
-      {/* 8.5. Quick Welcoming Phrases Bar (Frosted Glass over Chat Wallpaper) */}
-      <div className="bg-white/55 backdrop-blur-md border-t border-white/50 px-2 py-1.5 flex items-center gap-1.5 overflow-x-auto scrollbar-none shrink-0 z-20">
-        <div className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-amber-100/80 border border-amber-200/80 text-amber-900 text-[10px] font-black shrink-0 whitespace-nowrap">
-          <span>🌸</span>
-          <span>ترحيب:</span>
-        </div>
-        <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none py-0.5">
-          {WELCOME_PHRASES.map((phrase, idx) => (
-            <button
-              key={idx}
-              type="button"
-              disabled={currentUser.isBanned || currentUser.isMuted}
-              onClick={() => handleSendWelcomePhrase(phrase)}
-              className="px-2.5 py-1 rounded-full bg-white/75 hover:bg-white hover:border-amber-300 border border-white/70 text-slate-800 hover:text-amber-800 text-[11px] font-medium whitespace-nowrap transition-all duration-150 active:scale-95 shrink-0 flex items-center gap-1 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed shadow-2xs"
-              title="اضغط لإرسال الترحيب فوراً"
-            >
-              <span>{phrase}</span>
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* 8.8. 1-Click Instant Ready Response Bar (Frosted Glass over Chat Wallpaper) */}
-      <div className="bg-white/50 backdrop-blur-md border-t border-white/40 px-2 py-1 flex items-center gap-1.5 overflow-x-auto scrollbar-none shrink-0 z-20">
-        <div className="flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-indigo-100/80 border border-indigo-200/80 text-indigo-800 text-[10px] font-black shrink-0 whitespace-nowrap">
+      {/* 8.5. Single Compact Combined Quick-Phrases & Ready-Replies Bar */}
+      <div className={`backdrop-blur-md border-t px-2 py-1 flex items-center gap-1 overflow-x-auto scrollbar-none shrink-0 z-20 ${
+        isDarkRoomBg
+          ? 'bg-slate-900/78 border-white/15'
+          : 'bg-gradient-to-l from-sky-50/85 via-white/85 to-amber-50/85 border-sky-200/65'
+      }`}>
+        <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-gradient-to-r from-indigo-600 to-sky-600 text-white text-[9.5px] font-black shrink-0 whitespace-nowrap shadow-2xs">
           <span>⚡</span>
-          <span>ردود سريعة:</span>
+          <span>عبارات سريعة:</span>
         </div>
+
         {[
           'وعليكم السلام 🌹',
           'شكراً جزيلاً ✨',
@@ -2210,12 +2236,33 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
           'بالتوفيق إن شاء الله 🎯'
         ].map((phrase, idx) => (
           <button
-            key={idx}
+            key={`quick_${idx}`}
             type="button"
             disabled={currentUser.isBanned || currentUser.isMuted}
             onClick={() => handleSendWelcomePhrase(phrase)}
             title="إرسال فوري بضغطة واحدة"
-            className="px-2.5 py-0.5 rounded-full bg-white/75 hover:bg-white border border-white/70 hover:border-indigo-300 text-slate-800 hover:text-indigo-700 text-[10.5px] font-medium whitespace-nowrap active:scale-95 transition-all shrink-0 cursor-pointer disabled:opacity-40 shadow-2xs"
+            className={`px-2 py-0.5 rounded-full text-[10px] font-bold whitespace-nowrap active:scale-95 transition-all shrink-0 cursor-pointer disabled:opacity-40 border ${
+              isDarkRoomBg
+                ? 'bg-sky-500/20 hover:bg-sky-500/35 border-sky-400/30 text-sky-100'
+                : 'bg-sky-50/95 hover:bg-sky-100 border-sky-200/85 text-slate-900 hover:text-indigo-800'
+            }`}
+          >
+            {phrase}
+          </button>
+        ))}
+
+        {WELCOME_PHRASES.map((phrase, idx) => (
+          <button
+            key={`welcome_${idx}`}
+            type="button"
+            disabled={currentUser.isBanned || currentUser.isMuted}
+            onClick={() => handleSendWelcomePhrase(phrase)}
+            className={`px-2 py-0.5 rounded-full text-[10px] font-bold whitespace-nowrap transition-all duration-150 active:scale-95 shrink-0 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed border ${
+              isDarkRoomBg
+                ? 'bg-white/15 hover:bg-white/25 border-white/20 text-white hover:text-amber-200'
+                : 'bg-amber-50/95 hover:bg-amber-100 border-amber-200/85 text-amber-950 hover:text-rose-900'
+            }`}
+            title="اضغط لإرسال الترحيب فوراً"
           >
             {phrase}
           </button>

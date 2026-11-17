@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { AnimatePresence, motion } from 'framer-motion';
 import { Toaster, toast } from 'sonner';
 import { X, Check, RefreshCw, UserPlus, MessageCircle, Sparkles } from 'lucide-react';
 import { Header } from './components/Header';
@@ -66,6 +67,9 @@ import {
   recordGiftRecipientStats,
   propagateUserIdentityAcrossApp,
   subscribeToAppUpdateNotices,
+  subscribeToUnreadMessagesCount,
+  resetDirectChatUnreadInDB,
+  resetAllDirectChatsUnreadInDB,
   AppUpdateNotice
 } from './services/firebase';
 
@@ -127,7 +131,7 @@ export default function App() {
   const [targetChatUser, setTargetChatUser] = useState<User | null>(null);
   const [isInsidePrivateChat, setIsInsidePrivateChat] = useState<boolean>(false);
 
-  // Per-sender unread incoming message tracking (persisted per user)
+  // Per-sender unread incoming message tracking (persisted per user + synced live with Firestore)
   const [unreadSendersMap, setUnreadSendersMap] = useState<Record<string, UnreadSenderSummary>>(() => {
     try {
       const saved = localStorage.getItem(`shat_masr_unread_senders_${currentUser.id}`);
@@ -136,6 +140,9 @@ export default function App() {
     return {};
   });
   const processedUnreadDmIdsRef = useRef<Set<string>>(new Set());
+  const processedBannerDmIdsRef = useRef<Set<string>>(new Set());
+  const recentlyClearedPeerRef = useRef<Map<string, number>>(new Map());
+  const recentlyClearedAllAtRef = useRef<number>(0);
 
   useEffect(() => {
     try {
@@ -154,16 +161,20 @@ export default function App() {
 
   const clearUnreadForSender = useCallback((senderId: string) => {
     if (!senderId) return;
+    recentlyClearedPeerRef.current.set(senderId, Date.now());
     setUnreadSendersMap((prev) => {
       if (!prev[senderId]) return prev;
       const next = { ...prev };
       delete next[senderId];
       return next;
     });
+    resetDirectChatUnreadInDB(currentUserRef.current.id, senderId).catch(() => {});
   }, []);
 
   const clearAllUnreadMessages = useCallback(() => {
+    recentlyClearedAllAtRef.current = Date.now();
     setUnreadSendersMap({});
+    resetAllDirectChatsUnreadInDB(currentUserRef.current.id).catch(() => {});
   }, []);
 
   const unreadMessagesBySender = useMemo(
@@ -520,28 +531,34 @@ export default function App() {
       });
     });
 
-    // Listen to incoming friend requests in real-time (strictly pending & deduplicated)
+    // Listen to incoming friend requests over instant WebSocket (merges cleanly sorted newest-first)
     const unsubFriend = realtimeSocket.subscribeToFriendRequests((req) => {
-      if (req.receiverId === currentUserRef.current.id && req.status === 'pending') {
+      const me = currentUserRef.current;
+      if (req && req.receiverId === me.id && req.status === 'pending') {
         if (!seenFriendBannerIdsRef.current.has(req.id)) {
           seenFriendBannerIdsRef.current.add(req.id);
+          sounds.playMessageReceived();
           setFriendReqBanner(req);
           if (friendReqBannerTimerRef.current) clearTimeout(friendReqBannerTimerRef.current);
           friendReqBannerTimerRef.current = setTimeout(() => {
             setFriendReqBanner((curr) => (curr?.id === req.id ? null : curr));
           }, 10000);
+          if (typeof document !== 'undefined' && document.hidden) {
+            triggerExternalBrowserNotification(
+              `طلب صداقة جديد من ${req.senderName}`,
+              'اضغط لقبول أو رفض طلب الصداقة',
+              { senderId: req.senderId }
+            );
+          }
         }
         setPendingFriendRequests(prev => {
-          if (prev.some(r => r.id === req.id || (r.senderId === req.senderId && r.status === 'pending'))) {
-            return prev;
-          }
-          sounds.playMessageReceived();
-          return [req, ...prev];
+          const filtered = prev.filter(r => r.id !== req.id && r.senderId !== req.senderId);
+          return [req, ...filtered].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
         });
       }
     });
 
-    // Global Join Top Banner (auto-dismiss after 5s)
+    // Global Join Top Banner (auto-dismiss after 5s, visible on Home AND inside rooms)
     const unsubGlobalJoin = realtimeSocket.subscribeToGlobalUserJoined((joined) => {
       const me = currentUserRef.current;
       if (!joined?.name || joined.id === me.id) return;
@@ -835,27 +852,34 @@ export default function App() {
             }
           });
         } else if (dmNotifsEnabled && !isViewingThisSender) {
-          sounds.playMessageReceived();
-          const previewText = rawMsg.content || rawMsg.text || 'رسالة جديدة';
-          const bannerId = rawMsg.id || `dm_${Date.now()}`;
-          setDmTopBanner({
-            id: bannerId,
-            senderId: toastPayload.senderId,
-            senderName: toastPayload.senderName,
-            senderAvatar: toastPayload.senderAvatar,
-            preview: previewText
-          });
-          if (dmTopBannerTimerRef.current) clearTimeout(dmTopBannerTimerRef.current);
-          dmTopBannerTimerRef.current = setTimeout(() => {
-            setDmTopBanner((curr) => (curr?.id === bannerId ? null : curr));
-          }, 6000);
-          if (typeof document !== 'undefined' && document.hidden) {
-            triggerExternalBrowserNotification(
-              `أرسل إليك ${toastPayload.senderName} رسالة خاصة`,
-              previewText,
-              { senderId: rawMsg.senderId },
-              () => handleOpenIncomingChat(toastPayload)
-            );
+          const bannerId = rawMsg.id || `dm_${rawMsg.senderId}_${rawMsg.timestamp || Date.now()}`;
+          if (!processedBannerDmIdsRef.current.has(bannerId)) {
+            processedBannerDmIdsRef.current.add(bannerId);
+            if (processedBannerDmIdsRef.current.size > 500) {
+              const firstKey = processedBannerDmIdsRef.current.values().next().value;
+              if (firstKey) processedBannerDmIdsRef.current.delete(firstKey);
+            }
+            sounds.playMessageReceived();
+            const previewText = rawMsg.content || rawMsg.text || 'رسالة جديدة';
+            setDmTopBanner({
+              id: bannerId,
+              senderId: toastPayload.senderId,
+              senderName: toastPayload.senderName,
+              senderAvatar: toastPayload.senderAvatar,
+              preview: previewText
+            });
+            if (dmTopBannerTimerRef.current) clearTimeout(dmTopBannerTimerRef.current);
+            dmTopBannerTimerRef.current = setTimeout(() => {
+              setDmTopBanner((curr) => (curr?.id === bannerId ? null : curr));
+            }, 6000);
+            if (typeof document !== 'undefined' && document.hidden) {
+              triggerExternalBrowserNotification(
+                `أرسل إليك ${toastPayload.senderName} رسالة خاصة`,
+                previewText,
+                { senderId: rawMsg.senderId },
+                () => handleOpenIncomingChat(toastPayload)
+              );
+            }
           }
         }
       }
@@ -864,7 +888,79 @@ export default function App() {
     // 1. WebSocket direct message listener
     const unsubDm = realtimeSocket.subscribeToGlobalDirectMessages(handleIncomingDm);
 
-    // 2. Multi-tab BroadcastChannel listener
+    // 2. Real-time Firestore + RTDB Unread Counter listener (users/{uid}/recent_chats)
+    const unsubDbUnread = isProfileReady && currentUser.id
+      ? subscribeToUnreadMessagesCount(currentUser.id, (records) => {
+          const now = Date.now();
+          if (now - recentlyClearedAllAtRef.current < 2500) return;
+
+          setUnreadSendersMap((prev) => {
+            const next: Record<string, UnreadSenderSummary> = {};
+            const dbIds = new Set<string>();
+
+            records.forEach((rec) => {
+              const clearedAt = recentlyClearedPeerRef.current.get(rec.senderId) || 0;
+              if (now - clearedAt < 2500) return;
+              const isViewingPeer =
+                (isPrivateChatDrawerOpen || currentTab === 'chat') &&
+                isInsidePrivateChat &&
+                targetChatUser?.id === rec.senderId;
+              if (isViewingPeer) return;
+
+              dbIds.add(rec.senderId);
+              const prevEntry = prev[rec.senderId];
+              next[rec.senderId] = {
+                senderId: rec.senderId,
+                senderName: rec.senderName || prevEntry?.senderName || 'عضو شات مصر',
+                senderAvatar: rec.senderAvatar || prevEntry?.senderAvatar || '',
+                count: Math.max(rec.count, prevEntry?.count || 0),
+                lastMessage: rec.lastMessage || prevEntry?.lastMessage || 'رسالة خاصة',
+                lastTimestamp: Math.max(rec.lastTimestamp || 0, prevEntry?.lastTimestamp || 0)
+              };
+
+              // If Firestore delivered a brand-new message ID before/without WS banner, trigger DM top banner
+              if (
+                rec.lastMessageId &&
+                !processedUnreadDmIdsRef.current.has(rec.lastMessageId) &&
+                !processedBannerDmIdsRef.current.has(rec.lastMessageId) &&
+                now - (rec.lastTimestamp || 0) < 30000
+              ) {
+                processedUnreadDmIdsRef.current.add(rec.lastMessageId);
+                processedBannerDmIdsRef.current.add(rec.lastMessageId);
+                const dmNotifsEnabled = currentUser.notificationPrefs?.directMessages !== false;
+                if (dmNotifsEnabled) {
+                  sounds.playMessageReceived();
+                  setDmTopBanner({
+                    id: rec.lastMessageId,
+                    senderId: rec.senderId,
+                    senderName: rec.senderName,
+                    senderAvatar: rec.senderAvatar,
+                    preview: rec.lastMessage
+                  });
+                  if (dmTopBannerTimerRef.current) clearTimeout(dmTopBannerTimerRef.current);
+                  dmTopBannerTimerRef.current = setTimeout(() => {
+                    setDmTopBanner((curr) => (curr?.id === rec.lastMessageId ? null : curr));
+                  }, 6000);
+                }
+              }
+            });
+
+            // Keep any live WS-only unread entries created in the last few seconds not yet flushed to Firestore
+            Object.entries(prev).forEach(([peerId, entry]) => {
+              if (!dbIds.has(peerId) && now - (entry.lastTimestamp || 0) < 4000) {
+                const clearedAt = recentlyClearedPeerRef.current.get(peerId) || 0;
+                if (now - clearedAt >= 2500) {
+                  next[peerId] = entry;
+                }
+              }
+            });
+
+            return next;
+          });
+        })
+      : () => {};
+
+    // 3. Multi-tab BroadcastChannel listener
     let bus: BroadcastChannel | null = null;
     try {
       bus = new BroadcastChannel('arab_chat_firestore_bus');
@@ -878,9 +974,10 @@ export default function App() {
 
     return () => {
       unsubDm();
+      unsubDbUnread();
       bus?.close();
     };
-  }, [currentUser.id, currentUser.sessionId, currentUser.notificationPrefs?.directMessages, currentUser.notificationPrefs?.gifts, currentTab, isPrivateChatDrawerOpen, isInsidePrivateChat, targetChatUser?.id]);
+  }, [currentUser.id, currentUser.sessionId, currentUser.notificationPrefs?.directMessages, currentUser.notificationPrefs?.gifts, currentTab, isPrivateChatDrawerOpen, isInsidePrivateChat, targetChatUser?.id, isProfileReady]);
 
   // Initialize External Push Notifications (FCM / Service Worker / Browser Deep-Link)
   useEffect(() => {
@@ -942,22 +1039,32 @@ export default function App() {
     localStorage.setItem('arab_chat_rooms', JSON.stringify(rooms));
   }, [rooms]);
 
-  // Subscribe to real friend requests once user profile is ready
+  // Subscribe to real friend requests once user profile is ready (sorted newest-first)
   useEffect(() => {
     if (!isProfileReady || !currentUser.id) return;
     const unsub = subscribeToFriendRequests(currentUser.id, (reqs) => {
-      const pending = reqs.filter(r => r.status === 'pending');
+      const pending = reqs
+        .filter(r => r.status === 'pending')
+        .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
       setPendingFriendRequests(pending);
       if (pending.length > 0) {
-        const newest = pending[0];
-        if (!seenFriendBannerIdsRef.current.has(newest.id)) {
-          seenFriendBannerIdsRef.current.add(newest.id);
+        const unseen = pending.filter(r => !seenFriendBannerIdsRef.current.has(r.id));
+        if (unseen.length > 0) {
+          unseen.forEach(r => seenFriendBannerIdsRef.current.add(r.id));
+          const newest = unseen[0];
           sounds.playMessageReceived();
           setFriendReqBanner(newest);
           if (friendReqBannerTimerRef.current) clearTimeout(friendReqBannerTimerRef.current);
           friendReqBannerTimerRef.current = setTimeout(() => {
             setFriendReqBanner((curr) => (curr?.id === newest.id ? null : curr));
           }, 10000);
+          if (typeof document !== 'undefined' && document.hidden) {
+            triggerExternalBrowserNotification(
+              `طلب صداقة جديد من ${newest.senderName}`,
+              'اضغط لقبول أو رفض طلب الصداقة',
+              { senderId: newest.senderId }
+            );
+          }
         }
       }
     });
@@ -1166,6 +1273,7 @@ export default function App() {
     return () => {
       isCancelled = true;
       if (welcomeBotTimer) clearTimeout(welcomeBotTimer);
+      welcomedPublicRoomKeysRef.current.delete(sessionKey);
       realtimeSocket.leaveRoom(activeRoom.id, currentUser.id);
       unsubPresence();
       unsubMessages();
@@ -1290,6 +1398,31 @@ export default function App() {
         if (prev.some(m => m.id === newMsg.id)) return prev;
         return [...prev, newMsg];
       });
+
+      // Optimistically update room card lastMessage preview on Home screen
+      if (newMsg.type !== 'system_welcome' && !newMsg.isPrivate) {
+        const previewSummary =
+          newMsg.type === 'gift' && newMsg.gift?.name
+            ? `🎁 أرسل ${newMsg.gift.name}`
+            : newMsg.type === 'voice'
+            ? '🎤 رسالة صوتية'
+            : newMsg.type === 'image'
+            ? '📷 صورة'
+            : newMsg.type === 'video'
+            ? '🎬 فيديو'
+            : newMsg.type === 'sticker'
+            ? `${newMsg.stickerEmoji || ''} ${newMsg.stickerLabel || 'ملصق'}`.trim()
+            : content;
+        if (previewSummary) {
+          const lastSummary = {
+            senderName: currentUser.name,
+            content: previewSummary.slice(0, 120),
+            type: newMsg.type,
+            timestamp: newMsg.timestamp
+          };
+          setRooms(prev => prev.map(r => (r.id === activeRoom.id ? { ...r, lastMessage: lastSummary } : r)));
+        }
+      }
 
       // 1. Broadcast via WebSocket directly to ALL other connected devices in real time
       realtimeSocket.sendMessage(activeRoom.id, newMsg);
@@ -1814,10 +1947,13 @@ export default function App() {
         closeButton
         expand={false}
         toastOptions={{
+          className: 'transition-all duration-300 ease-out',
           style: {
             fontFamily: 'Cairo, Tajawal, sans-serif',
             borderRadius: '1rem',
-            boxShadow: '0 12px 30px -8px rgba(15, 23, 42, 0.18)'
+            boxShadow: '0 12px 30px -8px rgba(15, 23, 42, 0.18)',
+            transition: 'opacity 0.3s cubic-bezier(0.22, 1, 0.36, 1), transform 0.3s cubic-bezier(0.22, 1, 0.36, 1)',
+            transitionDuration: '300ms'
           }
         }}
       />
@@ -1827,139 +1963,167 @@ export default function App() {
         dir="rtl"
         className="fixed top-3 left-1/2 -translate-x-1/2 z-[115] w-[calc(100%-1.5rem)] max-w-md flex flex-col gap-2 pointer-events-none"
       >
-        {/* App Update Push Banner */}
-        {appUpdateNotice && (
-          <div className="pointer-events-auto flex items-center justify-between gap-2.5 px-3.5 py-2.5 rounded-2xl bg-gradient-to-l from-indigo-600 via-purple-600 to-fuchsia-600 text-white shadow-2xl border border-white/25 animate-in slide-in-from-top-3">
-            <div className="flex items-center gap-2 min-w-0">
-              <Sparkles className="w-4 h-4 text-amber-300 shrink-0 animate-pulse" />
-              <p className="text-xs font-black truncate">{appUpdateNotice.message}</p>
-            </div>
-            <div className="flex items-center gap-1.5 shrink-0">
-              <button
-                type="button"
-                onClick={() => window.location.reload()}
-                className="px-2.5 py-1 rounded-xl bg-white text-indigo-700 hover:bg-amber-50 text-[11px] font-black flex items-center gap-1 shadow-sm active:scale-95 transition cursor-pointer"
-              >
-                <RefreshCw className="w-3 h-3" />
-                <span>تحديث الآن</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setAppUpdateNotice(null)}
-                aria-label="إغلاق"
-                className="p-1 rounded-full hover:bg-white/20 text-white/90 cursor-pointer"
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Global User Join Banner (Auto-hides in 5s) */}
-        {globalJoinBanner && (
-          <div className="pointer-events-auto flex items-center justify-between gap-2 px-3.5 py-2 rounded-2xl bg-white/95 backdrop-blur-md border border-emerald-200 shadow-lg text-slate-900 animate-in slide-in-from-top-3">
-            <div className="flex items-center gap-2 min-w-0">
-              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping shrink-0" />
-              <span className="text-xs font-black text-emerald-800 truncate">
-                انضم {globalJoinBanner.name} إلى شات مصر
-              </span>
-            </div>
-            <button
-              type="button"
-              onClick={() => setGlobalJoinBanner(null)}
-              aria-label="إغلاق"
-              className="p-1 rounded-full text-slate-400 hover:text-slate-700 cursor-pointer"
+        <AnimatePresence initial={false}>
+          {/* App Update Push Banner */}
+          {appUpdateNotice && (
+            <motion.div
+              key={`update-${appUpdateNotice.timestamp || appUpdateNotice.version}`}
+              initial={{ opacity: 0, y: -12, scale: 0.97 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: -10, scale: 0.97 }}
+              transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
+              className="pointer-events-auto flex items-center justify-between gap-2.5 px-3.5 py-2.5 rounded-2xl bg-gradient-to-l from-indigo-600 via-purple-600 to-fuchsia-600 text-white shadow-2xl border border-white/25"
             >
-              <X className="w-3.5 h-3.5" />
-            </button>
-          </div>
-        )}
+              <div className="flex items-center gap-2 min-w-0">
+                <Sparkles className="w-4 h-4 text-amber-300 shrink-0 animate-pulse" />
+                <p className="text-xs font-black truncate">{appUpdateNotice.message}</p>
+              </div>
+              <div className="flex items-center gap-1.5 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => window.location.reload()}
+                  className="px-2.5 py-1 rounded-xl bg-white text-indigo-700 hover:bg-amber-50 text-[11px] font-black flex items-center gap-1 shadow-sm active:scale-95 transition cursor-pointer"
+                >
+                  <RefreshCw className="w-3 h-3" />
+                  <span>تحديث الآن</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAppUpdateNotice(null)}
+                  aria-label="إغلاق"
+                  className="p-1 rounded-full hover:bg-white/20 text-white/90 cursor-pointer"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </motion.div>
+          )}
 
-        {/* Incoming Private Message Top Banner */}
-        {dmTopBanner && (
-          <div
-            onClick={() => {
-              const target = {
-                senderId: dmTopBanner.senderId,
-                senderName: dmTopBanner.senderName,
-                senderAvatar: dmTopBanner.senderAvatar,
-              };
-              setDmTopBanner(null);
-              handleOpenIncomingChat(target);
-            }}
-            className="pointer-events-auto cursor-pointer flex items-center justify-between gap-2.5 px-3.5 py-2.5 rounded-2xl bg-white/95 backdrop-blur-md border border-indigo-200 shadow-xl text-slate-900 hover:bg-indigo-50/70 transition animate-in slide-in-from-top-3"
-          >
-            <div className="flex items-center gap-2.5 min-w-0">
-              <div className="w-8 h-8 rounded-full bg-indigo-100 border border-indigo-200 flex items-center justify-center text-indigo-600 shrink-0 overflow-hidden">
-                {dmTopBanner.senderAvatar ? (
-                  <img src={dmTopBanner.senderAvatar} alt={dmTopBanner.senderName} className="w-full h-full object-cover" />
-                ) : (
-                  <MessageCircle className="w-4 h-4" />
-                )}
-              </div>
-              <div className="min-w-0">
-                <p className="text-xs font-black text-slate-900 truncate">
-                  أرسل إليك {dmTopBanner.senderName} رسالة خاصة
-                </p>
-                <p className="text-[11px] text-slate-500 truncate">{dmTopBanner.preview}</p>
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                setDmTopBanner(null);
-              }}
-              aria-label="إغلاق"
-              className="p-1 rounded-full text-slate-400 hover:text-slate-700 shrink-0 cursor-pointer"
+          {/* Global User Join Banner (Auto-hides in 5s with smooth fade-in/out) */}
+          {globalJoinBanner && (
+            <motion.div
+              key={`join-${globalJoinBanner.id}`}
+              initial={{ opacity: 0, y: -12, scale: 0.97 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: -10, scale: 0.97 }}
+              transition={{ duration: 0.26, ease: [0.22, 1, 0.36, 1] }}
+              className="pointer-events-auto flex items-center justify-between gap-2 px-3.5 py-2 rounded-2xl bg-white/95 backdrop-blur-md border border-emerald-200 shadow-lg text-slate-900"
             >
-              <X className="w-3.5 h-3.5" />
-            </button>
-          </div>
-        )}
-
-        {/* Incoming Friend Request Top Banner with Instant Accept / Decline */}
-        {friendReqBanner && (
-          <div className="pointer-events-auto flex items-center justify-between gap-2 px-3.5 py-2.5 rounded-2xl bg-white/95 backdrop-blur-md border border-amber-200 shadow-xl text-slate-900 animate-in slide-in-from-top-3">
-            <div className="flex items-center gap-2 min-w-0">
-              <div className="w-8 h-8 rounded-full bg-amber-100 border border-amber-200 flex items-center justify-center text-amber-600 shrink-0 overflow-hidden">
-                {friendReqBanner.senderAvatar ? (
-                  <img src={friendReqBanner.senderAvatar} alt={friendReqBanner.senderName} className="w-full h-full object-cover" />
-                ) : (
-                  <UserPlus className="w-4 h-4" />
-                )}
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping shrink-0" />
+                <span className="text-xs font-black text-emerald-800 truncate">
+                  انضم {globalJoinBanner.name} إلى شات مصر
+                </span>
               </div>
-              <p className="text-xs font-black text-slate-900 truncate">
-                أرسل لك {friendReqBanner.senderName} طلب صداقة
-              </p>
-            </div>
-            <div className="flex items-center gap-1 shrink-0">
               <button
                 type="button"
-                onClick={() => handleAcceptFriendRequest(friendReqBanner)}
-                className="px-2.5 py-1 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-black flex items-center gap-1 shadow-xs active:scale-95 transition cursor-pointer"
-              >
-                <Check className="w-3 h-3" />
-                <span>قبول</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => handleDeclineFriendRequest(friendReqBanner.id, friendReqBanner.senderId)}
-                className="px-2.5 py-1 rounded-xl bg-rose-100 hover:bg-rose-200 text-rose-700 text-[11px] font-black active:scale-95 transition cursor-pointer"
-              >
-                رفض
-              </button>
-              <button
-                type="button"
-                onClick={() => setFriendReqBanner(null)}
+                onClick={() => setGlobalJoinBanner(null)}
                 aria-label="إغلاق"
                 className="p-1 rounded-full text-slate-400 hover:text-slate-700 cursor-pointer"
               >
                 <X className="w-3.5 h-3.5" />
               </button>
-            </div>
-          </div>
-        )}
+            </motion.div>
+          )}
+
+          {/* Incoming Private Message Top Banner (Smooth fade-in/out) */}
+          {dmTopBanner && (
+            <motion.div
+              key={`dm-${dmTopBanner.id}`}
+              initial={{ opacity: 0, y: -12, scale: 0.97 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: -10, scale: 0.97 }}
+              transition={{ duration: 0.26, ease: [0.22, 1, 0.36, 1] }}
+              onClick={() => {
+                const target = {
+                  senderId: dmTopBanner.senderId,
+                  senderName: dmTopBanner.senderName,
+                  senderAvatar: dmTopBanner.senderAvatar,
+                };
+                setDmTopBanner(null);
+                handleOpenIncomingChat(target);
+              }}
+              className="pointer-events-auto cursor-pointer flex items-center justify-between gap-2.5 px-3.5 py-2.5 rounded-2xl bg-white/95 backdrop-blur-md border border-indigo-200 shadow-xl text-slate-900 hover:bg-indigo-50/70 transition-colors"
+            >
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className="w-8 h-8 rounded-full bg-indigo-100 border border-indigo-200 flex items-center justify-center text-indigo-600 shrink-0 overflow-hidden">
+                  {dmTopBanner.senderAvatar ? (
+                    <img src={dmTopBanner.senderAvatar} alt={dmTopBanner.senderName} className="w-full h-full object-cover" />
+                  ) : (
+                    <MessageCircle className="w-4 h-4" />
+                  )}
+                </div>
+                <div className="min-w-0">
+                  <p className="text-xs font-black text-slate-900 truncate">
+                    أرسل إليك {dmTopBanner.senderName} رسالة خاصة
+                  </p>
+                  <p className="text-[11px] text-slate-500 truncate">{dmTopBanner.preview}</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setDmTopBanner(null);
+                }}
+                aria-label="إغلاق"
+                className="p-1 rounded-full text-slate-400 hover:text-slate-700 shrink-0 cursor-pointer"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </motion.div>
+          )}
+
+          {/* Incoming Friend Request Top Banner with Instant Accept / Decline (Smooth fade-in/out) */}
+          {friendReqBanner && (
+            <motion.div
+              key={`fr-${friendReqBanner.id}`}
+              initial={{ opacity: 0, y: -12, scale: 0.97 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: -10, scale: 0.97 }}
+              transition={{ duration: 0.26, ease: [0.22, 1, 0.36, 1] }}
+              className="pointer-events-auto flex items-center justify-between gap-2 px-3.5 py-2.5 rounded-2xl bg-white/95 backdrop-blur-md border border-amber-200 shadow-xl text-slate-900"
+            >
+              <div className="flex items-center gap-2 min-w-0">
+                <div className="w-8 h-8 rounded-full bg-amber-100 border border-amber-200 flex items-center justify-center text-amber-600 shrink-0 overflow-hidden">
+                  {friendReqBanner.senderAvatar ? (
+                    <img src={friendReqBanner.senderAvatar} alt={friendReqBanner.senderName} className="w-full h-full object-cover" />
+                  ) : (
+                    <UserPlus className="w-4 h-4" />
+                  )}
+                </div>
+                <p className="text-xs font-black text-slate-900 truncate">
+                  أرسل لك {friendReqBanner.senderName} طلب صداقة
+                </p>
+              </div>
+              <div className="flex items-center gap-1 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => handleAcceptFriendRequest(friendReqBanner)}
+                  className="px-2.5 py-1 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-black flex items-center gap-1 shadow-xs active:scale-95 transition cursor-pointer"
+                >
+                  <Check className="w-3 h-3" />
+                  <span>قبول</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleDeclineFriendRequest(friendReqBanner.id, friendReqBanner.senderId)}
+                  className="px-2.5 py-1 rounded-xl bg-rose-100 hover:bg-rose-200 text-rose-700 text-[11px] font-black active:scale-95 transition cursor-pointer"
+                >
+                  رفض
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFriendReqBanner(null)}
+                  aria-label="إغلاق"
+                  className="p-1 rounded-full text-slate-400 hover:text-slate-700 cursor-pointer"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
 
       {/* 1. Top Header Bar: Unified compact mobile-responsive header - ONLY shown on main screen, hidden inside active room */}
@@ -2089,7 +2253,9 @@ export default function App() {
                   }}
                   onPromptRegister={openExclusiveAuthModal}
                   unreadBySender={unreadCountsBySenderId}
+                  unreadMessagesBySender={unreadMessagesBySender}
                   onMarkSenderRead={clearUnreadForSender}
+                  onClearAllUnreadMessages={clearAllUnreadMessages}
                 />
               )}
 

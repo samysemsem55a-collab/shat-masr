@@ -333,7 +333,7 @@ export const Header: React.FC<HeaderProps> = React.memo(({
               <UserPlus className="w-4 h-4" />
               {pendingFriendRequestsCount > 0 && (
                 <span className="absolute -top-1 -right-0.5 min-w-[16px] h-4 px-1 rounded-full bg-rose-600 text-white text-[9px] font-black flex items-center justify-center shadow border border-white tabular-nums">
-                  {pendingFriendRequestsCount}
+                  {pendingFriendRequestsCount > 99 ? '99+' : pendingFriendRequestsCount}
                 </span>
               )}
             </button>

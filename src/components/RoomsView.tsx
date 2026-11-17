@@ -837,10 +837,14 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
                 </div>
 
                 {/* Live Room Last Message Preview */}
-                {room.lastMessage?.content && (
-                  <div className="relative z-10 flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-black/25 backdrop-blur-xs border border-white/15 text-[10.5px] text-white/95 truncate">
+                {room.lastMessage?.content ? (
+                  <div className="relative z-10 flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-black/30 backdrop-blur-xs border border-white/20 text-[10.5px] text-white/95 truncate shadow-2xs">
                     <span className="font-black text-amber-300 shrink-0">{room.lastMessage.senderName}:</span>
                     <span className="truncate opacity-95">{room.lastMessage.content}</span>
+                  </div>
+                ) : (
+                  <div className="relative z-10 flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-black/20 backdrop-blur-xs border border-white/10 text-[10px] text-white/80 truncate">
+                    <span>💬 لا توجد رسائل بعد — كن أول من يبدأ الدردشة</span>
                   </div>
                 )}
 
@@ -978,8 +982,8 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
                 />
 
                 {postImageUrl && (
-                  <div className="relative inline-block rounded-xl overflow-hidden border border-slate-200 shadow-xs">
-                    <img src={postImageUrl} alt="معاينة الصورة" className="max-h-36 w-auto object-cover" />
+                  <div className="relative inline-block rounded-xl overflow-hidden border border-slate-200 bg-slate-50 shadow-xs">
+                    <img src={postImageUrl} alt="معاينة الصورة" className="max-h-36 w-auto object-contain" />
                     <button
                       type="button"
                       onClick={() => setPostImageUrl('')}
@@ -1182,13 +1186,13 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
                     {post.imageUrl && (
                       <div
                         onClick={() => setLightboxImageUrl(post.imageUrl || null)}
-                        className="mt-2 rounded-xl overflow-hidden border border-slate-200 bg-slate-100 cursor-zoom-in group relative"
+                        className="mt-2 rounded-xl overflow-hidden border border-slate-200/90 bg-slate-100/75 flex items-center justify-center max-h-[250px] sm:max-h-[280px] cursor-zoom-in group relative"
                         title="اضغط لتكبير الصورة"
                       >
                         <img
                           src={post.imageUrl}
                           alt="صورة المنشور"
-                          className="w-full max-h-44 sm:max-h-52 object-cover group-hover:scale-[1.01] transition-transform duration-200"
+                          className="w-full h-auto max-h-[250px] sm:max-h-[280px] object-contain mx-auto group-hover:scale-[1.01] transition-transform duration-200"
                           loading="lazy"
                         />
                         <span className="absolute bottom-2 left-2 px-2 py-0.5 rounded-lg bg-slate-900/65 text-white text-[10px] font-bold backdrop-blur-xs">

@@ -79,7 +79,8 @@
         "lastMessage": { "type": "string", "maxLength": 2000 },
         "lastSenderId": { "type": "string", "maxLength": 128 },
         "lastSenderName": { "type": "string", "maxLength": 100 },
-        "lastTimestamp": { "type": "number" }
+        "lastTimestamp": { "type": "number" },
+        "typing": { "type": "object" }
       },
       "required": ["chatId", "participants"]
     },

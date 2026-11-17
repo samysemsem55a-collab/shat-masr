@@ -930,7 +930,7 @@ export async function sendFirestoreMessage(
         }, { merge: true });
       }
       // Persist latest room message summary for lobby room cards
-      if (newMsg.type !== 'system_welcome') {
+      if (newMsg.type !== 'system_welcome' && !isPrivateMsg) {
         const previewContent =
           newMsg.type === 'gift' && newMsg.gift?.name
             ? `🎁 أرسل ${newMsg.gift.name}`
@@ -950,6 +950,11 @@ export async function sendFirestoreMessage(
             type: newMsg.type,
             timestamp: newMsg.timestamp
           };
+          liveChatBus?.postMessage({
+            type: 'ROOM_LAST_MESSAGE_UPDATED',
+            roomId,
+            lastMessage: lastSummary
+          });
           await setDoc(doc(db, 'rooms', roomId), {
             roomId,
             lastMessage: lastSummary,
@@ -1800,7 +1805,11 @@ export function subscribeToFriendRequests(
   onRequests: (reqs: FriendRequest[]) => void
 ): () => void {
   const localKey = `friend_requests_${userId}`;
-  const reqsMap = new Map<string, FriendRequest>();
+  const userSubMap = new Map<string, FriendRequest>();
+  const rootMap = new Map<string, FriendRequest>();
+  const rtdbMap = new Map<string, FriendRequest>();
+  const socketMap = new Map<string, FriendRequest>();
+  const localSeedMap = new Map<string, FriendRequest>();
 
   const emit = () => {
     let acceptedFriendIds = new Set<string>();
@@ -1815,8 +1824,26 @@ export function subscribeToFriendRequests(
       }
     } catch {}
 
-    const list = Array.from(reqsMap.values()).filter(r => 
-      r.status === 'pending' && !acceptedFriendIds.has(r.senderId)
+    // Merge all sources cleanly and deduplicate by senderId (keeping newest pending request per distinct sender)
+    const combinedById = new Map<string, FriendRequest>();
+    [localSeedMap, socketMap, rtdbMap, rootMap, userSubMap].forEach((source) => {
+      source.forEach((req, id) => {
+        if (req && req.status === 'pending' && req.senderId && !acceptedFriendIds.has(req.senderId)) {
+          combinedById.set(id, req);
+        }
+      });
+    });
+
+    const bySender = new Map<string, FriendRequest>();
+    combinedById.forEach((req) => {
+      const existing = bySender.get(req.senderId);
+      if (!existing || (req.createdAt || 0) >= (existing.createdAt || 0)) {
+        bySender.set(req.senderId, req);
+      }
+    });
+
+    const list = Array.from(bySender.values()).sort(
+      (a, b) => (b.createdAt || 0) - (a.createdAt || 0)
     );
     try {
       localStorage.setItem(localKey, JSON.stringify(list));
@@ -1834,11 +1861,11 @@ export function subscribeToFriendRequests(
   };
 
   loadLocal().forEach((r: FriendRequest) => {
-    if (r && r.id) reqsMap.set(r.id, r);
+    if (r && r.id) localSeedMap.set(r.id, r);
   });
   emit();
 
-  // 1. Firestore listener on users/{userId}/friend_requests
+  // 1. Firestore listeners on users/{userId}/friend_requests & friendRequests
   let unsubFirestoreUser: (() => void) | null = null;
   let unsubFirestoreRoot: (() => void) | null = null;
 
@@ -1846,25 +1873,32 @@ export function subscribeToFriendRequests(
     try {
       const userReqsCol = collection(db, 'users', userId, 'friend_requests');
       unsubFirestoreUser = onSnapshot(userReqsCol, (snap) => {
-        if (!snap.empty) {
-          snap.docs.forEach((docSnap) => {
-            const data = docSnap.data();
-            if (data.status === 'pending') {
-              reqsMap.set(docSnap.id, {
-                id: docSnap.id,
-                senderId: data.senderId,
-                senderName: data.senderName,
-                senderAvatar: data.senderAvatar,
-                receiverId: data.receiverId || userId,
-                status: 'pending',
-                createdAt: data.createdAt?.toMillis ? data.createdAt.toMillis() : (data.createdAt || Date.now())
-              });
-            } else {
-              reqsMap.delete(docSnap.id);
-            }
-          });
-          emit();
-        }
+        userSubMap.clear();
+        snap.docs.forEach((docSnap) => {
+          const data = docSnap.data();
+          if (data.status === 'pending' && data.senderId) {
+            const reqObj: FriendRequest = {
+              id: docSnap.id,
+              senderId: data.senderId,
+              senderName: data.senderName || 'عضو شات مصر',
+              senderAvatar: data.senderAvatar || '',
+              receiverId: data.receiverId || userId,
+              status: 'pending',
+              createdAt: data.createdAt?.toMillis ? data.createdAt.toMillis() : (Number(data.createdAt) || Date.now())
+            };
+            userSubMap.set(docSnap.id, reqObj);
+          } else {
+            localSeedMap.delete(docSnap.id);
+            socketMap.delete(docSnap.id);
+          }
+        });
+        // Prune local seed items that are no longer pending in authoritative Firestore snapshot
+        localSeedMap.forEach((r, id) => {
+          if (!userSubMap.has(id) && !rootMap.has(id)) {
+            localSeedMap.delete(id);
+          }
+        });
+        emit();
       }, (e) => {
         console.warn('Firestore user friend requests listener notice:', e);
       });
@@ -1872,35 +1906,35 @@ export function subscribeToFriendRequests(
       // Query root collection where receiverId == userId
       const rootQuery = query(collection(db, 'friendRequests'), where('receiverId', '==', userId));
       unsubFirestoreRoot = onSnapshot(rootQuery, (snap) => {
-        if (!snap.empty) {
-          snap.docs.forEach((docSnap) => {
-            const data = docSnap.data();
-            if (data.status === 'pending') {
-              reqsMap.set(docSnap.id, {
-                id: docSnap.id,
-                senderId: data.senderId,
-                senderName: data.senderName,
-                senderAvatar: data.senderAvatar,
-                receiverId: data.receiverId || userId,
-                status: 'pending',
-                createdAt: data.createdAt?.toMillis ? data.createdAt.toMillis() : (data.createdAt || Date.now())
-              });
-            } else {
-              reqsMap.delete(docSnap.id);
-            }
-          });
-          emit();
-        }
+        rootMap.clear();
+        snap.docs.forEach((docSnap) => {
+          const data = docSnap.data();
+          if (data.status === 'pending' && data.senderId) {
+            rootMap.set(docSnap.id, {
+              id: docSnap.id,
+              senderId: data.senderId,
+              senderName: data.senderName || 'عضو شات مصر',
+              senderAvatar: data.senderAvatar || '',
+              receiverId: data.receiverId || userId,
+              status: 'pending',
+              createdAt: data.createdAt?.toMillis ? data.createdAt.toMillis() : (Number(data.createdAt) || Date.now())
+            });
+          } else {
+            localSeedMap.delete(docSnap.id);
+            socketMap.delete(docSnap.id);
+          }
+        });
+        emit();
       }, (e) => {
         console.warn('Firestore root friend requests listener notice:', e);
       });
     } catch (e) {}
   }
 
-  // 2. Realtime Socket listener
+  // 2. Realtime Socket listener (instant arrival before Firestore round-trip completes)
   const unsubSocket = realtimeSocket.subscribeToFriendRequests((req) => {
-    if (req.receiverId === userId) {
-      reqsMap.set(req.id, req);
+    if (req && req.receiverId === userId && req.status === 'pending') {
+      socketMap.set(req.id, req);
       emit();
     }
   });
@@ -1911,21 +1945,22 @@ export function subscribeToFriendRequests(
     try {
       const reqsRef = ref(rtdb, `friend_requests/${userId}`);
       unsubRtdb = onValue(reqsRef, (snap) => {
+        rtdbMap.clear();
         const val = snap.val();
         if (val) {
           const list: FriendRequest[] = Object.values(val);
           list.forEach(r => {
-            if (r && r.id && r.status === 'pending') reqsMap.set(r.id, r);
+            if (r && r.id && r.status === 'pending') rtdbMap.set(r.id, r);
           });
-          emit();
         }
+        emit();
       });
     } catch {}
   }
 
   const handleMsg = (e: MessageEvent) => {
-    if (e.data?.type === 'NEW_FRIEND_REQUEST' && e.data.request.receiverId === userId) {
-      reqsMap.set(e.data.request.id, e.data.request);
+    if (e.data?.type === 'NEW_FRIEND_REQUEST' && e.data.request?.receiverId === userId) {
+      socketMap.set(e.data.request.id, e.data.request);
       emit();
     }
   };
@@ -2980,18 +3015,103 @@ export function subscribeToDirectMessages(
   };
 }
 
+export async function resetDirectChatUnreadInDB(
+  currentUserId: string,
+  peerId: string
+): Promise<void> {
+  if (!currentUserId || !peerId) return;
+  const convId = getConversationId(currentUserId, peerId);
+
+  try {
+    const recentKey = `recent_direct_chats_${currentUserId}`;
+    const raw = localStorage.getItem(recentKey);
+    if (raw) {
+      const list: any[] = JSON.parse(raw);
+      const updated = list.map((c) => (c.chatId === convId || c.peerId === peerId ? { ...c, unreadCount: 0 } : c));
+      localStorage.setItem(recentKey, JSON.stringify(updated));
+    }
+  } catch {}
+
+  if (rtdb) {
+    try {
+      await update(ref(rtdb, `user_direct_chats/${currentUserId}/${convId}`), {
+        unreadCount: 0,
+        lastReadAt: Date.now()
+      });
+    } catch {}
+  }
+
+  if (db) {
+    try {
+      await setDoc(doc(db, 'users', currentUserId, 'recent_chats', convId), {
+        unreadCount: 0,
+        lastReadAt: Date.now()
+      }, { merge: true });
+      await setDoc(doc(db, 'direct_chats', convId), {
+        [`unread_${currentUserId}`]: 0
+      }, { merge: true });
+    } catch {}
+  }
+
+  liveChatBus?.postMessage({
+    type: 'DIRECT_CHATS_UPDATED',
+    convId
+  });
+}
+
+export async function resetAllDirectChatsUnreadInDB(currentUserId: string): Promise<void> {
+  if (!currentUserId) return;
+  try {
+    const recentKey = `recent_direct_chats_${currentUserId}`;
+    const raw = localStorage.getItem(recentKey);
+    if (raw) {
+      const list: any[] = JSON.parse(raw);
+      localStorage.setItem(recentKey, JSON.stringify(list.map(c => ({ ...c, unreadCount: 0 }))));
+    }
+  } catch {}
+
+  if (db) {
+    try {
+      const snap = await getDocs(collection(db, 'users', currentUserId, 'recent_chats'));
+      await Promise.all(
+        snap.docs.map((d) =>
+          setDoc(d.ref, { unreadCount: 0, lastReadAt: Date.now() }, { merge: true }).catch(() => {})
+        )
+      );
+    } catch {}
+  }
+
+  if (rtdb) {
+    try {
+      const snap = await get(ref(rtdb, `user_direct_chats/${currentUserId}`));
+      const val = snap.val();
+      if (val && typeof val === 'object') {
+        await Promise.all(
+          Object.keys(val).map((convId) =>
+            update(ref(rtdb!, `user_direct_chats/${currentUserId}/${convId}`), { unreadCount: 0 }).catch(() => {})
+          )
+        );
+      }
+    } catch {}
+  }
+}
+
 export async function markDirectMessagesAsRead(
   currentUserId: string,
   peerId: string,
   messages: Message[]
 ): Promise<void> {
-  if (!currentUserId || !peerId || !messages.length) return;
-  const unread = messages.filter(m => m.senderId !== currentUserId && m.status !== 'read');
+  if (!currentUserId || !peerId) return;
+  const convId = getConversationId(currentUserId, peerId);
+  const localKey = `direct_messages_${convId}`;
+
+  // Always zero out persisted unreadCount counter in DB for this peer
+  resetDirectChatUnreadInDB(currentUserId, peerId).catch(() => {});
+
+  const unread = (messages || []).filter(m => m.senderId !== currentUserId && m.status !== 'read');
   if (unread.length === 0) return;
 
   const unreadIds = unread.map(m => m.id);
-  const convId = getConversationId(currentUserId, peerId);
-  const localKey = `direct_messages_${convId}`;
 
   // 1. Update local cache
   try {
@@ -3037,6 +3157,19 @@ export async function sendDirectMessage(
   const messageId = message.id || `dm_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
   const now = Date.now();
 
+  const previewText =
+    message.type === 'gift' && message.gift?.name
+      ? `🎁 أرسل ${message.gift.name}`
+      : message.type === 'voice'
+      ? '🎤 رسالة صوتية'
+      : message.type === 'image'
+      ? '📷 صورة'
+      : message.type === 'video'
+      ? '🎬 فيديو'
+      : message.type === 'sticker'
+      ? `${message.stickerEmoji || ''} ${message.stickerLabel || 'ملصق'}`.trim()
+      : (message.content || message.text || 'رسالة خاصة');
+
   const newMsg: Message = {
     id: messageId,
     senderId: message.senderId || userId1,
@@ -3048,8 +3181,8 @@ export async function sendDirectMessage(
     type: message.type || 'private',
     isPrivate: true,
     recipientId: userId2,
-    content: message.content || message.text || '',
-    text: message.content || message.text || '',
+    content: message.content || message.text || previewText,
+    text: message.content || message.text || previewText,
     audioDuration: message.audioDuration,
     audioUrl: message.audioUrl,
     voiceUrl: message.voiceUrl,
@@ -3084,27 +3217,32 @@ export async function sendDirectMessage(
   // 2. Dispatch via WebSocket to server to deliver immediately to recipient socket (by ID & active sessionId)
   realtimeSocket.sendDirectMessage(convId, userId2, cleanMsgPayload as Partial<Message>, message.recipientSessionId);
 
-  // 3. Update recent chat index locally for both users
-  const updateLocalRecentChat = (uId: string, peerId: string, peerName: string, peerAvatar: string) => {
+  // 3. Update recent chat index locally for both users (incrementing recipient unreadCount)
+  const updateLocalRecentChat = (uId: string, peerId: string, peerName: string, peerAvatar: string, isRecipientSide: boolean) => {
     try {
       const recentKey = `recent_direct_chats_${uId}`;
       const raw = localStorage.getItem(recentKey);
       const list: any[] = raw ? JSON.parse(raw) : [];
+      const existing = list.find((c: any) => c.chatId === convId);
       const updated = list.filter((c: any) => c.chatId !== convId);
+      const nextUnread = isRecipientSide ? (Number(existing?.unreadCount) || 0) + 1 : 0;
       updated.unshift({
         chatId: convId,
         peerId,
         peerName: peerName || 'عضو شات مصر',
         peerAvatar: peerAvatar || '',
-        lastMessage: newMsg.content || 'رسالة خاصة',
+        lastMessage: previewText,
+        lastMessageId: newMsg.id,
         lastSenderId: userId1,
-        lastTimestamp: now
+        lastSenderName: newMsg.senderName,
+        lastTimestamp: now,
+        unreadCount: nextUnread
       });
       localStorage.setItem(recentKey, JSON.stringify(updated.slice(0, 50)));
     } catch {}
   };
-  updateLocalRecentChat(userId1, userId2, message.recipientName || '', message.recipientAvatar || '');
-  updateLocalRecentChat(userId2, userId1, newMsg.senderName, newMsg.senderAvatar);
+  updateLocalRecentChat(userId1, userId2, message.recipientName || '', message.recipientAvatar || '', false);
+  updateLocalRecentChat(userId2, userId1, newMsg.senderName, newMsg.senderAvatar, true);
 
   // 4. Broadcast across tabs
   liveChatBus?.postMessage({
@@ -3116,48 +3254,64 @@ export async function sendDirectMessage(
     type: 'DIRECT_CHATS_UPDATED'
   });
 
-  // 5. RTDB send
+  // 5. RTDB send with atomic unreadCount read-and-increment for recipient
   if (rtdb) {
     try {
       const msgRef = ref(rtdb, `direct_messages/${convId}/${newMsg.id}`);
       await set(msgRef, cleanMsgPayload);
 
-      // Store in user direct chat index
       await set(ref(rtdb, `user_direct_chats/${userId1}/${convId}`), {
         chatId: convId,
         peerId: userId2,
         peerName: message.recipientName || 'عضو شات مصر',
         peerAvatar: message.recipientAvatar || '',
-        lastMessage: newMsg.content || 'رسالة خاصة',
+        lastMessage: previewText,
+        lastMessageId: newMsg.id,
         lastSenderId: userId1,
-        lastTimestamp: now
+        lastTimestamp: now,
+        unreadCount: 0
       });
 
-      await set(ref(rtdb, `user_direct_chats/${userId2}/${convId}`), {
+      const recipientRecentRef = ref(rtdb, `user_direct_chats/${userId2}/${convId}`);
+      let prevUnread = 0;
+      try {
+        const snap = await get(recipientRecentRef);
+        const existingVal = snap.val();
+        if (existingVal && typeof existingVal.unreadCount === 'number') {
+          prevUnread = existingVal.unreadCount;
+        }
+      } catch {}
+
+      await set(recipientRecentRef, {
         chatId: convId,
         peerId: userId1,
         peerName: newMsg.senderName,
         peerAvatar: newMsg.senderAvatar,
-        lastMessage: newMsg.content || 'رسالة خاصة',
+        lastMessage: previewText,
+        lastMessageId: newMsg.id,
         lastSenderId: userId1,
-        lastTimestamp: now
+        lastTimestamp: now,
+        unreadCount: prevUnread + 1
       });
     } catch (e) {
       console.warn("RTDB direct message send notice:", e);
     }
   }
 
-  // 6. Firestore send: write message document and update recent_chats subcollections
+  // 6. Firestore send: write message document and atomically increment recipient recent_chats.unreadCount
   if (db) {
     try {
       const parentDocRef = doc(db, 'direct_chats', convId);
       await setDoc(parentDocRef, {
         chatId: convId,
         participants: [userId1, userId2].sort(),
-        lastMessage: newMsg.content,
+        lastMessage: previewText,
+        lastMessageId: newMsg.id,
         lastSenderId: userId1,
         lastSenderName: newMsg.senderName,
         lastTimestamp: now,
+        [`unread_${userId1}`]: 0,
+        [`unread_${userId2}`]: increment(1),
         updatedAt: serverTimestamp()
       }, { merge: true });
 
@@ -3167,27 +3321,31 @@ export async function sendDirectMessage(
         createdAt: serverTimestamp()
       });
 
-      // Write to sender recent_chats subcollection in Firestore
+      // Write to sender recent_chats subcollection in Firestore (unread = 0)
       await setDoc(doc(db, 'users', userId1, 'recent_chats', convId), {
         chatId: convId,
         peerId: userId2,
         peerName: message.recipientName || 'عضو شات مصر',
         peerAvatar: message.recipientAvatar || '',
-        lastMessage: newMsg.content || 'رسالة خاصة',
+        lastMessage: previewText,
+        lastMessageId: newMsg.id,
         lastSenderId: userId1,
         lastTimestamp: now,
+        unreadCount: 0,
         updatedAt: serverTimestamp()
       }, { merge: true });
 
-      // Write to recipient recent_chats subcollection in Firestore
+      // Write to recipient recent_chats subcollection in Firestore (atomic increment by 1)
       await setDoc(doc(db, 'users', userId2, 'recent_chats', convId), {
         chatId: convId,
         peerId: userId1,
         peerName: newMsg.senderName,
         peerAvatar: newMsg.senderAvatar,
-        lastMessage: newMsg.content || 'رسالة خاصة',
+        lastMessage: previewText,
+        lastMessageId: newMsg.id,
         lastSenderId: userId1,
         lastTimestamp: now,
+        unreadCount: increment(1),
         updatedAt: serverTimestamp()
       }, { merge: true });
     } catch (e) {
@@ -3196,6 +3354,111 @@ export async function sendDirectMessage(
   }
 
   return newMsg;
+}
+
+export interface UnreadMessageRecord {
+  senderId: string;
+  senderName: string;
+  senderAvatar: string;
+  count: number;
+  lastMessage: string;
+  lastMessageId?: string;
+  lastSenderId?: string;
+  lastTimestamp: number;
+}
+
+export function subscribeToUnreadMessagesCount(
+  currentUserId: string,
+  onUpdate: (records: UnreadMessageRecord[]) => void
+): () => void {
+  if (!currentUserId) return () => {};
+  const firestoreMap = new Map<string, UnreadMessageRecord>();
+  const rtdbMap = new Map<string, UnreadMessageRecord>();
+
+  const emit = () => {
+    const merged = new Map<string, UnreadMessageRecord>();
+    rtdbMap.forEach((rec, peerId) => merged.set(peerId, rec));
+    firestoreMap.forEach((rec, peerId) => {
+      const prev = merged.get(peerId);
+      if (!prev) {
+        merged.set(peerId, rec);
+      } else {
+        // Use Firestore authoritative count when available (or whichever is fresher after read reset)
+        merged.set(peerId, {
+          ...prev,
+          ...rec,
+          count: Math.max(0, rec.count)
+        });
+      }
+    });
+    const list = Array.from(merged.values())
+      .filter((r) => r.count > 0 && r.senderId !== currentUserId)
+      .sort((a, b) => b.lastTimestamp - a.lastTimestamp);
+    onUpdate(list);
+  };
+
+  let unsubFirestore: (() => void) | null = null;
+  if (db) {
+    try {
+      const recentCol = collection(db, 'users', currentUserId, 'recent_chats');
+      unsubFirestore = onSnapshot(recentCol, (snap) => {
+        firestoreMap.clear();
+        snap.docs.forEach((docSnap) => {
+          const data = docSnap.data();
+          const count = Math.max(0, Number(data.unreadCount) || 0);
+          const peerId = String(data.peerId || '');
+          if (!peerId || peerId === currentUserId) return;
+          const ts = data.lastTimestamp || (data.updatedAt?.toMillis ? data.updatedAt.toMillis() : Date.now());
+          firestoreMap.set(peerId, {
+            senderId: peerId,
+            senderName: data.peerName || 'عضو شات مصر',
+            senderAvatar: data.peerAvatar || '',
+            count: data.lastSenderId === currentUserId ? 0 : count,
+            lastMessage: data.lastMessage || 'رسالة خاصة',
+            lastMessageId: data.lastMessageId,
+            lastSenderId: data.lastSenderId,
+            lastTimestamp: ts
+          });
+        });
+        emit();
+      }, (e) => {
+        console.warn('Firestore unread recent_chats counter notice:', e);
+      });
+    } catch {}
+  }
+
+  let unsubRtdb: (() => void) | null = null;
+  if (rtdb) {
+    try {
+      const chatsRef = ref(rtdb, `user_direct_chats/${currentUserId}`);
+      unsubRtdb = onValue(chatsRef, (snap) => {
+        rtdbMap.clear();
+        const val = snap.val();
+        if (val && typeof val === 'object') {
+          Object.values(val).forEach((c: any) => {
+            if (!c || !c.peerId || c.peerId === currentUserId) return;
+            const count = c.lastSenderId === currentUserId ? 0 : Math.max(0, Number(c.unreadCount) || 0);
+            rtdbMap.set(c.peerId, {
+              senderId: c.peerId,
+              senderName: c.peerName || 'عضو شات مصر',
+              senderAvatar: c.peerAvatar || '',
+              count,
+              lastMessage: c.lastMessage || 'رسالة خاصة',
+              lastMessageId: c.lastMessageId,
+              lastSenderId: c.lastSenderId,
+              lastTimestamp: Number(c.lastTimestamp) || Date.now()
+            });
+          });
+        }
+        emit();
+      });
+    } catch {}
+  }
+
+  return () => {
+    if (unsubFirestore) unsubFirestore();
+    if (unsubRtdb) unsubRtdb();
+  };
 }
 
 export function subscribeToUserRecentDirectChats(
@@ -3314,8 +3577,140 @@ export function subscribeToUserRecentDirectChats(
 }
 
 // ==========================================
-// 15. TYPING INDICATOR (Real-time Socket + Cross-tab Broadcast)
+// 15. TYPING INDICATOR (Database-Backed Firestore + RTDB + Real-time Socket)
 // ==========================================
+export async function setPrivateTyping(
+  currentUserId: string,
+  peerId: string,
+  senderName: string,
+  isTyping: boolean,
+  peerSessionId?: string
+): Promise<void> {
+  if (!currentUserId || !peerId) return;
+  const convId = getConversationId(currentUserId, peerId);
+  const now = Date.now();
+
+  // 1. Instant WebSocket + Cross-tab Broadcast
+  realtimeSocket.sendPrivateTyping(currentUserId, senderName, peerId, isTyping, peerSessionId);
+
+  // 2. Realtime Database persistence (auto-clears on disconnect)
+  if (rtdb) {
+    try {
+      const typingRef = ref(rtdb, `private_typing/${convId}/${currentUserId}`);
+      if (isTyping) {
+        await set(typingRef, { isTyping: true, name: senderName, updatedAt: now });
+        try {
+          onDisconnect(typingRef).remove();
+        } catch {}
+      } else {
+        await set(typingRef, { isTyping: false, name: senderName, updatedAt: now });
+      }
+    } catch {}
+  }
+
+  // 3. Firestore persistence on direct_chats/{convId}.typing.{currentUserId}
+  if (db) {
+    try {
+      await setDoc(
+        doc(db, 'direct_chats', convId),
+        {
+          chatId: convId,
+          participants: [currentUserId, peerId].sort(),
+          typing: {
+            [currentUserId]: {
+              isTyping,
+              name: senderName,
+              updatedAt: now
+            }
+          }
+        },
+        { merge: true }
+      );
+    } catch {}
+  }
+}
+
+export function subscribeToPrivateTyping(
+  currentUserId: string,
+  peerId: string,
+  onTypingChange: (isTyping: boolean, senderName?: string) => void
+): () => void {
+  if (!currentUserId || !peerId) {
+    onTypingChange(false);
+    return () => {};
+  }
+  const convId = getConversationId(currentUserId, peerId);
+  let lastUpdatedAt = 0;
+  let currentTyping = false;
+  let currentName = '';
+
+  const applyUpdate = (isTyping: boolean, senderName: string, updatedAt: number) => {
+    const fresh = isTyping && Date.now() - updatedAt < 6000;
+    if (updatedAt >= lastUpdatedAt || !fresh) {
+      lastUpdatedAt = Math.max(lastUpdatedAt, updatedAt);
+      currentTyping = fresh;
+      if (senderName) currentName = senderName;
+      onTypingChange(fresh, currentName);
+    }
+  };
+
+  // 1. Instant WebSocket + BroadcastChannel
+  const unsubSocket = realtimeSocket.subscribeToPrivateTyping(peerId, (isTyping, senderName) => {
+    applyUpdate(isTyping, senderName || '', Date.now());
+  });
+
+  // 2. Firestore onSnapshot on direct_chats/{convId}
+  let unsubFirestore: (() => void) | null = null;
+  if (db) {
+    try {
+      unsubFirestore = onSnapshot(
+        doc(db, 'direct_chats', convId),
+        (docSnap) => {
+          if (!docSnap.exists()) return;
+          const typingMap = docSnap.data()?.typing;
+          const peerEntry = typingMap && typeof typingMap === 'object' ? typingMap[peerId] : null;
+          if (peerEntry && typeof peerEntry === 'object') {
+            applyUpdate(
+              Boolean(peerEntry.isTyping),
+              String(peerEntry.name || ''),
+              Number(peerEntry.updatedAt) || 0
+            );
+          }
+        },
+        () => {}
+      );
+    } catch {}
+  }
+
+  // 3. RTDB onValue listener
+  let unsubRtdb: (() => void) | null = null;
+  if (rtdb) {
+    try {
+      unsubRtdb = onValue(ref(rtdb, `private_typing/${convId}/${peerId}`), (snap) => {
+        const val = snap.val();
+        if (val && typeof val === 'object') {
+          applyUpdate(Boolean(val.isTyping), String(val.name || ''), Number(val.updatedAt) || 0);
+        }
+      });
+    } catch {}
+  }
+
+  // 4. Periodic expiry guard so stale typing states clear automatically after 6s
+  const expiryTimer = setInterval(() => {
+    if (currentTyping && Date.now() - lastUpdatedAt >= 6000) {
+      currentTyping = false;
+      onTypingChange(false, currentName);
+    }
+  }, 2000);
+
+  return () => {
+    unsubSocket();
+    if (unsubFirestore) unsubFirestore();
+    if (unsubRtdb) unsubRtdb();
+    clearInterval(expiryTimer);
+  };
+}
+
 export async function setRoomTyping(
   roomId: string,
   user: User,
@@ -5514,13 +5909,58 @@ export function subscribeToAllRoomLastMessages(
         },
         () => {}
       );
+
+      // Initial backfill: if core rooms lack rooms/{roomId}.lastMessage, read latest message from rooms/{roomId}/messages
+      ['room_egypt', 'room_egypt2'].forEach((roomId) => {
+        const msgsCol = collection(db!, 'rooms', roomId, 'messages');
+        const q = query(msgsCol, orderBy('timestamp', 'desc'), limit(8));
+        getDocs(q)
+          .then((snap) => {
+            for (const docSnap of snap.docs) {
+              const m = docSnap.data();
+              if (!m || m.type === 'system_welcome' || m.isPrivate) continue;
+              const previewContent =
+                m.type === 'gift' && m.gift?.name
+                  ? `🎁 أرسل ${m.gift.name}`
+                  : m.type === 'voice'
+                  ? '🎤 رسالة صوتية'
+                  : m.type === 'image'
+                  ? '📷 صورة'
+                  : m.type === 'video'
+                  ? '🎬 فيديو'
+                  : m.type === 'sticker'
+                  ? `${m.stickerEmoji || ''} ${m.stickerLabel || 'ملصق'}`.trim()
+                  : m.text || m.content || '';
+              if (previewContent) {
+                mergeEntry(roomId, {
+                  senderName: m.userName || m.senderName || 'عضو شات مصر',
+                  content: String(previewContent).slice(0, 120),
+                  type: m.type,
+                  timestamp: Number(m.timestamp) || Date.now()
+                });
+                emit();
+                break;
+              }
+            }
+          })
+          .catch(() => {});
+      });
     } catch {}
   }
+
+  const handleBroadcast = (e: MessageEvent) => {
+    if (e.data?.type === 'ROOM_LAST_MESSAGE_UPDATED' && e.data.roomId && e.data.lastMessage) {
+      mergeEntry(e.data.roomId, e.data.lastMessage);
+      emit();
+    }
+  };
+  liveChatBus?.addEventListener('message', handleBroadcast);
 
   return () => {
     unsubSocket();
     if (unsubRtdb) unsubRtdb();
     if (unsubFirestore) unsubFirestore();
+    liveChatBus?.removeEventListener('message', handleBroadcast);
   };
 }
 

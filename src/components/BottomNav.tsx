@@ -54,8 +54,8 @@ export const BottomNav: React.FC<BottomNavProps> = React.memo(({
           <div className="relative">
             <MessageCircle className="w-4 h-4 sm:w-5 sm:h-5" />
             {unreadChatsCount > 0 && (
-              <span className="absolute -top-1 -right-2 bg-rose-500 text-white text-[8px] font-bold px-1 py-0.1 rounded-full min-w-[14px] text-center shadow-sm">
-                {unreadChatsCount}
+              <span className="absolute -top-1 -right-2 bg-rose-500 text-white text-[8px] font-bold px-1 py-0.1 rounded-full min-w-[14px] text-center shadow-sm tabular-nums">
+                {unreadChatsCount > 99 ? '99+' : unreadChatsCount}
               </span>
             )}
             {currentTab === 'chat' && (

@@ -111,7 +111,8 @@ const directMessagesByConv: Map<string, any[]> = new Map();
 const roomOccupants: Map<string, Map<string, RoomOccupant>> = new Map();
 const usersStore: Map<string, UserProfile> = new Map();
 const userReportsStore: any[] = [];
-const announcedGlobalJoinIds: Set<string> = new Set();
+const lastAnnouncedJoinAt: Map<string, number> = new Map();
+const GLOBAL_JOIN_COOLDOWN_MS = 4000;
 let latestAppUpdateNotice: { version: string; message: string; pushedBy: string; timestamp: number } | null = null;
 const socketToUser: Map<WebSocket, { userId: string; sessionId?: string; roomId?: string }> = new Map();
 // Global map of connected sockets by userId
@@ -358,17 +359,20 @@ wss.on('connection', (ws: WebSocket) => {
             socketToUser.set(ws, { userId: user.id, sessionId: user.sessionId, roomId: prevInfo?.roomId });
             connectedUsers.set(user.id, { ws, user: merged, lastSeen: Date.now() });
 
-            // Broadcast instant Global Join notification once per registered non-guest user session
+            // Broadcast instant Global Join notification for registered non-guest users (with 4s reconnect cooldown)
             const cleanName = typeof merged.name === 'string' ? merged.name.trim() : '';
             const isRegisteredRealUser =
               !merged.isGuest &&
               cleanName.length >= 2 &&
               !cleanName.startsWith('زائر_') &&
               cleanName !== 'ضيف عربي';
-            if (isRegisteredRealUser && !announcedGlobalJoinIds.has(merged.id)) {
-              announcedGlobalJoinIds.add(merged.id);
+            const nowMs = Date.now();
+            const lastJoinMs = lastAnnouncedJoinAt.get(merged.id) || 0;
+            if (isRegisteredRealUser && nowMs - lastJoinMs > GLOBAL_JOIN_COOLDOWN_MS) {
+              lastAnnouncedJoinAt.set(merged.id, nowMs);
               broadcastToAll({
                 type: 'GLOBAL_USER_JOINED',
+                eventId: `join_${nowMs}_${merged.id}`,
                 user: {
                   id: merged.id,
                   name: cleanName,
@@ -480,8 +484,33 @@ wss.on('connection', (ws: WebSocket) => {
           // Broadcast global presence
           broadcastToAll({
             type: 'GLOBAL_PRESENCE_UPDATE',
-            users: getGlobalOnlineUsers()
+            users: getGlobalOnlineUsers(),
+            onlineCount: Math.max(1, connectedUsers.size)
           });
+
+          // Announce room entry globally if not recently announced (ensures room-level joins are visible everywhere)
+          const cleanJoinName = typeof user.name === 'string' ? user.name.trim() : '';
+          const isValidRoomJoiner =
+            !user.isGuest &&
+            cleanJoinName.length >= 2 &&
+            !cleanJoinName.startsWith('زائر_') &&
+            cleanJoinName !== 'ضيف عربي';
+          const joinNow = Date.now();
+          const lastRoomJoinAnnounce = lastAnnouncedJoinAt.get(user.id) || 0;
+          if (isValidRoomJoiner && joinNow - lastRoomJoinAnnounce > GLOBAL_JOIN_COOLDOWN_MS) {
+            lastAnnouncedJoinAt.set(user.id, joinNow);
+            broadcastToAll({
+              type: 'GLOBAL_USER_JOINED',
+              eventId: `join_${joinNow}_${user.id}`,
+              user: {
+                id: user.id,
+                name: cleanJoinName,
+                avatar: user.avatar,
+                role: user.role,
+                vipBadge: user.vipBadge
+              }
+            }, ws);
+          }
 
           console.log(`[Join] User ${user.name} (${user.id}) joined ${roomId}. Room count: ${occupantsList.length}`);
           break;
@@ -593,7 +622,7 @@ wss.on('connection', (ws: WebSocket) => {
           });
 
           // Update & broadcast latest room message summary for lobby room cards
-          if (completeMsg.type !== 'system_welcome') {
+          if (completeMsg.type !== 'system_welcome' && !completeMsg.isPrivate) {
             const previewContent =
               completeMsg.type === 'gift' && completeMsg.gift?.name
                 ? `🎁 أرسل ${completeMsg.gift.name}`
@@ -1210,6 +1239,17 @@ wss.on('connection', (ws: WebSocket) => {
 
       if (userId) {
         connectedUsers.delete(userId);
+        // Check if user still has another open socket; if not, allow next login to trigger Global Join banner cleanly
+        let hasOtherSocket = false;
+        wss.clients.forEach((client) => {
+          if (client !== ws && client.readyState === WebSocket.OPEN) {
+            const cInfo = socketToUser.get(client);
+            if (cInfo?.userId === userId) hasOtherSocket = true;
+          }
+        });
+        if (!hasOtherSocket) {
+          lastAnnouncedJoinAt.delete(userId);
+        }
       }
 
       broadcastToAll({
