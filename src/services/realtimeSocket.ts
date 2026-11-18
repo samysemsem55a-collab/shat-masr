@@ -57,10 +57,11 @@ class RealtimeSocketManager {
   private allRoomLockListeners: Set<(locks: Record<string, boolean>) => void> = new Set();
   private latestRoomLocks: Record<string, boolean> = {};
   private statusListeners: Set<(connected: boolean) => void> = new Set();
+  private connectionStateListeners: Set<(state: 'connected' | 'reconnecting' | 'disconnected') => void> = new Set();
   private cumulativeVisitorsListeners: Set<(count: number) => void> = new Set();
   private adminReportListeners: Set<(report: any) => void> = new Set();
   private callSignalListeners: Set<(signal: any) => void> = new Set();
-  private consentSignalListeners: Set<(signal: { kind: 'request' | 'response'; payload: any }) => void> = new Set();
+  private consentSignalListeners: Set<(signal: { kind: 'request' | 'response' | 'cancel'; payload: any }) => void> = new Set();
   private luxuryGiftListeners: Map<string, Set<(giftData: any) => void>> = new Map();
   private roomPurgedListeners: Map<string, Set<() => void>> = new Map();
   private globalJoinListeners: Set<(user: { id: string; name: string; avatar?: string; role?: string; vipBadge?: string }) => void> = new Set();
@@ -69,11 +70,28 @@ class RealtimeSocketManager {
   private appUpdateNoticeListeners: Set<(notice: { version: string; message: string; pushedBy: string; timestamp: number }) => void> = new Set();
   private latestAppUpdateNotice: { version: string; message: string; pushedBy: string; timestamp: number } | null = null;
   private ticTacToeSignalListeners: Set<(signal: any) => void> = new Set();
+  private liveAudioStageListeners: Map<string, Set<(raisedHandUserIds: string[]) => void>> = new Map();
   private isConnectedState = false;
+  private connectionState: 'connected' | 'reconnecting' | 'disconnected' = 'disconnected';
+  private reconnectAttempts = 0;
   private latestCumulativeVisitorsCount = 15480;
 
   isConnected(): boolean {
     return this.isConnectedState && this.socket !== null && this.socket.readyState === WebSocket.OPEN;
+  }
+
+  getConnectionState(): 'connected' | 'reconnecting' | 'disconnected' {
+    return this.connectionState;
+  }
+
+  subscribeToConnectionState(
+    callback: (state: 'connected' | 'reconnecting' | 'disconnected') => void
+  ): () => void {
+    callback(this.connectionState);
+    this.connectionStateListeners.add(callback);
+    return () => {
+      this.connectionStateListeners.delete(callback);
+    };
   }
 
   subscribeToConnectionStatus(callback: (connected: boolean) => void): () => void {
@@ -85,6 +103,12 @@ class RealtimeSocketManager {
   }
 
   private notifyStatusListeners(status: boolean) {
+    this.connectionState = status ? 'connected' : (this.reconnectAttempts > 0 ? 'reconnecting' : 'disconnected');
+    this.connectionStateListeners.forEach((cb) => {
+      try {
+        cb(this.connectionState);
+      } catch {}
+    });
     this.statusListeners.forEach((cb) => {
       try {
         cb(status);
@@ -130,6 +154,7 @@ class RealtimeSocketManager {
         console.log('[RealtimeSocket] Connected to real-time server 🚀');
         this.isConnecting = false;
         this.isConnectedState = true;
+        this.reconnectAttempts = 0;
         this.notifyStatusListeners(true);
 
         // Register user
@@ -153,15 +178,17 @@ class RealtimeSocketManager {
       };
 
       this.socket.onclose = () => {
-        console.log('[RealtimeSocket] Connection closed. Reconnecting in 2s...');
         this.socket = null;
         this.isConnecting = false;
         this.isConnectedState = false;
+        this.reconnectAttempts += 1;
+        // Exponential backoff: 1s -> 2s -> 4s -> 8s -> 16s -> capped at 30s
+        const backoffMs = Math.min(30000, 1000 * Math.pow(2, Math.min(5, this.reconnectAttempts - 1)));
         this.notifyStatusListeners(false);
         clearTimeout(this.reconnectTimer);
         this.reconnectTimer = setTimeout(() => {
           this.connect();
-        }, 2000);
+        }, backoffMs);
       };
 
       this.socket.onerror = (err) => {
@@ -497,6 +524,13 @@ class RealtimeSocketManager {
       case 'TICTACTOE_SIGNAL': {
         if (action.signal) {
           this.ticTacToeSignalListeners.forEach(cb => cb(action.signal));
+        }
+        break;
+      }
+
+      case 'LIVE_AUDIO_STAGE_UPDATE': {
+        if (action.roomId && Array.isArray(action.raisedHandUserIds)) {
+          this.liveAudioStageListeners.get(action.roomId)?.forEach((cb) => cb(action.raisedHandUserIds));
         }
         break;
       }
@@ -915,14 +949,28 @@ class RealtimeSocketManager {
     };
   }
 
-  sendConsentSignal(data: { kind: 'request' | 'response'; targetUserId: string; payload: any }) {
+  sendConsentSignal(data: { kind: 'request' | 'response' | 'cancel'; targetUserId: string; payload: any }) {
     this.send('CONSENT_SIGNAL', data);
   }
 
-  subscribeToConsentSignals(callback: (signal: { kind: 'request' | 'response'; payload: any }) => void): () => void {
+  subscribeToConsentSignals(callback: (signal: { kind: 'request' | 'response' | 'cancel'; payload: any }) => void): () => void {
     this.consentSignalListeners.add(callback);
     return () => {
       this.consentSignalListeners.delete(callback);
+    };
+  }
+
+  sendLiveAudioRaiseHand(roomId: string, userId: string, raised: boolean) {
+    this.send('LIVE_AUDIO_RAISE_HAND', { roomId, userId, raised });
+  }
+
+  subscribeToLiveAudioStage(roomId: string, callback: (raisedHandUserIds: string[]) => void): () => void {
+    if (!this.liveAudioStageListeners.has(roomId)) {
+      this.liveAudioStageListeners.set(roomId, new Set());
+    }
+    this.liveAudioStageListeners.get(roomId)!.add(callback);
+    return () => {
+      this.liveAudioStageListeners.get(roomId)?.delete(callback);
     };
   }
 

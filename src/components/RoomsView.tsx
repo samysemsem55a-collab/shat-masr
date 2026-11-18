@@ -20,9 +20,13 @@ import {
   Pin,
   Image as ImageIcon,
   X,
-  Trophy
+  Trophy,
+  MoreVertical,
+  Share2,
+  Radio,
+  Mic
 } from 'lucide-react';
-import { Room, User, ForumPost, ForumComment, SharedRoomMission } from '../types/chat';
+import { Room, User, ForumPost, ForumComment, SharedRoomMission, Friend } from '../types/chat';
 import {
   subscribeToForumPosts,
   createForumPost,
@@ -33,11 +37,17 @@ import {
   deleteForumPost,
   subscribeToSharedRoomMissions,
   contributeToSharedRoomMission,
-  claimSharedMissionReward
+  claimSharedMissionReward,
+  recordForumPostView,
+  subscribeToFriendsList,
+  sendDirectMessage
 } from '../services/firebase';
 import { isUserAdminOrOwner } from '../data/seedData';
 import { getRankDisplayMeta } from '../utils/userRanks';
 import { AvatarWithFrame } from './AvatarWithFrame';
+import { StoriesBar } from './StoriesBar';
+import { compressImageFile } from '../utils/imageCompression';
+import { VerifiedBadge } from '../utils/verifiedBadge';
 import { sounds } from '../utils/soundEffects';
 import { toast } from 'sonner';
 
@@ -106,7 +116,7 @@ const ForumCommentsModal: React.FC<{
     <div
       dir="rtl"
       onClick={onClose}
-      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-slate-900/45 backdrop-blur-sm p-0 sm:p-4 animate-in fade-in"
+      className="fixed inset-0 z-[200] flex items-end sm:items-center justify-center bg-slate-900/45 backdrop-blur-sm p-0 sm:p-4 animate-in fade-in"
     >
       <div
         onClick={(e) => e.stopPropagation()}
@@ -276,7 +286,7 @@ const ForumLikesModal: React.FC<{
     <div
       dir="rtl"
       onClick={onClose}
-      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-slate-900/45 backdrop-blur-sm p-0 sm:p-4 animate-in fade-in"
+      className="fixed inset-0 z-[200] flex items-end sm:items-center justify-center bg-slate-900/45 backdrop-blur-sm p-0 sm:p-4 animate-in fade-in"
     >
       <div
         onClick={(e) => e.stopPropagation()}
@@ -467,6 +477,7 @@ function areForumPostsEqual(a: ForumPost[], b: ForumPost[]): boolean {
       p1.text !== p2.text ||
       p1.likesCount !== p2.likesCount ||
       p1.commentsCount !== p2.commentsCount ||
+      (p1.viewsCount || 0) !== (p2.viewsCount || 0) ||
       (p1.likedBy || []).length !== (p2.likedBy || []).length ||
       Object.keys(p1.likedUsers || {}).length !== Object.keys(p2.likedUsers || {}).length ||
       p1.authorName !== p2.authorName ||
@@ -516,6 +527,9 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
   onOpenUserProfile,
 }) => {
   const [forumPosts, setForumPosts] = useState<ForumPost[]>([]);
+  const [forumLimit, setForumLimit] = useState<number>(20);
+  const [roomCategoryFilter, setRoomCategoryFilter] = useState<'all' | 'general' | 'live_audio'>('all');
+  const [isComposerExpanded, setIsComposerExpanded] = useState(false);
   const [postText, setPostText] = useState('');
   const [postImageUrl, setPostImageUrl] = useState<string>('');
   const [isPublishing, setIsPublishing] = useState(false);
@@ -525,6 +539,11 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
   const [lightboxImageUrl, setLightboxImageUrl] = useState<string | null>(null);
   const [sharedMissions, setSharedMissions] = useState<SharedRoomMission[]>([]);
   const [showMobileMissions, setShowMobileMissions] = useState(false);
+  const [expandedPostIds, setExpandedPostIds] = useState<Record<string, boolean>>({});
+  const [openPostMenuId, setOpenPostMenuId] = useState<string | null>(null);
+  const [confirmDeletePostId, setConfirmDeletePostId] = useState<string | null>(null);
+  const [sharePostModal, setSharePostModal] = useState<ForumPost | null>(null);
+  const [friendsList, setFriendsList] = useState<Friend[]>([]);
   const forumImageInputRef = React.useRef<HTMLInputElement>(null);
   const isStrictOwner = isUserAdminOrOwner(currentUser);
 
@@ -537,28 +556,72 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
     [forumPosts, likesModalPostId]
   );
 
-  // Strict requirement: Keep ONLY غرفة مصر 1 (room_egypt) and غرفة مصر 2 (room_egypt2)
-  const coreEgyptRooms = useMemo(
-    () => rooms.filter(r => r.id === 'room_egypt' || r.id === 'room_egypt2'),
-    [rooms]
-  );
+  // Include غرفة مصر 1, غرفة مصر 2, and any active Live Audio rooms
+  const visibleRooms = useMemo(() => {
+    const core = rooms.filter(
+      (r) =>
+        r.id === 'room_egypt' ||
+        r.id === 'room_egypt2' ||
+        r.roomType === 'live_audio' ||
+        r.category === 'live_audio'
+    );
+    if (roomCategoryFilter === 'general') {
+      return core.filter((r) => r.roomType !== 'live_audio' && r.category !== 'live_audio');
+    }
+    if (roomCategoryFilter === 'live_audio') {
+      return core.filter((r) => r.roomType === 'live_audio' || r.category === 'live_audio');
+    }
+    return core;
+  }, [rooms, roomCategoryFilter]);
+
   const onlineUserIds = useMemo(() => new Set(onlineUsers.map(u => u.id)), [onlineUsers]);
   const isOwner = isUserAdminOrOwner(currentUser) || currentUser.role === 'admin' || currentUser.role === 'super_admin';
 
   useEffect(() => {
     const unsubForum = subscribeToForumPosts((nextPosts) => {
       setForumPosts(prev => (areForumPostsEqual(prev, nextPosts) ? prev : nextPosts));
-    });
+    }, forumLimit);
+    return () => unsubForum();
+  }, [forumLimit]);
+
+  useEffect(() => {
     const unsubMissions = subscribeToSharedRoomMissions((nextMissions) => {
       setSharedMissions(prev => (areSharedMissionsEqual(prev, nextMissions) ? prev : nextMissions));
     });
-    return () => {
-      unsubForum();
-      unsubMissions();
-    };
+    return () => unsubMissions();
   }, []);
 
-  const handleSelectForumImage = (e: React.ChangeEvent<HTMLInputElement>) => {
+  useEffect(() => {
+    if (!currentUser?.id) return;
+    return subscribeToFriendsList(currentUser.id, setFriendsList);
+  }, [currentUser?.id]);
+
+  // Record views once per session for visible posts
+  useEffect(() => {
+    if (!currentUser?.id || forumPosts.length === 0) return;
+    forumPosts.slice(0, 20).forEach((post) => {
+      if (post.id) {
+        recordForumPostView(post.id, currentUser.id).catch(() => {});
+      }
+    });
+  }, [forumPosts, currentUser?.id]);
+
+  // @username mention autocomplete match in composer
+  const mentionSuggestions = useMemo(() => {
+    const match = postText.match(/@([^\s@]*)$/);
+    if (!match) return [];
+    const term = match[1].toLowerCase();
+    return onlineUsers
+      .filter((u) => u.id !== currentUser.id && (!term || u.name.toLowerCase().includes(term) || (u.username || '').toLowerCase().includes(term)))
+      .slice(0, 5);
+  }, [postText, onlineUsers, currentUser.id]);
+
+  const handleInsertMention = (mentionName: string) => {
+    const safeTag = mentionName.replace(/\s+/g, '_');
+    setPostText((prev) => prev.replace(/@([^\s@]*)$/, `@${safeTag} `));
+  };
+
+  const handleSelectForumImage = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file) return;
@@ -566,29 +629,13 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
       toast.error('يرجى اختيار ملف صورة صالح');
       return;
     }
-    const reader = new FileReader();
-    reader.onload = () => {
-      const img = new Image();
-      img.onload = () => {
-        const maxDim = 960;
-        let { width, height } = img;
-        if (width > maxDim || height > maxDim) {
-          const ratio = Math.min(maxDim / width, maxDim / height);
-          width = Math.round(width * ratio);
-          height = Math.round(height * ratio);
-        }
-        const canvas = document.createElement('canvas');
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext('2d');
-        ctx?.drawImage(img, 0, 0, width, height);
-        setPostImageUrl(canvas.toDataURL('image/jpeg', 0.8));
-      };
-      if (typeof reader.result === 'string') {
-        img.src = reader.result;
-      }
-    };
-    reader.readAsDataURL(file);
+    try {
+      const compressed = await compressImageFile(file, { maxWidth: 800, maxBytes: 195 * 1024 });
+      setPostImageUrl(compressed);
+      setIsComposerExpanded(true);
+    } catch {
+      toast.error('تعذر ضغط ومعالجة الصورة المختارة');
+    }
   };
 
   const handlePublishPost = async (e: React.FormEvent) => {
@@ -603,6 +650,7 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
       await createForumPost(currentUser, postText.trim() || '📸 مشاركة صورة', postImageUrl || undefined);
       setPostText('');
       setPostImageUrl('');
+      setIsComposerExpanded(false);
       sounds.playMessageSent();
       contributeToSharedRoomMission('forum', currentUser.id, 1);
       toast.success('تم نشر مشاركتك في منتدى التعارف بنجاح ✨');
@@ -639,7 +687,30 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
     toast.success(`مبروك! تم استلام جائزة المهمة الجماعية (+${mission.rewardCoins} كوينز) 🎉`);
   };
 
+  const handleSharePostToFriend = async (friend: Friend, post: ForumPost) => {
+    const targetId = friend.friendId || friend.id;
+    const snippet = (post.text || '').slice(0, 120);
+    await sendDirectMessage(currentUser.id, targetId, {
+      senderId: currentUser.id,
+      senderName: currentUser.name,
+      senderAvatar: currentUser.avatar,
+      senderRole: currentUser.role,
+      senderVipBadge: currentUser.vipBadge,
+      recipientId: targetId,
+      recipientName: friend.name,
+      recipientAvatar: friend.avatar,
+      type: 'private',
+      content: `📌 مشاركة منشور من "${post.authorName}":\n${snippet}${post.text.length > 120 ? '...' : ''}`,
+      timestamp: Date.now(),
+      status: 'sent',
+    });
+    sounds.playMessageSent();
+    setSharePostModal(null);
+    toast.success(`تمت مشاركة المنشور مع ${friend.name} في الخاص ✉️`);
+  };
+
   const filteredPosts = useMemo(() => {
+    const now = Date.now();
     const base = forumPosts.filter((post) => {
       if (forumFilter === 'male') return post.authorGender === 'male';
       if (forumFilter === 'female') return post.authorGender === 'female';
@@ -655,8 +726,11 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
         return (b.pinnedAt || b.createdAt) - (a.pinnedAt || a.createdAt);
       }
       if (forumFilter === 'trend') {
-        const aScore = (a.likesCount || 0) + (a.commentsCount || 0);
-        const bScore = (b.likesCount || 0) + (b.commentsCount || 0);
+        const aIs24h = now - (a.createdAt || 0) <= 86400000 ? 1 : 0;
+        const bIs24h = now - (b.createdAt || 0) <= 86400000 ? 1 : 0;
+        if (bIs24h !== aIs24h) return bIs24h - aIs24h;
+        const aScore = (a.likesCount || 0) * 2 + (a.commentsCount || 0) * 3 + (a.viewsCount || 0);
+        const bScore = (b.likesCount || 0) * 2 + (b.commentsCount || 0) * 3 + (b.viewsCount || 0);
         if (bScore !== aScore) return bScore - aScore;
       }
       return (b.createdAt || 0) - (a.createdAt || 0);
@@ -664,20 +738,20 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
   }, [forumPosts, forumFilter, onlineUserIds, currentUser.id]);
 
   return (
-    <div className="pb-24 pt-2.5 px-2.5 sm:px-4 max-w-6xl mx-auto space-y-3" dir="rtl">
-      {/* 1. Compact Live Stats & Quick Controls Strip */}
-      <div className={`grid grid-cols-2 ${isStrictOwner ? 'sm:grid-cols-3' : 'sm:grid-cols-4'} gap-2`}>
+    <div className="pb-24 pt-2 px-2.5 sm:px-4 max-w-6xl mx-auto space-y-2" dir="rtl">
+      {/* 1. Compact Live Stats Strip */}
+      <div className="grid grid-cols-2 gap-2">
         {/* Online Users */}
         <div
           onClick={onOpenOnlineUsers}
-          className="relative overflow-hidden px-3 py-2 rounded-xl bg-gradient-to-br from-teal-100 via-emerald-100 to-cyan-100 border border-teal-300/90 text-teal-950 shadow-xs flex items-center justify-between cursor-pointer hover:brightness-[0.98] active:scale-[0.98] transition-all"
+          className="px-2.5 py-1.5 rounded-xl bg-gradient-to-br from-teal-100 via-emerald-100 to-cyan-100 border border-teal-300/90 text-teal-950 shadow-xs flex items-center justify-between cursor-pointer hover:brightness-[0.98] active:scale-[0.98] transition-all"
         >
           <div className="text-right min-w-0">
             <div className="flex items-center gap-1 text-[10px] font-black text-teal-800">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-pulse"></span>
               <span className="truncate">المتصلون الآن</span>
             </div>
-            <div className="text-sm sm:text-base font-black text-teal-950 tabular-nums leading-tight">
+            <div className="text-sm font-black text-teal-950 tabular-nums leading-tight">
               {totalActiveUsersCount} <span className="text-[9.5px] font-bold text-teal-800">عضو</span>
             </div>
           </div>
@@ -687,13 +761,13 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
         </div>
 
         {/* Real-time Cumulative Visitors (Firestore totalVisitors) */}
-        <div className="relative overflow-hidden px-3 py-2 rounded-xl bg-gradient-to-br from-amber-100 via-rose-100 to-orange-100 border border-amber-300/90 text-amber-950 shadow-xs flex items-center justify-between">
+        <div className="px-2.5 py-1.5 rounded-xl bg-gradient-to-br from-amber-100 via-rose-100 to-orange-100 border border-amber-300/90 text-amber-950 shadow-xs flex items-center justify-between">
           <div className="text-right min-w-0">
             <div className="flex items-center gap-1 text-[10px] font-black text-rose-800">
               <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></span>
               <span className="truncate">إجمالي الزوار</span>
             </div>
-            <div className="text-sm sm:text-base font-black text-amber-950 tabular-nums leading-tight">
+            <div className="text-sm font-black text-amber-950 tabular-nums leading-tight">
               {(cumulativeVisitorsCount || 15480).toLocaleString()} <span className="text-[9.5px] font-bold text-rose-800">زائر</span>
             </div>
           </div>
@@ -701,78 +775,114 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
             <Eye className="w-3.5 h-3.5" />
           </div>
         </div>
+      </div>
 
-        {/* Quick Wallet (Hidden completely for Owner) */}
+      {/* Top Horizontal Quick Pills Row — 4 colorful pills fit in one row, zero scroll */}
+      <div
+        dir="rtl"
+        className="flex flex-nowrap gap-2 w-full px-[10px] overflow-hidden"
+      >
         {!isStrictOwner && (
           <button
             type="button"
             onClick={onOpenWallet}
-            className="px-3 py-2 rounded-xl bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-800 font-black text-xs flex items-center justify-between transition active:scale-95 cursor-pointer"
+            className="flex-1 basis-0 min-w-0 h-[38px] rounded-[20px] px-1 bg-[linear-gradient(135deg,#FF9A00,#FF6B00)] text-white text-[12.5px] font-bold whitespace-nowrap overflow-hidden flex items-center justify-center gap-[5px] shadow-sm active:scale-95 transition-transform cursor-pointer"
           >
-            <span>شحن الكوينز 🪙</span>
-            <Coins className="w-4 h-4 text-amber-600" />
+            <span className="text-[16px] leading-none shrink-0" aria-hidden="true">🪙</span>
+            <span className="truncate">شحن الكوينز</span>
           </button>
         )}
 
-        {/* Quick VIP (excluded for Owner), Leaderboard & Missions */}
-        <div className={`flex items-center gap-1.5 ${isStrictOwner ? 'col-span-2 sm:col-span-1' : ''}`}>
-          {onOpenLeaderboard && (
-            <button
-              type="button"
-              onClick={onOpenLeaderboard}
-              className="flex-1 h-full px-2 py-2 rounded-xl bg-gradient-to-r from-amber-50 to-yellow-50 hover:from-amber-100 hover:to-yellow-100 border border-amber-200 text-amber-800 font-black text-xs flex items-center justify-center gap-1 transition active:scale-95 cursor-pointer"
-              title="قائمة الكبار - التوب 10"
-            >
-              <Trophy className="w-3.5 h-3.5 text-amber-600" />
-              <span>الكبار</span>
-            </button>
-          )}
-          {!isStrictOwner && (
-            <button
-              type="button"
-              onClick={onOpenVip}
-              className="flex-1 h-full px-2 py-2 rounded-xl bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 font-black text-xs flex items-center justify-center gap-1 transition active:scale-95 cursor-pointer"
-            >
-              <Crown className="w-3.5 h-3.5 text-amber-500 fill-amber-400" />
-              <span>VIP</span>
-            </button>
-          )}
-          {onOpenMissions && (
-            <button
-              type="button"
-              onClick={onOpenMissions}
-              className="flex-1 h-full px-2 py-2 rounded-xl bg-purple-50 hover:bg-purple-100 border border-purple-200 text-purple-700 font-black text-xs flex items-center justify-center gap-1 transition active:scale-95 cursor-pointer"
-            >
-              <Target className="w-3.5 h-3.5 text-purple-600" />
-              <span>مهامي</span>
-            </button>
-          )}
-        </div>
+        {onOpenLeaderboard && (
+          <button
+            type="button"
+            onClick={onOpenLeaderboard}
+            className="flex-1 basis-0 min-w-0 h-[38px] rounded-[20px] px-1 bg-[linear-gradient(135deg,#8E2DE2,#4A00E0)] text-white text-[12.5px] font-bold whitespace-nowrap overflow-hidden flex items-center justify-center gap-[5px] shadow-sm active:scale-95 transition-transform cursor-pointer"
+            title="قائمة الكبار - التوب 10"
+          >
+            <span className="text-[16px] leading-none shrink-0" aria-hidden="true">🏆</span>
+            <span className="truncate">الكبار</span>
+          </button>
+        )}
+
+        {!isStrictOwner && (
+          <button
+            type="button"
+            onClick={onOpenVip}
+            className="flex-1 basis-0 min-w-0 h-[38px] rounded-[20px] px-1 bg-[linear-gradient(135deg,#FFD700,#FFAA00)] text-[#3A2500] text-[12.5px] font-bold whitespace-nowrap overflow-hidden flex items-center justify-center gap-[5px] shadow-sm active:scale-95 transition-transform cursor-pointer"
+          >
+            <span className="text-[16px] leading-none shrink-0" aria-hidden="true">👑</span>
+            <span className="truncate">VIP</span>
+          </button>
+        )}
+
+        {onOpenMissions && (
+          <button
+            type="button"
+            onClick={onOpenMissions}
+            className="flex-1 basis-0 min-w-0 h-[38px] rounded-[20px] px-1 bg-[linear-gradient(135deg,#00C853,#00A651)] text-white text-[12.5px] font-bold whitespace-nowrap overflow-hidden flex items-center justify-center gap-[5px] shadow-sm active:scale-95 transition-transform cursor-pointer"
+          >
+            <span className="text-[16px] leading-none shrink-0" aria-hidden="true">✅</span>
+            <span className="truncate">مهامي</span>
+          </button>
+        )}
       </div>
 
-      {/* 2. Top Compact Horizontal Strip: ONLY غرفة مصر 1 & غرفة مصر 2 */}
-      <div className="bg-white/95 border border-slate-200 rounded-2xl p-2.5 shadow-sm space-y-2">
-        <div className="flex items-center justify-between px-1">
-          <h2 className="text-xs sm:text-sm font-black text-slate-900 flex items-center gap-1.5">
-            <span>🇪🇬 غرف شات مصر العامة</span>
+      {/* 1.5 Interactive 24h Stories Carousel */}
+      <StoriesBar currentUser={currentUser} onOpenUserProfile={onOpenUserProfile} />
+
+      {/* 2. Top Compact Horizontal Strip: غرف شات مصر العامة + Live Audio Rooms */}
+      <div id="home-rooms-section" className="bg-white/95 border border-slate-200 rounded-2xl mt-2 p-2.5 shadow-sm">
+        <div className="flex items-center justify-between gap-2 px-0.5 mb-2">
+          <h2 className="text-xs sm:text-sm font-black text-slate-900 flex items-center gap-1.5 whitespace-nowrap">
+            <span>🇪🇬 غرف شات مصر</span>
             <span className="px-2 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-[10px] font-bold">
               مفتوحة 24/7
             </span>
           </h2>
+        </div>
+
+        {/* Filter Row with Inline Daily Room Missions (single row, no separate line) */}
+        <div
+          dir="rtl"
+          className="flex flex-nowrap items-center gap-1.5 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden mb-2 pl-2"
+        >
+          {[
+            { id: 'all', label: 'الكل' },
+            { id: 'general', label: 'غرف عامة' },
+            { id: 'live_audio', label: 'صوتية مباشرة 🎙️' },
+          ].map((pill) => (
+            <button
+              key={pill.id}
+              type="button"
+              onClick={() => setRoomCategoryFilter(pill.id as any)}
+              className={`h-8 px-3 text-[13px] font-black rounded-lg whitespace-nowrap shrink-0 flex items-center transition cursor-pointer ${
+                roomCategoryFilter === pill.id
+                  ? 'bg-indigo-600 text-white shadow-2xs'
+                  : 'bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200'
+              }`}
+            >
+              {pill.label}
+            </button>
+          ))}
+
           <button
             type="button"
             onClick={() => setShowMobileMissions(prev => !prev)}
-            className="lg:hidden px-2.5 py-1 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-[10.5px] font-black flex items-center gap-1 cursor-pointer"
+            className="lg:hidden h-8 px-3 text-[13px] font-black rounded-lg bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-800 whitespace-nowrap shrink-0 flex items-center gap-1 cursor-pointer"
           >
-            <Target className="w-3 h-3 text-amber-600" />
+            <Target className="w-3.5 h-3.5 text-amber-600 shrink-0" />
             <span>مهام الغرف اليومية</span>
           </button>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-          {coreEgyptRooms.map((room) => {
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-[10px]">
+          {visibleRooms.map((room) => {
             const isEgypt1 = room.id === 'room_egypt';
-            const gradientTheme = isEgypt1
+            const isLiveAudio = room.roomType === 'live_audio' || room.category === 'live_audio';
+            const gradientTheme = isLiveAudio
+              ? 'from-[#4c1d95]/95 via-[#6d28d9]/90 to-[#be185d]/95 border-purple-300/50'
+              : isEgypt1
               ? 'from-[#7c2d12]/95 via-[#991b1b]/90 to-[#b45309]/95 border-amber-300/50'
               : 'from-[#0c4a6e]/95 via-[#1d4ed8]/90 to-[#0f766e]/95 border-sky-300/50';
             const coverBgImage = isEgypt1
@@ -789,7 +899,7 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
               <div
                 key={room.id}
                 onClick={() => onSelectRoom(room)}
-                className={`group relative cursor-pointer overflow-hidden rounded-2xl bg-gradient-to-br ${gradientTheme} border p-3 sm:p-3.5 min-h-[108px] sm:min-h-[120px] text-white shadow-sm hover:shadow-lg hover:brightness-105 active:scale-[0.99] transition-all flex flex-col justify-between gap-2`}
+                className={`group relative cursor-pointer overflow-hidden rounded-2xl bg-gradient-to-br ${gradientTheme} border p-3 min-h-[96px] sm:min-h-[108px] text-white shadow-sm hover:shadow-lg hover:brightness-105 active:scale-[0.99] transition-all flex flex-col justify-between gap-1.5`}
               >
                 {/* Atmospheric Cover Image Layer */}
                 <div
@@ -810,11 +920,17 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
                 <div className="relative z-10 flex items-center justify-between gap-2">
                   <div className="flex items-center gap-2.5 min-w-0">
                     <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-white/20 backdrop-blur-sm border border-white/40 flex items-center justify-center shrink-0 shadow-sm">
-                      {isEgypt1 ? <MessageSquare className="w-4 h-4 sm:w-5 sm:h-5 text-white" /> : <Flame className="w-4 h-4 sm:w-5 sm:h-5 text-white" />}
+                      {isLiveAudio ? <Mic className="w-4 h-4 sm:w-5 sm:h-5 text-white" /> : isEgypt1 ? <MessageSquare className="w-4 h-4 sm:w-5 sm:h-5 text-white" /> : <Flame className="w-4 h-4 sm:w-5 sm:h-5 text-white" />}
                     </div>
                     <div className="min-w-0 text-right">
                       <div className="flex items-center gap-1.5 min-w-0">
                         <h3 className="text-xs sm:text-sm font-black truncate drop-shadow-xs">{room.title}</h3>
+                        {isLiveAudio && (
+                          <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-rose-500 text-white text-[9px] font-black shrink-0 animate-pulse">
+                            <Radio className="w-2.5 h-2.5" />
+                            <span>LIVE 🎙️</span>
+                          </span>
+                        )}
                         {room.isLocked && (
                           <span
                             className="inline-flex items-center justify-center w-4 h-4 rounded-md bg-rose-500/40 border border-rose-200/80 text-amber-100 shrink-0"
@@ -971,55 +1087,100 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
                 className="hidden"
               />
 
-              {/* Post Composer */}
-              <form onSubmit={handlePublishPost} className="space-y-2">
-                <textarea
-                  rows={2}
-                  value={postText}
-                  onChange={(e) => setPostText(e.target.value)}
-                  placeholder="اكتب منشور تعارف، تحية، أو خاطرة جميلة ليراها الجميع..."
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs sm:text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-indigo-500 resize-none"
-                />
-
-                {postImageUrl && (
-                  <div className="relative inline-block rounded-xl overflow-hidden border border-slate-200 bg-slate-50 shadow-xs">
-                    <img src={postImageUrl} alt="معاينة الصورة" className="max-h-36 w-auto object-contain" />
-                    <button
-                      type="button"
-                      onClick={() => setPostImageUrl('')}
-                      className="absolute top-1 left-1 w-6 h-6 rounded-full bg-slate-900/75 text-white flex items-center justify-center hover:bg-rose-600 cursor-pointer"
-                      title="إزالة الصورة"
-                    >
-                      <X className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                )}
-
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => forumImageInputRef.current?.click()}
-                      className="px-2.5 py-1.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 text-[11px] font-black flex items-center gap-1 cursor-pointer transition"
-                    >
-                      <ImageIcon className="w-3.5 h-3.5" />
-                      <span>إضافة صورة</span>
-                    </button>
-                    <div className="hidden sm:flex items-center gap-1.5 text-[11px] text-slate-500">
-                      <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
-                      <span>ينشر باسم: <strong className="text-slate-800">{currentUser.name}</strong></span>
-                    </div>
-                  </div>
+              {/* Compact 1-Line Trigger Expanding to Full Post Composer */}
+              {!isComposerExpanded && !postText && !postImageUrl ? (
+                <div className="flex items-center gap-2">
                   <button
-                    type="submit"
-                    disabled={(!postText.trim() && !postImageUrl) || isPublishing}
-                    className="px-4 py-1.5 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 disabled:opacity-50 text-white text-xs font-black flex items-center gap-1.5 shadow-sm active:scale-95 transition-all cursor-pointer"
+                    type="button"
+                    onClick={() => setIsComposerExpanded(true)}
+                    className="flex-1 text-right bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs sm:text-sm text-slate-500 font-bold transition cursor-text"
                   >
-                    <Send className="w-3.5 h-3.5" />
-                    <span>{isPublishing ? 'جاري النشر...' : 'نشر في المنتدى'}</span>
+                    اكتب حاجة حلوة... شارك خاطرة أو تحية مع الأعضاء ✍️
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => forumImageInputRef.current?.click()}
+                    className="px-3 py-2.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 text-xs font-black flex items-center gap-1 cursor-pointer shrink-0"
+                    title="إرفاق صورة"
+                  >
+                    <ImageIcon className="w-4 h-4" />
+                    <span className="hidden sm:inline">صورة</span>
                   </button>
                 </div>
-              </form>
+              ) : (
+                <form onSubmit={handlePublishPost} className="space-y-2 relative">
+                  <textarea
+                    rows={2}
+                    autoFocus
+                    value={postText}
+                    onChange={(e) => setPostText(e.target.value)}
+                    placeholder="اكتب منشور تعارف، تحية، أو اذكر صديق بـ @..."
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs sm:text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-indigo-500 resize-none"
+                  />
+
+                  {/* @username Autocomplete Dropdown */}
+                  {mentionSuggestions.length > 0 && (
+                    <div className="bg-white border border-indigo-200 rounded-xl shadow-lg p-1.5 space-y-1 z-30">
+                      <span className="text-[10px] font-black text-indigo-600 px-2 block">إشارة إلى عضو متصل:</span>
+                      {mentionSuggestions.map((u) => (
+                        <button
+                          key={u.id}
+                          type="button"
+                          onClick={() => handleInsertMention(u.name)}
+                          className="w-full px-2.5 py-1.5 rounded-lg hover:bg-indigo-50 flex items-center gap-2 text-right text-xs font-bold text-slate-800 cursor-pointer"
+                        >
+                          <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                          <span className="truncate">{u.name}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  {postImageUrl && (
+                    <div className="relative inline-block rounded-xl overflow-hidden border border-slate-200 bg-slate-50 shadow-xs">
+                      <img src={postImageUrl} alt="معاينة الصورة" className="max-h-36 w-auto object-contain" />
+                      <button
+                        type="button"
+                        onClick={() => setPostImageUrl('')}
+                        className="absolute top-1 left-1 w-6 h-6 rounded-full bg-slate-900/75 text-white flex items-center justify-center hover:bg-rose-600 cursor-pointer"
+                        title="إزالة الصورة"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  )}
+
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => forumImageInputRef.current?.click()}
+                        className="px-2.5 py-1.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 text-[11px] font-black flex items-center gap-1 cursor-pointer transition"
+                      >
+                        <ImageIcon className="w-3.5 h-3.5" />
+                        <span>إضافة صورة</span>
+                      </button>
+                      {!postText.trim() && !postImageUrl && (
+                        <button
+                          type="button"
+                          onClick={() => setIsComposerExpanded(false)}
+                          className="px-2.5 py-1.5 rounded-xl bg-slate-100 text-slate-600 text-[11px] font-bold cursor-pointer"
+                        >
+                          طيّ
+                        </button>
+                      )}
+                    </div>
+                    <button
+                      type="submit"
+                      disabled={(!postText.trim() && !postImageUrl) || isPublishing}
+                      className="px-4 py-1.5 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 disabled:opacity-50 text-white text-xs font-black flex items-center gap-1.5 shadow-sm active:scale-95 transition-all cursor-pointer"
+                    >
+                      <Send className="w-3.5 h-3.5" />
+                      <span>{isPublishing ? 'جاري النشر...' : 'نشر في المنتدى'}</span>
+                    </button>
+                  </div>
+                </form>
+              )}
 
               {/* RTL Forum Filter Tabs: الكل (Default) | التريند | الشباب | البنات | المتواجدون الآن */}
               <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 pt-1.5 border-t border-slate-100 text-xs font-bold">
@@ -1132,24 +1293,28 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
                             >
                               {post.authorName}
                             </button>
+                            <VerifiedBadge verified={Boolean(post.authorVerified || post.authorRole === 'owner')} size="sm" />
                             <span className="text-xs">{post.authorCountryFlag || '🇪🇬'}</span>
+                            {isPostAuthorOnline && (
+                              <span className="px-1.5 py-0.2 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-[9px] font-black">
+                                متصل
+                              </span>
+                            )}
                             {authorRankMeta.isPrivileged && (
                               <span className={`text-[9.5px] px-1.5 py-0.5 rounded border font-black ${authorRankMeta.badgeClass}`}>
                                 {authorRankMeta.label}
                               </span>
                             )}
                           </div>
-                          <div className="flex items-center gap-2 text-[10px] text-slate-500 mt-0.5">
-                            <span className={isPostAuthorOnline ? 'text-emerald-600 font-bold' : 'text-slate-400'}>
-                              {isPostAuthorOnline ? '● متصل الآن' : '○ غير متصل'}
-                            </span>
-                            <span>•</span>
+                          <div className="flex items-center gap-2 text-[10px] text-slate-500 mt-0.5 flex-wrap">
                             <span>{formatRelativeArabicTime(post.createdAt)}</span>
+                            <span>•</span>
+                            <span className="font-bold text-slate-600">👁️ شافه {Math.max(1, post.viewsCount || 1)} واحد</span>
                           </div>
                         </div>
                       </div>
 
-                      <div className="flex items-center gap-1 shrink-0">
+                      <div className="flex items-center gap-1 shrink-0 relative">
                         {isOwner && (
                           <button
                             type="button"
@@ -1165,34 +1330,118 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
                             <span>{post.isPinned ? 'مثبت' : 'تثبيت'}</span>
                           </button>
                         )}
-                        {canDelete && (
-                          <button
-                            type="button"
-                            onClick={() => deleteForumPost(post.id)}
-                            className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition cursor-pointer"
-                            title="حذف المنشور"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
+                        <button
+                          type="button"
+                          onClick={() => setOpenPostMenuId((prev) => (prev === post.id ? null : post.id))}
+                          className="p-1.5 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-slate-100 transition cursor-pointer"
+                          title="خيارات المنشور"
+                        >
+                          <MoreVertical className="w-4 h-4" />
+                        </button>
+
+                        {openPostMenuId === post.id && (
+                          <div className="absolute left-0 top-full mt-1 w-44 bg-white border border-slate-200 rounded-xl shadow-xl py-1 z-[100] text-right">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setOpenPostMenuId(null);
+                                setSharePostModal(post);
+                              }}
+                              className="w-full px-3 py-2 text-xs font-bold text-slate-700 hover:bg-indigo-50 hover:text-indigo-700 flex items-center gap-2 cursor-pointer"
+                            >
+                              <Share2 className="w-3.5 h-3.5" />
+                              <span>مشاركة في الخاص</span>
+                            </button>
+                            {canDelete && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setOpenPostMenuId(null);
+                                  setConfirmDeletePostId(post.id);
+                                }}
+                                className="w-full px-3 py-2 text-xs font-bold text-rose-600 hover:bg-rose-50 flex items-center gap-2 cursor-pointer"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                                <span>حذف المنشور 🗑️</span>
+                              </button>
+                            )}
+                          </div>
                         )}
                       </div>
                     </div>
 
-                    {/* Post Body */}
-                    <p className="mt-2 text-xs sm:text-sm text-slate-800 leading-relaxed whitespace-pre-wrap break-words bg-slate-50/70 rounded-xl p-2.5 border border-slate-100">
-                      {post.text}
-                    </p>
+                    {/* Inline Delete Confirmation Banner */}
+                    {confirmDeletePostId === post.id && (
+                      <div className="mt-2 p-2.5 rounded-xl bg-rose-50 border border-rose-200 flex items-center justify-between gap-2 text-xs">
+                        <span className="font-black text-rose-900">هل تريد حذف المنشور؟</span>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              await deleteForumPost(post.id);
+                              setConfirmDeletePostId(null);
+                              toast.success('تم حذف المنشور');
+                            }}
+                            className="px-2.5 py-1 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-black text-[11px] cursor-pointer"
+                          >
+                            تأكيد الحذف
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setConfirmDeletePostId(null)}
+                            className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 text-slate-700 font-bold text-[11px] cursor-pointer"
+                          >
+                            إلغاء
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Post Body with @Mention Highlights & Watch More Toggle (> 180 chars) */}
+                    {(() => {
+                      const rawText = post.text || '';
+                      const isLong = rawText.length > 180;
+                      const isExpanded = Boolean(expandedPostIds[post.id]);
+                      const displayText = isLong && !isExpanded ? `${rawText.slice(0, 180)}...` : rawText;
+                      const parts = displayText.split(/(@[^\s،.!؟]+)/g);
+                      return (
+                        <div className="mt-2 bg-slate-50/70 rounded-xl p-2.5 border border-slate-100">
+                          <p className="text-xs sm:text-sm text-slate-800 leading-relaxed whitespace-pre-wrap break-words">
+                            {parts.map((part, idx) =>
+                              part.startsWith('@') ? (
+                                <span key={idx} className="font-black text-indigo-600">
+                                  {part}
+                                </span>
+                              ) : (
+                                <React.Fragment key={idx}>{part}</React.Fragment>
+                              )
+                            )}
+                          </p>
+                          {isLong && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setExpandedPostIds((prev) => ({ ...prev, [post.id]: !isExpanded }))
+                              }
+                              className="mt-1 text-[11px] font-black text-indigo-600 hover:underline cursor-pointer"
+                            >
+                              {isExpanded ? 'عرض أقل' : 'شاهد المزيد'}
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })()}
 
                     {post.imageUrl && (
                       <div
                         onClick={() => setLightboxImageUrl(post.imageUrl || null)}
-                        className="mt-2 rounded-xl overflow-hidden border border-slate-200/90 bg-slate-100/75 flex items-center justify-center max-h-[250px] sm:max-h-[280px] cursor-zoom-in group relative"
+                        className="mt-2 rounded-xl overflow-hidden border border-slate-200/90 bg-slate-100/75 flex items-center justify-center max-h-[230px] cursor-zoom-in group relative"
                         title="اضغط لتكبير الصورة"
                       >
                         <img
                           src={post.imageUrl}
                           alt="صورة المنشور"
-                          className="w-full h-auto max-h-[250px] sm:max-h-[280px] object-contain mx-auto group-hover:scale-[1.01] transition-transform duration-200"
+                          className="w-full h-auto max-h-[230px] object-contain mx-auto group-hover:scale-[1.01] transition-transform duration-200"
                           loading="lazy"
                         />
                         <span className="absolute bottom-2 left-2 px-2 py-0.5 rounded-lg bg-slate-900/65 text-white text-[10px] font-bold backdrop-blur-xs">
@@ -1201,11 +1450,11 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
                       </div>
                     )}
 
-                    {/* Post Action Buttons: إعجاب ❤️ | قائمة المعجبين | تعليق 💬 | مراسلة خاصة ✉️ */}
-                    <div className="mt-2.5 flex items-center justify-between gap-2 pt-1">
+                    {/* Flush Post Action Bar directly below image/body (Zero Empty Gaps) */}
+                    <div className="mt-1 pt-0.5 flex items-center justify-between gap-1.5">
                       <div className="flex items-center gap-1.5">
                         <div
-                          className={`inline-flex items-center rounded-xl text-xs font-black border overflow-hidden ${
+                          className={`inline-flex items-center rounded-xl text-[11px] font-black border overflow-hidden ${
                             isLikedByMe
                               ? 'bg-rose-100 text-rose-700 border-rose-200'
                               : 'bg-slate-100 text-slate-700 border-slate-200'
@@ -1215,7 +1464,7 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
                             type="button"
                             onClick={() => handleToggleLike(post)}
                             title={isLikedByMe ? 'إلغاء الإعجاب' : 'أعجبني'}
-                            className="px-2.5 py-1.5 hover:bg-rose-200/50 active:scale-95 transition flex items-center cursor-pointer"
+                            className="px-2 py-1 hover:bg-rose-200/50 active:scale-95 transition flex items-center cursor-pointer"
                           >
                             <Heart className={`w-3.5 h-3.5 ${isLikedByMe ? 'fill-rose-500 text-rose-500' : ''}`} />
                           </button>
@@ -1223,7 +1472,7 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
                             type="button"
                             onClick={() => setLikesModalPostId(post.id)}
                             title="عرض قائمة المعجبين"
-                            className="pr-1 pl-2.5 py-1.5 border-r border-slate-200/80 hover:bg-rose-200/40 active:scale-95 transition flex items-center gap-1 cursor-pointer"
+                            className="pr-1 pl-2 py-1 border-r border-slate-200/80 hover:bg-rose-200/40 active:scale-95 transition flex items-center gap-1 cursor-pointer"
                           >
                             <span>إعجاب</span>
                             <span className="tabular-nums">({post.likesCount || 0})</span>
@@ -1233,7 +1482,7 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
                         <button
                           type="button"
                           onClick={() => setCommentsModalPostId(post.id)}
-                          className="px-3 py-1.5 rounded-xl text-xs font-black flex items-center gap-1.5 transition active:scale-95 cursor-pointer bg-slate-100 hover:bg-indigo-50 text-slate-700 hover:text-indigo-700 border border-slate-200"
+                          className="px-2.5 py-1 rounded-xl text-[11px] font-black flex items-center gap-1 transition active:scale-95 cursor-pointer bg-slate-100 hover:bg-indigo-50 text-slate-700 hover:text-indigo-700 border border-slate-200"
                         >
                           <MessageCircle className="w-3.5 h-3.5" />
                           <span>تعليق</span>
@@ -1245,16 +1494,27 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
                         <button
                           type="button"
                           onClick={() => onOpenPrivateChatWith(peerForDm)}
-                          className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-black flex items-center gap-1.5 shadow-xs active:scale-95 transition-all cursor-pointer"
+                          className="px-2 py-1 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-[10.5px] font-black flex items-center gap-1 shadow-xs active:scale-95 transition-all cursor-pointer shrink-0"
                         >
-                          <Mail className="w-3.5 h-3.5" />
-                          <span>مراسلة خاصة ✉️</span>
+                          <Mail className="w-3 h-3" />
+                          <span>مراسلة ✉️</span>
                         </button>
                       )}
                     </div>
                   </div>
                 );
               })}
+
+              {/* 20-Item Pagination Load More Button */}
+              {forumPosts.length >= forumLimit && (
+                <button
+                  type="button"
+                  onClick={() => setForumLimit((prev) => prev + 20)}
+                  className="w-full py-2.5 rounded-2xl bg-white hover:bg-indigo-50 border border-indigo-200 text-indigo-700 text-xs font-black shadow-xs active:scale-98 transition cursor-pointer"
+                >
+                  تحميل المزيد ({forumPosts.length}) ↓
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -1360,11 +1620,59 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
         onOpenUserProfile={onOpenUserProfile}
       />
 
-      {/* Full-Screen Forum Image Lightbox */}
+      {/* Share Forum Post to Friend DM Modal (z-[200]) */}
+      {sharePostModal && (
+        <div
+          dir="rtl"
+          onClick={() => setSharePostModal(null)}
+          className="fixed inset-0 z-[200] flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4 animate-in fade-in"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-sm bg-white border border-slate-200 rounded-3xl p-4 shadow-2xl space-y-3 text-right"
+          >
+            <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+              <div className="flex items-center gap-2">
+                <Share2 className="w-4 h-4 text-indigo-600" />
+                <h3 className="text-sm font-black text-slate-900">مشاركة المنشور مع صديق</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSharePostModal(null)}
+                className="p-1 rounded-full bg-slate-100 text-slate-500 hover:text-slate-900 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="max-h-60 overflow-y-auto space-y-1.5">
+              {friendsList.length === 0 ? (
+                <p className="text-xs text-slate-500 text-center py-6">لا يوجد أصدقاء في قائمتك حالياً للمشاركة معهم.</p>
+              ) : (
+                friendsList.map((f) => (
+                  <button
+                    key={f.friendId || f.id}
+                    type="button"
+                    onClick={() => handleSharePostToFriend(f, sharePostModal)}
+                    className="w-full p-2.5 rounded-2xl bg-slate-50 hover:bg-indigo-50 border border-slate-200 flex items-center justify-between gap-2 text-right cursor-pointer"
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="text-xs font-black text-slate-900 truncate">{f.name}</span>
+                      <span className="text-xs">{f.countryFlag || '🇪🇬'}</span>
+                    </div>
+                    <span className="text-[11px] font-black text-indigo-600 shrink-0">إرسال ✉️</span>
+                  </button>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Full-Screen Forum Image Lightbox (z-[200]) */}
       {lightboxImageUrl && (
         <div
           onClick={() => setLightboxImageUrl(null)}
-          className="fixed inset-0 z-[80] bg-slate-950/90 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in"
+          className="fixed inset-0 z-[200] bg-slate-950/90 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in"
           dir="rtl"
         >
           <button

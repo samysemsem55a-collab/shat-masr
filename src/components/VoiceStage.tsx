@@ -538,7 +538,7 @@ export const VoiceStage: React.FC<VoiceStageProps> = ({
 
       {/* Host Seat Action Modal (Only for Host in User-Created Room) */}
       {selectedSeatAction && selectedSeatAction.user && isHost && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/45 backdrop-blur-sm p-4 animate-in fade-in">
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-slate-900/45 backdrop-blur-sm p-4 animate-in fade-in">
           <div className="w-full max-w-xs bg-white border border-slate-200 rounded-2xl shadow-2xl p-4 text-center space-y-3">
             <div className="flex items-center justify-between border-b border-slate-200 pb-2">
               <span className="text-xs font-black text-amber-600 flex items-center gap-1">

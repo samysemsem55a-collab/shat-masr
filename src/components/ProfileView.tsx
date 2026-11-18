@@ -17,7 +17,16 @@ import {
   Square,
   Image as ImageIcon,
   Moon,
-  Sun
+  Sun,
+  Upload,
+  ZoomIn,
+  MoveHorizontal,
+  MoveVertical,
+  Eye,
+  ShieldCheck,
+  Wifi,
+  VolumeX,
+  Sparkles
 } from 'lucide-react';
 import { User } from '../types/chat';
 import { isUserAdminOrOwner } from '../data/seedData';
@@ -30,8 +39,31 @@ import {
 } from '../utils/userRanks';
 import { AvatarWithFrame } from './AvatarWithFrame';
 import { PWAInstallButton } from './PWAInstallButton';
-import { updateNotificationPreferences, updateUserActivityStatus } from '../services/firebase';
+import {
+  saveUserThemeSettings,
+  updateNotificationPreferences,
+  updateUserActivityStatus
+} from '../services/firebase';
+import { cropBannerToDataUrl } from '../utils/imageCompression';
+import { maskEmail, maskPhone } from '../utils/maskData';
+import { isDataSaverEnabled, setDataSaverEnabled } from '../utils/assetCache';
+import { checkImpersonationAttempt, VerifiedBadge } from '../utils/verifiedBadge';
 import { toast } from 'sonner';
+
+const ZODIAC_SIGNS = [
+  'الحمل ♈',
+  'الثور ♉',
+  'الجوزاء ♊',
+  'السرطان ♋',
+  'الأسد ♌',
+  'العذراء ♍',
+  'الميزان ♎',
+  'العقرب ♏',
+  'القوس ♐',
+  'الجدي ♑',
+  'الدلو ♒',
+  'الحوت ♓'
+];
 
 const FAVORITE_MUSIC_PRESETS = [
   {
@@ -129,16 +161,12 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   onToggleDarkMode,
 }) => {
   const effectiveDarkMode = isDarkMode ?? (typeof document !== 'undefined' && document.documentElement.classList.contains('dark'));
-  const handleToggleDarkMode = () => {
-    if (onToggleDarkMode) {
-      onToggleDarkMode();
-    }
-  };
   const [activeTab, setActiveTab] = useState<'info' | 'appearance' | 'security'>('info');
   const [name, setName] = useState(currentUser.name);
   const [bio, setBio] = useState(currentUser.bio || '');
   const [country, setCountry] = useState(currentUser.country || 'مصر');
   const [countryFlag, setCountryFlag] = useState(currentUser.countryFlag || '🇪🇬');
+  const [zodiacSign, setZodiacSign] = useState(currentUser.zodiacSign || '');
   const [activityStatus, setActivityStatus] = useState<User['status']>(currentUser.status || 'online');
   const [fontPreference, setFontPreference] = useState(currentUser.fontPreference || 'cairo');
   const [selectedWallpaper, setSelectedWallpaper] = useState(currentUser.profileWallpaper || '/assets/wallpapers/nature_nile_sunset.jpg');
@@ -147,6 +175,10 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   const [favoriteMusicUrl, setFavoriteMusicUrl] = useState(currentUser.favoriteMusicUrl || '');
   const [avatarUrl, setAvatarUrl] = useState(currentUser.avatar);
   const [allowPrivateMessages, setAllowPrivateMessages] = useState<boolean>(currentUser.allowPrivateMessages !== false);
+  const [muteJoinNotices, setMuteJoinNotices] = useState<boolean>(Boolean(currentUser.muteJoinNotices));
+  const [dataSaverMode, setDataSaverMode] = useState<boolean>(
+    typeof currentUser.dataSaverMode === 'boolean' ? currentUser.dataSaverMode : isDataSaverEnabled()
+  );
   const previewAudioRef = useRef<HTMLAudioElement | null>(null);
   const [isPreviewPlaying, setIsPreviewPlaying] = useState(false);
   const [notifyDMs, setNotifyDMs] = useState<boolean>(() => {
@@ -166,7 +198,39 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   const [showAvatarModal, setShowAvatarModal] = useState(false);
   const [avatarModalMode, setAvatarModalMode] = useState<'choose' | 'anime'>('choose');
 
+  // Custom Banner Live Preview & Crop Modal State
+  const [bannerCropModal, setBannerCropModal] = useState<{
+    open: boolean;
+    imageSrc: string;
+    zoom: number;
+    offsetX: number;
+    offsetY: number;
+    isApplying: boolean;
+  }>({
+    open: false,
+    imageSrc: '',
+    zoom: 1,
+    offsetX: 0,
+    offsetY: 0,
+    isApplying: false,
+  });
+
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const bannerFileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleToggleDarkMode = () => {
+    const nextDark = !effectiveDarkMode;
+    if (onToggleDarkMode) {
+      onToggleDarkMode();
+    }
+    saveUserThemeSettings(currentUser.id, {
+      isDarkMode: nextDark,
+      chatWallpaper: currentUser.chatWallpaper,
+      fontPreference,
+      muteJoinNotices,
+      dataSaverMode,
+    }).catch(() => {});
+  };
 
   useEffect(() => {
     if (currentUser.status && currentUser.status !== activityStatus) {
@@ -283,32 +347,122 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
     toast.success('تم اختيار صورة الأفتار بنجاح ✨');
   };
 
+  const handleBannerFileSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      toast.error('يرجى اختيار ملف صورة صالح للبانر');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === 'string') {
+        setBannerCropModal({
+          open: true,
+          imageSrc: reader.result,
+          zoom: 1,
+          offsetX: 0,
+          offsetY: 0,
+          isApplying: false,
+        });
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleConfirmBannerCrop = async () => {
+    if (!bannerCropModal.imageSrc || bannerCropModal.isApplying) return;
+    setBannerCropModal((prev) => ({ ...prev, isApplying: true }));
+    try {
+      const { dataUrl: croppedDataUrl } = await cropBannerToDataUrl(
+        bannerCropModal.imageSrc,
+        bannerCropModal.zoom,
+        bannerCropModal.offsetX,
+        bannerCropModal.offsetY,
+        960,
+        300
+      );
+      setProfileBanner(croppedDataUrl);
+      onUpdateUser({ profileBanner: croppedDataUrl });
+      sounds.playMessageSent();
+      toast.success('تم قص وتطبيق بانر البروفايل المخصص بنجاح 🖼️');
+      setBannerCropModal({
+        open: false,
+        imageSrc: '',
+        zoom: 1,
+        offsetX: 0,
+        offsetY: 0,
+        isApplying: false,
+      });
+    } catch {
+      toast.error('تعذر معالجة صورة البانر — يرجى اختيار صورة أخرى');
+      setBannerCropModal((prev) => ({ ...prev, isApplying: false }));
+    }
+  };
+
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
+    const guard = checkImpersonationAttempt(name, currentUser.username, currentUser.role, currentUser.id);
+    if (guard.isImpersonation) {
+      toast.error(guard.reason || 'هذا الاسم غير متاح حالياً');
+      return;
+    }
     sounds.playMessageSent();
+    setDataSaverEnabled(dataSaverMode);
     updateNotificationPreferences(currentUser.id, { directMessages: notifyDMs, gifts: notifyGifts });
     updateUserActivityStatus(currentUser.id, activityStatus);
+    saveUserThemeSettings(currentUser.id, {
+      isDarkMode: effectiveDarkMode,
+      chatWallpaper: currentUser.chatWallpaper,
+      fontPreference,
+      muteJoinNotices,
+      dataSaverMode,
+    }).catch(() => {});
+
+    const allowCustomBannerSave =
+      isVipUser || profileBanner.startsWith('data:image/') || profileBanner.startsWith('http');
+
     onUpdateUser({
-      name,
+      name: name.trim() || currentUser.name,
       bio,
       country,
       countryFlag,
+      zodiacSign,
       status: activityStatus,
       fontPreference,
       profileWallpaper: selectedWallpaper,
       frameStyle: selectedFrame,
-      ...(isVipUser ? { profileBanner, favoriteMusicUrl: favoriteMusicUrl.trim() } : {}),
+      ...(allowCustomBannerSave ? { profileBanner } : {}),
+      ...(isVipUser ? { favoriteMusicUrl: favoriteMusicUrl.trim() } : {}),
       avatar: avatarUrl,
       allowPrivateMessages,
+      muteJoinNotices,
+      dataSaverMode,
       notificationPrefs: { directMessages: notifyDMs, gifts: notifyGifts } as any
     });
-    toast.success('تم حفظ التغييرات وتحديث ملفك الشخصي فوراً ✅');
+    toast.success('تم حفظ كافة التغييرات وتحديث ملفك الشخصي فوراً ✅');
   };
 
+  const hasCustomBannerActive =
+    isVipUser || profileBanner.startsWith('data:image/') || profileBanner.startsWith('http');
+
+  const maskedAccountEmail = (() => {
+    const rawEmail =
+      (currentUser as any).email ||
+      (typeof window !== 'undefined' ? localStorage.getItem('arab_chat_auth_email') || '' : '');
+    return rawEmail ? maskEmail(rawEmail) : 'غير مرتبط';
+  })();
+
+  const maskedAccountPhone = (() => {
+    const rawPhone = (currentUser as any).phoneNumber || (currentUser as any).phone || '';
+    return rawPhone ? maskPhone(rawPhone) : 'غير مرتبط';
+  })();
+
   return (
-    <div className="pb-24 pt-3 px-3 sm:px-4 max-w-2xl mx-auto space-y-4" dir="rtl">
+    <div className="pb-28 pt-3 px-3 sm:px-4 max-w-2xl mx-auto space-y-4" dir="rtl">
       
-      {/* Hidden File Input for Device Upload */}
+      {/* Hidden File Inputs for Avatar & Custom Banner Device Gallery Upload */}
       <input 
         type="file" 
         ref={fileInputRef} 
@@ -316,15 +470,22 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
         accept="image/*" 
         className="hidden" 
       />
+      <input
+        type="file"
+        ref={bannerFileInputRef}
+        onChange={handleBannerFileSelected}
+        accept="image/*"
+        className="hidden"
+      />
 
       {/* Header Profile Hero Card */}
       <div className="relative overflow-hidden rounded-3xl border border-slate-200 shadow-md bg-white">
-        {/* Larger Top Cover Wallpaper or Privileged Custom Banner */}
+        {/* Larger Top Cover Wallpaper or Privileged/Custom Banner */}
         <div
           className="h-40 sm:h-52 w-full overflow-hidden relative"
-          style={isVipUser ? resolveBannerStyle(profileBanner) : undefined}
+          style={hasCustomBannerActive ? resolveBannerStyle(profileBanner) : undefined}
         >
-          {(!isVipUser || !resolveBannerStyle(profileBanner)) && (
+          {(!hasCustomBannerActive || !resolveBannerStyle(profileBanner)) && (
             <img 
               src={selectedWallpaper} 
               alt="Cover" 
@@ -332,6 +493,10 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
             />
           )}
           <div className="absolute inset-0 bg-gradient-to-t from-white dark:from-slate-900 via-white/25 dark:via-slate-900/35 to-black/15" />
+          <div className="absolute top-3 left-3 z-10 inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-slate-900/65 backdrop-blur-sm text-white text-[10.5px] font-black border border-white/20">
+            <Eye className="w-3 h-3 text-amber-300" />
+            <span>زيارات البروفايل: {(currentUser.profileVisitsCount || 0).toLocaleString()}</span>
+          </div>
         </div>
 
         {/* Profile Info Row */}
@@ -352,7 +517,13 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
             <div className="space-y-1 min-w-0">
               <div className="flex items-center gap-1.5 flex-wrap">
                 <h2 className={`text-base sm:text-lg ${rankMeta.nameColorClass}`}>{name}</h2>
+                <VerifiedBadge verified={Boolean(currentUser.verified || currentUser.role === 'owner')} size="md" />
                 <span className="text-base">{countryFlag}</span>
+                {zodiacSign && (
+                  <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-purple-50 text-purple-700 border border-purple-200">
+                    {zodiacSign}
+                  </span>
+                )}
                 <span className={`text-[10px] font-bold border px-2 py-0.5 rounded-full flex items-center gap-1 ${currentStatusMeta.badgeClass}`}>
                   <span className={`w-1.5 h-1.5 rounded-full ${currentStatusMeta.dotClass}`} />
                   <span>{currentStatusMeta.label}</span>
@@ -402,40 +573,45 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
         )}
       </div>
 
-      {/* Simplified Tabs Navigation */}
-      <div className="flex items-center p-1 bg-slate-100 rounded-2xl border border-slate-200">
-        <button
-          onClick={() => setActiveTab('info')}
-          className={`flex-1 py-2 rounded-xl text-xs font-bold transition-all ${
-            activeTab === 'info'
-              ? 'bg-indigo-600 text-white shadow-sm'
-              : 'text-slate-600 hover:text-slate-900'
-          }`}
-        >
-          المعلومات الأساسية 📝
-        </button>
+      {/* Horizontally Scrollable 3 Tabs Navigation (Full-Width Pills, Zero Clipping) */}
+      <div className="overflow-x-auto no-scrollbar -mx-1 px-1">
+        <div className="flex items-center gap-1.5 p-1 bg-slate-100 rounded-2xl border border-slate-200 min-w-max sm:min-w-0 w-full">
+          <button
+            type="button"
+            onClick={() => setActiveTab('info')}
+            className={`flex-1 min-w-[120px] py-2 px-3 rounded-xl text-xs font-black whitespace-nowrap transition-all cursor-pointer ${
+              activeTab === 'info'
+                ? 'bg-indigo-600 text-white shadow-sm'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            المعلومات الأساسية 📝
+          </button>
 
-        <button
-          onClick={() => setActiveTab('appearance')}
-          className={`flex-1 py-2 rounded-xl text-xs font-bold transition-all ${
-            activeTab === 'appearance'
-              ? 'bg-indigo-600 text-white shadow-sm'
-              : 'text-slate-600 hover:text-slate-900'
-          }`}
-        >
-          المظهر والتخصيص 🎨
-        </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('appearance')}
+            className={`flex-1 min-w-[120px] py-2 px-3 rounded-xl text-xs font-black whitespace-nowrap transition-all cursor-pointer ${
+              activeTab === 'appearance'
+                ? 'bg-indigo-600 text-white shadow-sm'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            المظهر والتخصيص 🎨
+          </button>
 
-        <button
-          onClick={() => setActiveTab('security')}
-          className={`flex-1 py-2 rounded-xl text-xs font-bold transition-all ${
-            activeTab === 'security'
-              ? 'bg-indigo-600 text-white shadow-sm'
-              : 'text-slate-600 hover:text-slate-900'
-          }`}
-        >
-          الحساب والأمان 📱
-        </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('security')}
+            className={`flex-1 min-w-[120px] py-2 px-3 rounded-xl text-xs font-black whitespace-nowrap transition-all cursor-pointer ${
+              activeTab === 'security'
+                ? 'bg-indigo-600 text-white shadow-sm'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            الحساب والأمان 📱
+          </button>
+        </div>
       </div>
 
       {/* Main Profile Form */}
@@ -443,7 +619,15 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
 
         {/* TAB 1: Basic Info */}
         {activeTab === 'info' && (
-          <div className="bg-white border border-slate-200 rounded-3xl p-4 sm:p-5 space-y-3.5 shadow-sm">
+          <div key="tab-info" className="bg-white border border-slate-200 rounded-3xl p-4 sm:p-5 space-y-3.5 shadow-sm">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+              <h3 className="text-xs sm:text-sm font-black text-slate-900">المعلومات الأساسية والهوية</h3>
+              <span className="text-[10.5px] font-bold text-indigo-600 flex items-center gap-1">
+                <Eye className="w-3.5 h-3.5" />
+                <span>{(currentUser.profileVisitsCount || 0).toLocaleString()} زيارة</span>
+              </span>
+            </div>
+
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <label className="text-xs font-bold text-slate-700 block mb-1">الاسم المستعار:</label>
@@ -474,28 +658,55 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
               </div>
             </div>
 
-            {/* Activity Status Dropdown (Synced in real-time with Firebase) */}
-            <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200 space-y-1.5">
-              <label
-                htmlFor="profile-activity-status"
-                className="text-xs font-black text-slate-800 flex items-center gap-1.5"
-              >
-                <Activity className="w-4 h-4 text-indigo-600" />
-                <span>حالة النشاط:</span>
-              </label>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {/* Activity Status Dropdown (Synced in real-time with Firebase) */}
+              <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200 space-y-1.5">
+                <label
+                  htmlFor="profile-activity-status"
+                  className="text-xs font-black text-slate-800 flex items-center gap-1.5"
+                >
+                  <Activity className="w-4 h-4 text-indigo-600" />
+                  <span>حالة النشاط:</span>
+                </label>
 
-              <select
-                id="profile-activity-status"
-                value={activityStatus}
-                onChange={(e) => handleStatusChange(e.target.value as User['status'])}
-                className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs sm:text-sm font-bold text-slate-900 focus:outline-none focus:border-indigo-500 shadow-xs cursor-pointer"
-              >
-                {ACTIVITY_STATUS_OPTIONS.map((opt) => (
-                  <option key={opt.value} value={opt.value}>
-                    {opt.emoji} {opt.label}
-                  </option>
-                ))}
-              </select>
+                <select
+                  id="profile-activity-status"
+                  value={activityStatus}
+                  onChange={(e) => handleStatusChange(e.target.value as User['status'])}
+                  className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs sm:text-sm font-bold text-slate-900 focus:outline-none focus:border-indigo-500 shadow-xs cursor-pointer"
+                >
+                  {ACTIVITY_STATUS_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.emoji} {opt.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Zodiac Sign Selector */}
+              <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200 space-y-1.5">
+                <label
+                  htmlFor="profile-zodiac-sign"
+                  className="text-xs font-black text-slate-800 flex items-center gap-1.5"
+                >
+                  <Sparkles className="w-4 h-4 text-purple-600" />
+                  <span>البرج الفلكي:</span>
+                </label>
+
+                <select
+                  id="profile-zodiac-sign"
+                  value={zodiacSign}
+                  onChange={(e) => setZodiacSign(e.target.value)}
+                  className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs sm:text-sm font-bold text-slate-900 focus:outline-none focus:border-purple-500 shadow-xs cursor-pointer"
+                >
+                  <option value="">غير محدد</option>
+                  {ZODIAC_SIGNS.map((sign) => (
+                    <option key={sign} value={sign}>
+                      {sign}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
 
             <div>
@@ -540,7 +751,11 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
 
         {/* TAB 2: Appearance & Customization */}
         {activeTab === 'appearance' && (
-          <div className="bg-white border border-slate-200 rounded-3xl p-4 sm:p-5 space-y-4 shadow-sm">
+          <div key="tab-appearance" className="bg-white border border-slate-200 rounded-3xl p-4 sm:p-5 space-y-4 shadow-sm">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+              <h3 className="text-xs sm:text-sm font-black text-slate-900">المظهر والتخصيص</h3>
+              <span className="text-[10.5px] font-bold text-purple-600">تأثير فوري على التطبيق</span>
+            </div>
             {/* Dark Mode Toggle Setting Card */}
             <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 flex items-center justify-between gap-3">
               <div className="flex items-center gap-2.5 min-w-0">
@@ -692,8 +907,8 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
 
             {/* Privileged VIP / Admin Custom Banner & Favorite Music */}
             <div className="pt-3 border-t border-slate-100 space-y-4">
-              {/* Custom Profile Banner */}
-              <div className="space-y-2">
+              {/* Custom Profile Banner + Gallery Upload with Live Crop Preview */}
+              <div className="space-y-2.5">
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-black text-slate-800 flex items-center gap-1.5">
                     <ImageIcon className="w-3.5 h-3.5 text-amber-500" />
@@ -701,8 +916,48 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                   </label>
                   {!isVipUser && (
                     <span className="text-[10px] text-amber-700 font-bold flex items-center gap-1">
-                      <Lock className="w-2.5 h-2.5" /> حصري لـ VIP والإدارة
+                      <Lock className="w-2.5 h-2.5" /> التدرجات الملكية لـ VIP
                     </span>
+                  )}
+                </div>
+
+                {/* Custom Gallery Upload Button + Live Banner Thumbnail */}
+                <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200 space-y-2.5">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <button
+                      type="button"
+                      onClick={() => bannerFileInputRef.current?.click()}
+                      className="flex-1 min-w-[200px] py-2.5 px-3 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white text-xs font-black flex items-center justify-center gap-2 shadow-sm active:scale-95 transition cursor-pointer"
+                    >
+                      <Upload className="w-4 h-4" />
+                      <span>رفع بانر من الاستوديو + معاينة وقص 📸</span>
+                    </button>
+                    {(profileBanner.startsWith('data:image/') || profileBanner.startsWith('http')) && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setProfileBanner('royal_gold');
+                          onUpdateUser({ profileBanner: 'royal_gold' });
+                          toast.info('تمت استعادة البانر الافتراضي');
+                        }}
+                        className="px-3 py-2 rounded-xl bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 text-[11px] font-black cursor-pointer"
+                      >
+                        إزالة البانر
+                      </button>
+                    )}
+                  </div>
+
+                  {(profileBanner.startsWith('data:image/') || profileBanner.startsWith('http')) && (
+                    <div className="relative rounded-xl overflow-hidden border border-indigo-200 aspect-[16/5] bg-slate-200 shadow-inner">
+                      <img
+                        src={profileBanner}
+                        alt="معاينة البانر المخصص"
+                        className="w-full h-full object-cover"
+                      />
+                      <span className="absolute bottom-1.5 right-2 px-2 py-0.5 rounded-md bg-slate-900/75 text-white text-[9.5px] font-black">
+                        البانر النشط (16:5)
+                      </span>
+                    </div>
                   )}
                 </div>
 
@@ -713,7 +968,10 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                         <button
                           key={preset.id}
                           type="button"
-                          onClick={() => setProfileBanner(preset.id)}
+                          onClick={() => {
+                            setProfileBanner(preset.id);
+                            onUpdateUser({ profileBanner: preset.id });
+                          }}
                           style={{ background: preset.preview }}
                           className={`p-2.5 rounded-xl text-white text-[10.5px] font-black text-center border-2 transition-all cursor-pointer ${
                             profileBanner === preset.id
@@ -737,10 +995,10 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                   <button
                     type="button"
                     onClick={onOpenVip}
-                    className="w-full p-2.5 rounded-xl bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-800 text-xs font-bold flex items-center justify-center gap-1.5"
+                    className="w-full p-2.5 rounded-xl bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-800 text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer"
                   >
                     <Crown className="w-3.5 h-3.5 text-amber-500" />
-                    <span>قم بالترقية لـ VIP لتخصيص بانر ملفك الشخصي</span>
+                    <span>قم بالترقية لـ VIP لفتح التدرجات الحصرية والخلفيات الملكية</span>
                   </button>
                 )}
               </div>
@@ -831,37 +1089,28 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
 
         {/* TAB 3: Security, Notifications & App Settings */}
         {activeTab === 'security' && (
-          <div className="bg-white border border-slate-200 rounded-3xl p-4 sm:p-5 space-y-4 shadow-sm">
-            {/* App Display & Theme Settings Card */}
-            <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2.5 min-w-0">
-                <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 border ${
-                  effectiveDarkMode
-                    ? 'bg-indigo-500/20 border-indigo-400/40 text-amber-300'
-                    : 'bg-indigo-100 border-indigo-200 text-indigo-600'
-                }`}>
-                  {effectiveDarkMode ? <Moon className="w-4 h-4" /> : <Sun className="w-4 h-4" />}
+          <div key="tab-security" className="bg-white border border-slate-200 rounded-3xl p-4 sm:p-5 space-y-4 shadow-sm">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+              <h3 className="text-xs sm:text-sm font-black text-slate-900">الحساب والأمان وإعدادات التنبيه</h3>
+              <ShieldCheck className="w-4 h-4 text-emerald-600" />
+            </div>
+
+            {/* Masked Sensitive Account Info Card */}
+            <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 space-y-2">
+              <h4 className="text-xs font-black text-slate-900 flex items-center gap-1.5">
+                <Lock className="w-3.5 h-3.5 text-indigo-600" />
+                <span>بيانات الحساب المحمية (عرض مقنع للخصوصية)</span>
+              </h4>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                <div className="p-2.5 rounded-xl bg-white border border-slate-200 flex items-center justify-between gap-2">
+                  <span className="text-slate-500 font-bold">البريد الإلكتروني:</span>
+                  <span className="font-mono font-black text-slate-800 dir-ltr">{maskedAccountEmail}</span>
                 </div>
-                <div className="min-w-0">
-                  <h4 className="text-xs font-black text-slate-900">مظهر التطبيق — الوضع الليلي 🌙</h4>
-                  <p className="text-[10.5px] text-slate-500">
-                    {effectiveDarkMode ? 'الثيم الداكن المريح للعين مفعل الآن' : 'تغيير ثيم التطبيق إلى الألوان الداكنة'}
-                  </p>
+                <div className="p-2.5 rounded-xl bg-white border border-slate-200 flex items-center justify-between gap-2">
+                  <span className="text-slate-500 font-bold">رقم الهاتف:</span>
+                  <span className="font-mono font-black text-slate-800 dir-ltr">{maskedAccountPhone}</span>
                 </div>
               </div>
-
-              <button
-                type="button"
-                role="switch"
-                aria-checked={effectiveDarkMode}
-                aria-label="تبديل الوضع الليلي"
-                onClick={handleToggleDarkMode}
-                className={`w-12 h-6.5 rounded-full transition-colors flex items-center p-1 shrink-0 cursor-pointer ${
-                  effectiveDarkMode ? 'bg-indigo-600 justify-end' : 'bg-slate-300 justify-start'
-                }`}
-              >
-                <span className="w-4.5 h-4.5 rounded-full bg-white shadow-md block" />
-              </button>
             </div>
 
             {/* Notification Preferences Card */}
@@ -873,7 +1122,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
 
               <div className="space-y-3">
                 {/* DM Notifications */}
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between gap-2">
                   <div className="text-right">
                     <span className="text-xs font-bold text-slate-800 block">إشعارات الرسائل الخاصة 💬</span>
                     <span className="text-[10px] text-slate-500">تلقي إشعارات فورية عند وصول رسالة خاصة من الأصدقاء</span>
@@ -885,7 +1134,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                       setNotifyDMs(next);
                       updateNotificationPreferences(currentUser.id, { directMessages: next, gifts: notifyGifts });
                     }}
-                    className={`w-11 h-6 rounded-full transition-colors flex items-center p-1 cursor-pointer ${
+                    className={`w-11 h-6 rounded-full transition-colors flex items-center p-1 cursor-pointer shrink-0 ${
                       notifyDMs ? 'bg-emerald-500 justify-end' : 'bg-slate-300 justify-start'
                     }`}
                   >
@@ -894,7 +1143,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                 </div>
 
                 {/* Gift Notifications */}
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between gap-2">
                   <div className="text-right">
                     <span className="text-xs font-bold text-slate-800 block">إشعارات الهدايا الفاخرة 🎁</span>
                     <span className="text-[10px] text-slate-500">تلقي تنبيه واحتفال فور إرسال هدية إلى حسابك</span>
@@ -906,8 +1155,53 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                       setNotifyGifts(next);
                       updateNotificationPreferences(currentUser.id, { directMessages: notifyDMs, gifts: next });
                     }}
-                    className={`w-11 h-6 rounded-full transition-colors flex items-center p-1 cursor-pointer ${
+                    className={`w-11 h-6 rounded-full transition-colors flex items-center p-1 cursor-pointer shrink-0 ${
                       notifyGifts ? 'bg-emerald-500 justify-end' : 'bg-slate-300 justify-start'
+                    }`}
+                  >
+                    <span className="w-4 h-4 rounded-full bg-white shadow-md"></span>
+                  </button>
+                </div>
+
+                {/* Mute Room Join Notices Toggle */}
+                <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-200/70">
+                  <div className="text-right flex items-start gap-2">
+                    <VolumeX className="w-4 h-4 text-slate-500 mt-0.5 shrink-0" />
+                    <div>
+                      <span className="text-xs font-bold text-slate-800 block">كتم تنبيهات دخول الأعضاء للغرف 🔕</span>
+                      <span className="text-[10px] text-slate-500">إخفاء سطر دخول الأعضاء داخل غرف الدردشة العامة</span>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setMuteJoinNotices((prev) => !prev)}
+                    className={`w-11 h-6 rounded-full transition-colors flex items-center p-1 cursor-pointer shrink-0 ${
+                      muteJoinNotices ? 'bg-indigo-600 justify-end' : 'bg-slate-300 justify-start'
+                    }`}
+                  >
+                    <span className="w-4 h-4 rounded-full bg-white shadow-md"></span>
+                  </button>
+                </div>
+
+                {/* Data Saver Mode Toggle */}
+                <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-200/70">
+                  <div className="text-right flex items-start gap-2">
+                    <Wifi className="w-4 h-4 text-sky-600 mt-0.5 shrink-0" />
+                    <div>
+                      <span className="text-xs font-bold text-slate-800 block">وضع توفير البيانات 📶</span>
+                      <span className="text-[10px] text-slate-500">تقليل التحميل المسبق للخلفيات والوسائط على باقات الهاتف</span>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const next = !dataSaverMode;
+                      setDataSaverMode(next);
+                      setDataSaverEnabled(next);
+                      toast.info(next ? 'تم تفعيل وضع توفير البيانات 📶' : 'تم إيقاف وضع توفير البيانات');
+                    }}
+                    className={`w-11 h-6 rounded-full transition-colors flex items-center p-1 cursor-pointer shrink-0 ${
+                      dataSaverMode ? 'bg-sky-600 justify-end' : 'bg-slate-300 justify-start'
                     }`}
                   >
                     <span className="w-4 h-4 rounded-full bg-white shadow-md"></span>
@@ -932,7 +1226,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
               <button
                 type="button"
                 onClick={onLogout}
-                className="w-full py-2.5 rounded-2xl bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 font-bold text-xs flex items-center justify-center gap-2 transition-all active:scale-95"
+                className="w-full py-2.5 rounded-2xl bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 font-bold text-xs flex items-center justify-center gap-2 transition-all active:scale-95 cursor-pointer"
               >
                 <LogOut className="w-4 h-4 text-rose-600" />
                 <span>تسجيل الخروج من الحساب 🚪</span>
@@ -941,20 +1235,165 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
           </div>
         )}
 
-        {/* Global Fast Save Button */}
-        <button
-          type="submit"
-          className="w-full py-3 rounded-2xl bg-indigo-600 hover:bg-indigo-500 text-white font-black text-xs sm:text-sm flex items-center justify-center gap-2 shadow-md active:scale-95 transition-all cursor-pointer"
-        >
-          <Save className="w-4 h-4" />
-          <span>حفظ كافة التغييرات الآن 💾</span>
-        </button>
+        {/* Unified Sticky Bottom Save Button */}
+        <div className="sticky bottom-16 sm:bottom-3 z-40 pt-1">
+          <button
+            type="submit"
+            className="w-full py-3 rounded-2xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-black text-xs sm:text-sm flex items-center justify-center gap-2 shadow-xl active:scale-98 transition-all cursor-pointer"
+          >
+            <Save className="w-4 h-4" />
+            <span>حفظ كافة التغييرات الآن 💾</span>
+          </button>
+        </div>
 
       </form>
 
-      {/* Interactive Avatar Selection Modal */}
+      {/* Custom Banner Live Preview & Interactive 16:5 Crop Modal (z-[200]) */}
+      {bannerCropModal.open && (
+        <div
+          className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-slate-950/65 backdrop-blur-sm animate-fade-in"
+          dir="rtl"
+          onClick={() =>
+            !bannerCropModal.isApplying &&
+            setBannerCropModal((prev) => ({ ...prev, open: false, imageSrc: '' }))
+          }
+        >
+          <div
+            className="w-full max-w-md bg-white rounded-3xl border border-slate-200 p-4 sm:p-5 shadow-2xl space-y-4 text-right"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
+              <div className="flex items-center gap-2">
+                <ImageIcon className="w-5 h-5 text-indigo-600" />
+                <div>
+                  <h3 className="text-sm font-black text-slate-900">معاينة وضبط بانر البروفايل</h3>
+                  <p className="text-[10.5px] text-slate-500">حرّك الصورة وكبّرها لتناسب إطار 16:5</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                disabled={bannerCropModal.isApplying}
+                onClick={() => setBannerCropModal((prev) => ({ ...prev, open: false, imageSrc: '' }))}
+                className="p-1.5 rounded-full bg-slate-100 text-slate-500 hover:text-slate-900 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Live 16:5 Cropping Preview Viewport */}
+            <div className="relative w-full aspect-[16/5] rounded-2xl overflow-hidden border-2 border-indigo-400 bg-slate-900 shadow-inner">
+              <img
+                src={bannerCropModal.imageSrc}
+                alt="معاينة البانر"
+                className="w-full h-full object-cover transition-transform duration-75 select-none pointer-events-none"
+                style={{
+                  transform: `scale(${bannerCropModal.zoom}) translate(${bannerCropModal.offsetX * 0.4}%, ${bannerCropModal.offsetY * 0.4}%)`,
+                  transformOrigin: 'center center',
+                }}
+              />
+              <div className="pointer-events-none absolute inset-0 border border-white/30 rounded-2xl" />
+            </div>
+
+            {/* Zoom, X, Y Controls */}
+            <div className="space-y-3 p-3 rounded-2xl bg-slate-50 border border-slate-200 text-xs">
+              <div className="space-y-1">
+                <div className="flex items-center justify-between font-bold text-slate-700">
+                  <span className="flex items-center gap-1">
+                    <ZoomIn className="w-3.5 h-3.5 text-indigo-600" />
+                    <span>التكبير (Zoom)</span>
+                  </span>
+                  <span className="font-mono">{bannerCropModal.zoom.toFixed(2)}x</span>
+                </div>
+                <input
+                  type="range"
+                  min={1}
+                  max={2.5}
+                  step={0.05}
+                  value={bannerCropModal.zoom}
+                  onChange={(e) =>
+                    setBannerCropModal((prev) => ({ ...prev, zoom: Number(e.target.value) }))
+                  }
+                  className="w-full accent-indigo-600 cursor-pointer"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <div className="flex items-center justify-between font-bold text-slate-700">
+                  <span className="flex items-center gap-1">
+                    <MoveHorizontal className="w-3.5 h-3.5 text-indigo-600" />
+                    <span>الإزاحة الأفقية</span>
+                  </span>
+                  <span className="font-mono">{bannerCropModal.offsetX}%</span>
+                </div>
+                <input
+                  type="range"
+                  min={-50}
+                  max={50}
+                  step={1}
+                  value={bannerCropModal.offsetX}
+                  onChange={(e) =>
+                    setBannerCropModal((prev) => ({ ...prev, offsetX: Number(e.target.value) }))
+                  }
+                  className="w-full accent-indigo-600 cursor-pointer"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <div className="flex items-center justify-between font-bold text-slate-700">
+                  <span className="flex items-center gap-1">
+                    <MoveVertical className="w-3.5 h-3.5 text-indigo-600" />
+                    <span>الإزاحة الرأسية</span>
+                  </span>
+                  <span className="font-mono">{bannerCropModal.offsetY}%</span>
+                </div>
+                <input
+                  type="range"
+                  min={-50}
+                  max={50}
+                  step={1}
+                  value={bannerCropModal.offsetY}
+                  onChange={(e) =>
+                    setBannerCropModal((prev) => ({ ...prev, offsetY: Number(e.target.value) }))
+                  }
+                  className="w-full accent-indigo-600 cursor-pointer"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                disabled={bannerCropModal.isApplying}
+                onClick={handleConfirmBannerCrop}
+                className="flex-1 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-black text-xs shadow-sm active:scale-95 transition cursor-pointer"
+              >
+                {bannerCropModal.isApplying ? 'جاري القص والحفظ...' : 'اعتماد وحفظ البانر ✅'}
+              </button>
+              <button
+                type="button"
+                disabled={bannerCropModal.isApplying}
+                onClick={() =>
+                  setBannerCropModal({
+                    open: false,
+                    imageSrc: '',
+                    zoom: 1,
+                    offsetX: 0,
+                    offsetY: 0,
+                    isApplying: false,
+                  })
+                }
+                className="px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs cursor-pointer"
+              >
+                إلغاء
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Interactive Avatar Selection Modal (z-[200]) */}
       {showAvatarModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm animate-fade-in" dir="rtl">
+        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm animate-fade-in" dir="rtl">
           <div className="relative w-full max-w-sm bg-white rounded-3xl border border-slate-200 p-5 shadow-2xl text-right space-y-4">
             <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
               <div className="flex items-center gap-2 text-indigo-600">

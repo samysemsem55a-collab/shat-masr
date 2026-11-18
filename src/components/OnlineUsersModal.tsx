@@ -15,6 +15,7 @@ import { User } from '../types/chat';
 import { getRankDisplayMeta } from '../utils/userRanks';
 import { AvatarWithFrame } from './AvatarWithFrame';
 import { sounds } from '../utils/soundEffects';
+import { VerifiedBadge } from '../utils/verifiedBadge';
 
 interface OnlineUsersModalProps {
   isOpen: boolean;
@@ -88,7 +89,7 @@ export const OnlineUsersModal: React.FC<OnlineUsersModalProps> = ({
     <div
       dir="rtl"
       onClick={onClose}
-      className="fixed inset-0 z-50 flex justify-start bg-slate-900/45 backdrop-blur-sm animate-in fade-in"
+      className="fixed inset-0 z-[100] flex justify-start bg-slate-900/45 backdrop-blur-sm animate-in fade-in"
     >
       <div
         onClick={(e) => e.stopPropagation()}
@@ -103,11 +104,11 @@ export const OnlineUsersModal: React.FC<OnlineUsersModalProps> = ({
             </div>
             <div className="min-w-0">
               <h3 className="text-[11px] sm:text-xs font-black text-white flex items-center gap-1 truncate">
-                <span className="truncate">{roomTitle ? `متصلو الغرفة` : 'المتصلون الآن'}</span>
+                <span className="truncate">المتصلون الآن ({filteredUsers.length})</span>
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-300 animate-pulse shrink-0"></span>
               </h3>
               <p className="text-[9.5px] text-emerald-100 truncate">
-                {filteredUsers.length} عضو متصل
+                {roomTitle && activeTab === 'room' ? `${roomTitle} • نشط الآن` : `${filteredUsers.length} عضو متصل`}
               </p>
             </div>
           </div>
@@ -235,6 +236,7 @@ export const OnlineUsersModal: React.FC<OnlineUsersModalProps> = ({
                       <span className={`text-[11px] truncate ${rankMeta.nameColorClass}`}>
                         {user.name}
                       </span>
+                      <VerifiedBadge verified={user.verified} size="xs" />
                       <span className="text-[10px] shrink-0">{user.countryFlag || '🇪🇬'}</span>
                     </div>
                     <div className="flex items-center gap-1 text-[9px] text-slate-500 truncate">

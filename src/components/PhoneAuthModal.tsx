@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { User } from '../types/chat';
 import { sounds } from '../utils/soundEffects';
+import { maskPhone } from '../utils/maskData';
 import { 
   setupPhoneRecaptcha, 
   sendFirebasePhoneOtp, 
@@ -154,7 +155,7 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in">
+    <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in">
       <div 
         className="w-full max-w-md bg-gradient-to-b from-slate-900 via-[#0d1527] to-[#070b14] border border-cyan-500/30 rounded-3xl p-5 sm:p-6 shadow-[0_0_50px_rgba(6,182,212,0.15)] relative overflow-hidden"
         onClick={(e) => e.stopPropagation()}
@@ -379,7 +380,7 @@ export const PhoneAuthModal: React.FC<PhoneAuthModalProps> = ({
                 حسابك الآن مؤمّن وموثق رسمياً عبر Firebase Auth برقم:
               </p>
               <div className="font-mono text-emerald-400 font-bold text-sm" dir="ltr">
-                {currentUser.phoneNumber || fullFormattedPhone}
+                {maskPhone(currentUser.phoneNumber || fullFormattedPhone)}
               </div>
             </div>
 

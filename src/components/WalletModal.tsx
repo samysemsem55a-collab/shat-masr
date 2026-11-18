@@ -20,6 +20,7 @@ import { User } from '../types/chat';
 import { isUserAdminOrOwner } from '../data/seedData';
 import { sounds } from '../utils/soundEffects';
 import { submitPaymentRequest, PendingPaymentOrder } from '../services/firebase';
+import { maskPhone, maskTransactionId } from '../utils/maskData';
 
 interface WalletModalProps {
   isOpen: boolean;
@@ -46,7 +47,7 @@ export const WalletModal: React.FC<WalletModalProps> = ({
   
   // Recharge Form State
   const [selectedPackage, setSelectedPackage] = useState<RechargePackage | null>(null);
-  const paymentMethod = 'instapay' as const;
+  const [paymentMethod, setPaymentMethod] = useState<'instapay' | 'vodafone_cash' | 'fawry'>('instapay');
   const [senderPhone, setSenderPhone] = useState<string>('');
   const [senderName, setSenderName] = useState<string>('');
   const [senderReference, setSenderReference] = useState<string>('');
@@ -150,6 +151,12 @@ export const WalletModal: React.FC<WalletModalProps> = ({
 
       const result = await submitPaymentRequest(orderData);
 
+      if (result.duplicate) {
+        setFormError('رقم العملية المرجعي مستخدم من قبل، يرجى التأكد والمحاولة برقم جديد.');
+        setIsSubmittingOrder(false);
+        return;
+      }
+
       const submittedOrder: PendingPaymentOrder = {
         id: result.orderId,
         userId: currentUser.id,
@@ -185,7 +192,7 @@ export const WalletModal: React.FC<WalletModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/45 backdrop-blur-sm p-3 sm:p-4 animate-in fade-in">
+    <div className="fixed inset-0 z-[200] flex items-center justify-center bg-slate-900/45 backdrop-blur-sm p-3 sm:p-4 animate-in fade-in">
       <div className="w-full max-w-lg bg-white border border-amber-200 rounded-3xl overflow-hidden shadow-2xl flex flex-col max-h-[92vh] text-slate-900">
         
         {/* Header Bar */}
@@ -284,8 +291,8 @@ export const WalletModal: React.FC<WalletModalProps> = ({
                   تم إرسال تفاصيل تحويل مبلغ <span className="text-slate-900 font-bold">{lastSubmittedOrder.amount} ج.م</span> لشحن <span className="text-amber-700 font-bold">{lastSubmittedOrder.coins?.toLocaleString()} كوينز</span> إلى إدارة المنصة.
                 </p>
                 <div className="p-2 rounded-xl bg-white border border-amber-200 text-[10.5px] text-amber-900 space-y-1">
-                  <div>📌 <strong>رقم الطلب:</strong> <span className="font-mono">{lastSubmittedOrder.id}</span></div>
-                  <div>📱 <strong>الحساب المحول منه:</strong> {lastSubmittedOrder.senderAccountOrPhone}</div>
+                  <div>📌 <strong>رقم الطلب:</strong> <span className="font-mono">{maskTransactionId(lastSubmittedOrder.id)}</span></div>
+                  <div>📱 <strong>الحساب المحول منه:</strong> <span className="font-mono">{maskPhone(lastSubmittedOrder.senderAccountOrPhone)}</span></div>
                   <div>⚡ <strong>الحالة:</strong> معلق قيد المراجعة (لن يتم إضافة الرصيد إلا بعد تأكيد استلام التحويل)</div>
                 </div>
               </div>
@@ -385,13 +392,44 @@ export const WalletModal: React.FC<WalletModalProps> = ({
                   </button>
                 </div>
 
-                {/* Payment Method Badge */}
-                <div className="flex items-center justify-between px-3 py-2 rounded-xl bg-purple-50 border border-purple-200 text-xs font-bold text-purple-900">
-                  <span className="flex items-center gap-1.5">
-                    <QrCode className="w-3.5 h-3.5 text-purple-600" />
-                    <span>وسيلة التحويل المعتمدة: InstaPay (إنستاباي)</span>
-                  </span>
-                  <Check className="w-3.5 h-3.5 text-emerald-600" />
+                {/* Payment Method Selector */}
+                <div className="space-y-1.5">
+                  <span className="text-[11px] text-slate-700 font-bold block">اختر وسيلة التحويل:</span>
+                  <div className="grid grid-cols-3 gap-1.5 text-[11px] font-bold">
+                    <button
+                      type="button"
+                      onClick={() => setPaymentMethod('instapay')}
+                      className={`py-2 px-2 rounded-xl border transition cursor-pointer ${
+                        paymentMethod === 'instapay'
+                          ? 'bg-purple-600 text-white border-purple-600 shadow-xs'
+                          : 'bg-purple-50 text-purple-900 border-purple-200 hover:bg-purple-100'
+                      }`}
+                    >
+                      InstaPay
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPaymentMethod('vodafone_cash')}
+                      className={`py-2 px-2 rounded-xl border transition cursor-pointer ${
+                        paymentMethod === 'vodafone_cash'
+                          ? 'bg-rose-600 text-white border-rose-600 shadow-xs'
+                          : 'bg-rose-50 text-rose-900 border-rose-200 hover:bg-rose-100'
+                      }`}
+                    >
+                      فودافون كاش
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPaymentMethod('fawry')}
+                      className={`py-2 px-2 rounded-xl border transition cursor-pointer ${
+                        paymentMethod === 'fawry'
+                          ? 'bg-amber-500 text-slate-950 border-amber-500 shadow-xs'
+                          : 'bg-amber-50 text-amber-900 border-amber-200 hover:bg-amber-100'
+                      }`}
+                    >
+                      فوري Fawry
+                    </button>
+                  </div>
                 </div>
 
                 {/* Form Inputs */}
@@ -532,9 +570,20 @@ export const WalletModal: React.FC<WalletModalProps> = ({
                     </div>
 
                     <div className="text-[10.5px] text-slate-600 mt-1 flex flex-wrap gap-2">
-                      <span>الوسيلة: {ord.paymentMethod === 'instapay' ? 'InstaPay' : 'محفظة إلكترونية'}</span>
-                      {ord.senderAccountOrPhone && <span>• المحول: {ord.senderAccountOrPhone}</span>}
-                      {ord.transactionRef && <span>• المرجع: {ord.transactionRef}</span>}
+                      <span>
+                        الوسيلة:{' '}
+                        {ord.paymentMethod === 'instapay'
+                          ? 'InstaPay'
+                          : ord.paymentMethod === 'fawry'
+                          ? 'فوري (Fawry)'
+                          : 'محفظة إلكترونية'}
+                      </span>
+                      {ord.senderAccountOrPhone && (
+                        <span>• المحول: <span className="font-mono">{maskPhone(ord.senderAccountOrPhone)}</span></span>
+                      )}
+                      {ord.transactionRef && (
+                        <span>• المرجع: <span className="font-mono">{maskTransactionId(ord.transactionRef)}</span></span>
+                      )}
                     </div>
 
                     <div className="text-[9.5px] text-slate-400 font-mono mt-1">

@@ -45,7 +45,12 @@ import {
   Sticker,
   Unlock,
   Settings,
-  MessageCircle
+  MessageCircle,
+  Search,
+  Languages,
+  Hand,
+  WifiOff,
+  Ban
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { toast } from 'sonner';
@@ -58,6 +63,8 @@ import { ChatWallpapersModal } from './ChatWallpapersModal';
 import { AvatarWithFrame } from './AvatarWithFrame';
 import { getRankDisplayMeta, hasPrivilegedRank } from '../utils/userRanks';
 import { ANIMATED_INLINE_EMOJIS, InlineRichText } from './InlineRichText';
+import { offlineQueue } from '../services/offlineQueue';
+import { translateChatMessage, buildSmartAssistantReply } from '../utils/translateMessage';
 import { 
   getWallpaperStyleById, 
   ROOM_BACKGROUND_THEMES, 
@@ -79,7 +86,9 @@ import {
   setRoomLockState,
   subscribeToRoomLockState,
   contributeToSharedRoomMission,
-  purgeRoomMessages
+  purgeRoomMessages,
+  submitUserReport,
+  adminUpdateUser
 } from '../services/firebase';
 import { realtimeSocket } from '../services/realtimeSocket';
 import { sounds } from '../utils/soundEffects';
@@ -252,9 +261,45 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
   // Chat Wallpapers Modal State (Select & Purchase)
   const [isWallpapersModalOpen, setIsWallpapersModalOpen] = useState(false);
 
-  // Top Message Type Filter State: 'all' | 'messages' | 'images' | 'gifts'
+  // Top Message Type Filter State & Message Search & Join Mute & Live Audio Stage
   const [messageFilter, setMessageFilter] = useState<'all' | 'messages' | 'images' | 'gifts'>('all');
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [translatedMap, setTranslatedMap] = useState<Record<string, { translated: string; targetLang: string; show: boolean }>>({});
+  const [muteJoinNotices, setMuteJoinNotices] = useState<boolean>(Boolean(currentUser.muteJoinNotices));
   const [showCompactWelcomeBanner, setShowCompactWelcomeBanner] = useState<boolean>(true);
+  const [raisedHandUserIds, setRaisedHandUserIds] = useState<string[]>([]);
+  const [isHandRaised, setIsHandRaised] = useState(false);
+  const isLiveAudioRoom = room.roomType === 'live_audio' || room.category === 'live_audio';
+  const lastSentSpamRef = useRef<{ text: string; ts: number }>({ text: '', ts: 0 });
+
+  useEffect(() => {
+    setMuteJoinNotices(Boolean(currentUser.muteJoinNotices));
+  }, [currentUser.muteJoinNotices]);
+
+  // Subscribe to Live Audio Stage raised hands
+  useEffect(() => {
+    if (!isLiveAudioRoom) return;
+    const unsub = realtimeSocket.subscribeToLiveAudioStage(room.id, (ids) => {
+      setRaisedHandUserIds(ids || []);
+      setIsHandRaised((ids || []).includes(currentUser.id));
+    });
+    return () => unsub();
+  }, [room.id, isLiveAudioRoom, currentUser.id]);
+
+  // Cleanup active voice playback & recorder streams on unmount
+  useEffect(() => {
+    return () => {
+      if (audioPlayerRef.current) {
+        audioPlayerRef.current.pause();
+        audioPlayerRef.current = null;
+      }
+      if (audioStreamRef.current) {
+        audioStreamRef.current.getTracks().forEach((t) => t.stop());
+        audioStreamRef.current = null;
+      }
+    };
+  }, []);
 
   // Auto-hide the room conduct warning banner after 5 seconds (5000ms)
   useEffect(() => {
@@ -547,43 +592,52 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // 3-Second Auto-Dismiss Welcome Toast State (Fade-in / Slide-up) for ANY user entering
-  const [welcomeToast, setWelcomeToast] = useState<{
-    user: { name: string; avatar?: string; vipBadge?: string };
-    state: 'initial' | 'visible' | 'exiting' | 'hidden';
-  }>({
-    user: { name: currentUser.name, avatar: currentUser.avatar, vipBadge: currentUser.vipBadge },
-    state: 'hidden'
-  });
-  const toastTimeoutRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+  // Sequential 1-by-1 Room Join System Notice (5 seconds per user, silent, centered gray text)
+  const [activeJoinNotice, setActiveJoinNotice] = useState<{ id: string; name: string } | null>(null);
+  const joinNoticeQueueRef = useRef<{ id: string; name: string }[]>([]);
+  const processedJoinIdsRef = useRef<Set<string>>(new Set());
+  const joinNoticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const triggerWelcomeToast = (targetUser: { name: string; avatar?: string; vipBadge?: string }) => {
-    // Clear any previous timers
-    toastTimeoutRef.current.forEach(t => clearTimeout(t));
-    toastTimeoutRef.current = [];
-
-    setWelcomeToast({
-      user: targetUser,
-      state: 'initial'
-    });
-
-    // 1. Smooth Fade-in & Slide-up animation
-    const enterTimer = setTimeout(() => {
-      setWelcomeToast(prev => ({ ...prev, state: 'visible' }));
-    }, 40);
-
-    // 2. Smooth Slide-up fade-out start before 3s mark
-    const exitTimer = setTimeout(() => {
-      setWelcomeToast(prev => ({ ...prev, state: 'exiting' }));
-    }, 2550);
-
-    // 3. Exactly 3.0 seconds (3000ms) auto-disappearance
-    const hideTimer = setTimeout(() => {
-      setWelcomeToast(prev => ({ ...prev, state: 'hidden' }));
-    }, 3000);
-
-    toastTimeoutRef.current.push(enterTimer, exitTimer, hideTimer);
+  const advanceJoinQueue = () => {
+    if (joinNoticeTimerRef.current) {
+      clearTimeout(joinNoticeTimerRef.current);
+      joinNoticeTimerRef.current = null;
+    }
+    const next = joinNoticeQueueRef.current.shift() || null;
+    setActiveJoinNotice(next);
+    if (next) {
+      joinNoticeTimerRef.current = setTimeout(() => {
+        advanceJoinQueue();
+      }, 5000);
+    }
   };
+
+  useEffect(() => {
+    joinNoticeQueueRef.current = [];
+    setActiveJoinNotice(null);
+    if (joinNoticeTimerRef.current) {
+      clearTimeout(joinNoticeTimerRef.current);
+      joinNoticeTimerRef.current = null;
+    }
+    return () => {
+      if (joinNoticeTimerRef.current) {
+        clearTimeout(joinNoticeTimerRef.current);
+        joinNoticeTimerRef.current = null;
+      }
+    };
+  }, [room.id]);
+
+  // Clear queue if user mutes join notices
+  useEffect(() => {
+    if (muteJoinNotices) {
+      joinNoticeQueueRef.current = [];
+      setActiveJoinNotice(null);
+      if (joinNoticeTimerRef.current) {
+        clearTimeout(joinNoticeTimerRef.current);
+        joinNoticeTimerRef.current = null;
+      }
+    }
+  }, [muteJoinNotices]);
 
   // Smart Gift Wallet Reminder Toast (< 50% of gift cost)
   const triggerSmartGiftWalletReminder = (giftCost: number, giftName?: string) => {
@@ -625,40 +679,29 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
     return () => window.removeEventListener('shatmasr:gift_attempt', handleGiftAttempt);
   }, [currentUser.coins, currentUser.role, onOpenWallet]);
 
-  // Welcome Toast Lifecycle on room entry for current user (auto-disappears after exactly 3s)
+  // Enqueue sequential silent join notices when another member enters the room
   useEffect(() => {
-    triggerWelcomeToast({
-      name: currentUser.name,
-      avatar: currentUser.avatar,
-      vipBadge: currentUser.vipBadge
-    });
-
-    return () => {
-      toastTimeoutRef.current.forEach(t => clearTimeout(t));
-    };
-  }, [room.id]);
-
-  // Welcome Toast trigger when ANY other user enters the room via system messages
-  const lastProcessedMsgIdRef = useRef<string>('');
-  useEffect(() => {
-    if (messages.length === 0) return;
-    const latest = messages[messages.length - 1];
-    if (latest && latest.id !== lastProcessedMsgIdRef.current) {
-      lastProcessedMsgIdRef.current = latest.id;
+    if (messages.length === 0 || muteJoinNotices) return;
+    for (const msg of messages) {
       if (
-        latest.type === 'system_welcome' &&
-        latest.senderName &&
-        latest.senderId !== currentUser.id &&
-        latest.senderId !== 'system_bot'
+        msg.type === 'system_welcome' &&
+        msg.senderName &&
+        msg.senderId &&
+        msg.senderId !== currentUser.id &&
+        msg.senderId !== 'system_bot' &&
+        !processedJoinIdsRef.current.has(msg.id)
       ) {
-        triggerWelcomeToast({
-          name: latest.senderName,
-          avatar: latest.senderAvatar,
-          vipBadge: latest.senderVipBadge || 'عضو جديد'
-        });
+        processedJoinIdsRef.current.add(msg.id);
+        const ageMs = Date.now() - (msg.timestamp || Date.now());
+        if (ageMs < 15000 && msg.content?.includes('انضم')) {
+          joinNoticeQueueRef.current.push({ id: msg.id, name: msg.senderName });
+        }
       }
     }
-  }, [messages.length]);
+    if (!joinNoticeTimerRef.current && joinNoticeQueueRef.current.length > 0 && !activeJoinNotice) {
+      advanceJoinQueue();
+    }
+  }, [messages, muteJoinNotices, currentUser.id, activeJoinNotice]);
 
   // Close emoji picker on click outside
   useEffect(() => {
@@ -684,21 +727,26 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
     });
   }, [messages]);
 
-  // Filter messages by type (All, Text only, Images only, Gifts only)
+  // Filter messages by type (All, Text only, Images only, Gifts only) + Search query
   const displayedMessages = React.useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
     return uniqueMessages.filter((msg) => {
-      if (messageFilter === 'messages') {
-        return msg.type === 'text' || (!msg.type && !msg.imageUrl && !msg.gift);
+      if (messageFilter === 'messages' && !(msg.type === 'text' || (!msg.type && !msg.imageUrl && !msg.gift))) {
+        return false;
       }
-      if (messageFilter === 'images') {
-        return !!msg.imageUrl || msg.type === 'image';
+      if (messageFilter === 'images' && !(!!msg.imageUrl || msg.type === 'image')) {
+        return false;
       }
-      if (messageFilter === 'gifts') {
-        return msg.type === 'gift' || !!msg.gift;
+      if (messageFilter === 'gifts' && !(msg.type === 'gift' || !!msg.gift)) {
+        return false;
+      }
+      if (q) {
+        const hay = `${msg.content || ''} ${msg.text || ''} ${msg.senderName || ''}`.toLowerCase();
+        if (!hay.includes(q)) return false;
       }
       return true;
     });
-  }, [uniqueMessages, messageFilter]);
+  }, [uniqueMessages, messageFilter, searchQuery]);
 
   // Auto scroll to bottom & sound + vibration notification on new incoming messages + mark incoming private messages as read
   const prevMessagesCountRef = useRef(uniqueMessages.length);
@@ -761,12 +809,19 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
     return () => unsub();
   }, [room.id, room.isPrivate]);
 
-  // Voice recording timer
+  // Voice recording timer (auto-stops at 60 seconds)
   useEffect(() => {
     let timer: ReturnType<typeof setInterval>;
     if (isRecordingVoice) {
       timer = setInterval(() => {
-        setRecordingSeconds(prev => prev + 1);
+        setRecordingSeconds(prev => {
+          const next = prev + 1;
+          if (next >= 60) {
+            toast.info('وصل التسجيل للحد الأقصى (60 ثانية) وتم إيقافه');
+            handleStopVoiceRecordAndSend();
+          }
+          return next;
+        });
       }, 1000);
     } else {
       setRecordingSeconds(0);
@@ -774,13 +829,20 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
     return () => clearInterval(timer);
   }, [isRecordingVoice]);
 
-  // Send Text Message
+  // Send Text Message (2s anti-spam throttle + offline queue + smart @مساعد reply)
   const handleSendText = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     const text = inputText.trim();
     if (!text) return;
 
-    onSendMessage({
+    const now = Date.now();
+    if (lastSentSpamRef.current.text === text && now - lastSentSpamRef.current.ts < 2000) {
+      toast.warning('يرجى الانتظار ثانيتين قبل تكرار نفس الرسالة ⏳');
+      return;
+    }
+    lastSentSpamRef.current = { text, ts: now };
+
+    const msgPayload: Partial<Message> = {
       roomId: room.id,
       senderId: currentUser.id,
       senderName: currentUser.name,
@@ -797,9 +859,41 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
         content: replyingTo.content || replyingTo.text || '',
         type: replyingTo.type
       } : undefined,
-      timestamp: Date.now(),
-      status: 'read'
-    });
+      timestamp: now,
+      status: navigator.onLine === false ? 'pending_offline' : 'read'
+    };
+
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+      const pendingId = `offline_room_${now}_${Math.random().toString(36).slice(2, 6)}`;
+      offlineQueue.enqueue({
+        id: pendingId,
+        targetType: 'room',
+        targetId: room.id,
+        message: { ...(msgPayload as Message), id: pendingId, roomId: room.id, status: 'pending_offline' },
+        queuedAt: now,
+      });
+      toast.info('انقطع الاتصال — تم حفظ الرسالة وسيتم إرسالها تلقائياً عند العودة ⏳');
+    } else {
+      onSendMessage(msgPayload);
+      const assistantReply = buildSmartAssistantReply(text, currentUser.name);
+      if (assistantReply) {
+        setTimeout(() => {
+          onSendMessage({
+            roomId: room.id,
+            senderId: 'system_bot',
+            senderName: 'المساعد الذكي 🤖',
+            senderAvatar: currentUser.avatar,
+            senderRole: 'admin',
+            senderVipBadge: 'مساعد الغرفة',
+            type: 'text',
+            content: assistantReply,
+            text: assistantReply,
+            timestamp: Date.now(),
+            status: 'read',
+          });
+        }, 350);
+      }
+    }
 
     setInputText('');
     if (typeof window !== 'undefined') {
@@ -967,10 +1061,16 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
         audioStreamRef.current = null;
       }
 
+      if (audioBlob.size > 2 * 1024 * 1024) {
+        toast.error('حجم التسجيل الصوتي يتجاوز الحد الأقصى (2 ميجابايت)');
+        return;
+      }
+
       const reader = new FileReader();
       reader.onloadend = () => {
         const base64Audio = reader.result as string;
         sounds.playMessageSent();
+        const cappedDuration = Math.min(60, duration);
         onSendMessage({
           roomId: room.id,
           senderId: currentUser.id,
@@ -980,9 +1080,9 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
           senderVipBadge: currentUser.vipBadge,
           badges: currentUser.badges || ['عضو نشط'],
           type: 'voice',
-          content: `🎤 رسالة صوتية (0:${duration < 10 ? '0' : ''}${duration})`,
+          content: `🎤 رسالة صوتية (0:${cappedDuration < 10 ? '0' : ''}${cappedDuration})`,
           audioUrl: base64Audio,
-          audioDuration: duration,
+          audioDuration: cappedDuration,
           timestamp: Date.now(),
           status: 'read'
         });
@@ -1322,6 +1422,42 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
           <button
             type="button"
             onClick={() => {
+              setIsSearchOpen(prev => !prev);
+              setSearchQuery('');
+            }}
+            className={`h-8 w-8 rounded-xl border flex items-center justify-center active:scale-95 shrink-0 transition cursor-pointer ${
+              isSearchOpen
+                ? 'bg-indigo-600 text-white border-indigo-600'
+                : 'bg-slate-100 hover:bg-slate-200 border-slate-200 text-slate-700'
+            }`}
+            title="بحث في رسائل الغرفة"
+          >
+            <Search className="w-3.5 h-3.5" />
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              const nextMuted = !muteJoinNotices;
+              setMuteJoinNotices(nextMuted);
+              if (onUpdateUser) {
+                onUpdateUser({ ...currentUser, muteJoinNotices: nextMuted });
+              }
+              toast.info(nextMuted ? 'تم كتم إشعارات دخول الأعضاء 🔕' : 'تم تفعيل إشعارات دخول الأعضاء 🔔');
+            }}
+            className={`h-8 w-8 rounded-xl border flex items-center justify-center active:scale-95 shrink-0 transition cursor-pointer ${
+              muteJoinNotices
+                ? 'bg-rose-50 border-rose-200 text-rose-600'
+                : 'bg-slate-100 hover:bg-slate-200 border-slate-200 text-slate-700'
+            }`}
+            title={muteJoinNotices ? 'تفعيل إشعارات الدخول' : 'كتم إشعارات الدخول'}
+          >
+            {muteJoinNotices ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
               sounds.playMessageReceived();
               onOpenOnlineUsers();
             }}
@@ -1554,49 +1690,110 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
         </div>
       </div>
 
-      {/* Speaker Stage removed for clean text-focused public & private rooms */}
+      {/* Search Bar Strip inside Room */}
+      {isSearchOpen && (
+        <div className="bg-white/95 border-b border-slate-200 px-3 py-1.5 flex items-center gap-2 shrink-0 z-20 animate-in slide-in-from-top-1">
+          <Search className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="ابحث بالكلمة المفتاحية أو اسم العضو..."
+            autoFocus
+            className="flex-1 bg-slate-100 border border-slate-200 rounded-xl px-3 py-1 text-xs text-slate-900 focus:outline-none focus:border-indigo-400"
+          />
+          <button
+            type="button"
+            onClick={() => {
+              setIsSearchOpen(false);
+              setSearchQuery('');
+            }}
+            className="p-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 cursor-pointer"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
 
-      {/* 5. Animated Welcome Toast (Modern Light Pill Card) */}
-      {welcomeToast.state !== 'hidden' && (
-        <div 
-          className={`fixed bottom-20 sm:bottom-24 left-1/2 -translate-x-1/2 z-40 pointer-events-none select-none transition-all duration-400 ease-out transform ${
-            welcomeToast.state === 'visible'
-              ? 'opacity-100 translate-y-0 scale-100'
-              : welcomeToast.state === 'initial'
-              ? 'opacity-0 translate-y-6 scale-90'
-              : 'opacity-0 -translate-y-4 scale-95'
-          } max-w-[92vw] px-1`}
-        >
-          <div className="relative overflow-hidden rounded-full p-[1.5px] bg-gradient-to-r from-amber-400 via-pink-500 to-indigo-500 shadow-lg">
-            <div className="px-3 py-1.5 rounded-full bg-white/95 backdrop-blur-xl flex items-center gap-2 text-slate-900 max-w-full">
-              <div className="relative w-6 h-6 rounded-full overflow-hidden border border-amber-400 shrink-0 shadow-xs">
-                {welcomeToast.user.avatar ? (
-                  <img src={welcomeToast.user.avatar} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                ) : (
-                  <div className="w-full h-full bg-gradient-to-tr from-amber-500 to-indigo-600 flex items-center justify-center font-bold text-[10px] text-white">
-                    {welcomeToast.user.name.charAt(0)}
-                  </div>
-                )}
-                <span className="absolute bottom-0 right-0 w-1.5 h-1.5 rounded-full bg-emerald-500 border border-white"></span>
-              </div>
-
-              <div className="flex items-center gap-1 text-[10px] sm:text-xs font-black truncate">
-                <span className="text-amber-500 text-xs shrink-0">✨</span>
-                <span className="text-slate-700 shrink-0">أهلاً بك</span>
-                <span className="text-indigo-700 font-black truncate max-w-[95px] sm:max-w-[130px]">
-                  {welcomeToast.user.name}
-                </span>
-                <span className="text-slate-500 shrink-0">في</span>
-                <span className="text-amber-700 font-bold truncate max-w-[85px] sm:max-w-[115px]">{room.title}</span>
-                <span className="text-pink-500 text-xs shrink-0">🌸</span>
-              </div>
-
-              {welcomeToast.user.vipBadge && (
-                <span className="hidden md:inline-flex px-1.5 py-0.5 rounded-full bg-amber-50 border border-amber-200 text-amber-700 text-[9px] font-bold shrink-0">
-                  {welcomeToast.user.vipBadge}
+      {/* Live Audio Stage (Only for 'live_audio' Voice & Interactive Rooms) */}
+      {isLiveAudioRoom && (
+        <div className="bg-gradient-to-l from-indigo-950 via-slate-900 to-purple-950 text-white border-b border-indigo-500/40 px-3 py-2 shrink-0 z-10 space-y-1.5">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="px-2 py-0.5 rounded-md bg-rose-600 text-white text-[10px] font-black flex items-center gap-1 shrink-0">
+                <span className="w-1.5 h-1.5 rounded-full bg-white animate-ping" />
+                <span>LIVE 🎙️</span>
+              </span>
+              <span className="text-xs font-black truncate">منصة الصوت التفاعلية</span>
+              {raisedHandUserIds.length > 0 && (
+                <span className="px-1.5 py-0.5 rounded bg-amber-500/20 border border-amber-400/40 text-amber-200 text-[10px] font-bold shrink-0">
+                  ✋ {raisedHandUserIds.length} يطلب المايك
                 </span>
               )}
             </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                const next = !isHandRaised;
+                setIsHandRaised(next);
+                realtimeSocket.sendLiveAudioRaiseHand(room.id, currentUser.id, next);
+                toast.info(next ? 'تم رفع يدك لطلب التحدث ✋' : 'تم إنزال يدك');
+              }}
+              className={`px-2.5 py-1 rounded-xl text-[11px] font-black flex items-center gap-1 transition cursor-pointer shrink-0 ${
+                isHandRaised
+                  ? 'bg-amber-400 text-slate-950 shadow-sm'
+                  : 'bg-white/15 hover:bg-white/25 text-white border border-white/20'
+              }`}
+            >
+              <Hand className="w-3.5 h-3.5" />
+              <span>{isHandRaised ? 'تم رفع اليد' : 'رفع اليد'}</span>
+            </button>
+          </div>
+
+          <div className="flex items-center gap-2 overflow-x-auto scrollbar-none pb-0.5">
+            {(room.speakers || []).slice(0, 6).map((seat) => (
+              <div
+                key={seat.seatId}
+                className="flex items-center gap-1.5 px-2 py-1 rounded-xl bg-white/10 border border-white/15 shrink-0"
+              >
+                {seat.user ? (
+                  <>
+                    <AvatarWithFrame user={seat.user} size="xs" />
+                    <span className="text-[10.5px] font-bold max-w-[75px] truncate">{seat.user.name}</span>
+                    {isModerator && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const updated = (room.speakers || []).map((s) =>
+                            s.seatId === seat.seatId ? { ...s, isMuted: !s.isMuted } : s
+                          );
+                          onUpdateSpeakers(updated);
+                        }}
+                        className="p-0.5 rounded bg-white/15 hover:bg-white/25 cursor-pointer"
+                        title={seat.isMuted ? 'إلغاء كتم المتحدث' : 'كتم المتحدث'}
+                      >
+                        {seat.isMuted ? <MicOff className="w-3 h-3 text-rose-400" /> : <Mic className="w-3 h-3 text-emerald-400" />}
+                      </button>
+                    )}
+                  </>
+                ) : (
+                  <span className="text-[10px] text-slate-300 flex items-center gap-1">
+                    <Mic className="w-3 h-3 text-indigo-300" />
+                    <span>مقعد #{seat.seatId}</span>
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Sequential 1-by-1 5-Second Centered Gray Join System Notice (Zero sound / Zero push) */}
+      {activeJoinNotice && !muteJoinNotices && (
+        <div className="flex justify-center py-1 px-3 shrink-0 pointer-events-none select-none z-10 animate-in fade-in">
+          <div className="px-3 py-0.5 rounded-full bg-slate-200/85 backdrop-blur-sm border border-slate-300/80 text-slate-700 text-[11px] font-bold shadow-2xs truncate max-w-[90vw]">
+            ✨ {activeJoinNotice.name} انضم للغرفة
           </div>
         </div>
       )}
@@ -1661,8 +1858,11 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
             );
           }
 
-          // Standard temporary join notice banner (Auto-hides after 5 seconds)
+          // Suppress duplicate chat-feed entry banners if sequential gray join notice handles them
           if (msg.type === 'system_welcome') {
+            if (msg.content?.includes('انضم') && msg.senderId !== 'system_bot') {
+              return null;
+            }
             if (dismissedSystemMsgIds.includes(msg.id)) return null;
             return (
               <motion.div 
@@ -1672,8 +1872,7 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
                 transition={{ duration: 0.2 }}
                 className="flex justify-center my-1"
               >
-                <div className="max-w-[90%] px-3 py-1 rounded-full bg-amber-50/95 border border-amber-200 text-amber-900 text-[10px] sm:text-[11px] font-bold flex items-center gap-1.5 shadow-xs backdrop-blur-sm truncate">
-                  <ShieldAlert className="w-3 h-3 text-amber-600 shrink-0" />
+                <div className="max-w-[90%] px-3 py-1 rounded-full bg-slate-200/85 border border-slate-300/80 text-slate-700 text-[10px] sm:text-[11px] font-bold flex items-center gap-1.5 shadow-xs backdrop-blur-sm truncate">
                   <span className="truncate">{filterInappropriateText(msg.content)}</span>
                 </div>
               </motion.div>
@@ -1994,7 +2193,7 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
                       </span>
                     )}
 
-                    {/* Message Body Text with 1em Inline Animated Emojis */}
+                    {/* Message Body Text with 1em Inline Animated Emojis & 1-Tap Translate */}
                     <span className={`font-bold ${isDarkRoomBg ? 'text-white chat-text-outline-dark' : 'text-slate-950 chat-text-outline-light'}`}>
                       <InlineRichText text={filterInappropriateText(msg.content)} />
                     </span>
@@ -2011,6 +2210,12 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
                     >
                       <Flag className="w-3 h-3 fill-current" />
                     </button>
+
+                    {translatedMap[msg.id]?.show && (
+                      <span className="block mt-1 px-2 py-1 rounded-lg bg-white/90 text-indigo-900 border border-indigo-200 text-[11px] font-semibold [text-shadow:none]">
+                        🌐 ({translatedMap[msg.id].targetLang}): {translatedMap[msg.id].translated}
+                      </span>
+                    )}
                   </p>
                 )}
 
@@ -2093,6 +2298,11 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
                           <CheckCheck className={`w-3 h-3 ${isDarkRoomBg ? 'text-sky-300' : 'text-sky-700'}`} />
                         ) : msg.status === 'sent' ? (
                           <Check className={`w-3 h-3 ${isDarkRoomBg ? 'text-slate-200' : 'text-slate-700'}`} />
+                        ) : msg.status === 'pending_offline' ? (
+                          <span className="inline-flex items-center gap-0.5 text-[9.5px] font-black text-amber-500">
+                            <WifiOff className="w-2.5 h-2.5" />
+                            <span>⏳ جاري الإرسال...</span>
+                          </span>
                         ) : (
                           <Clock className="w-2.5 h-2.5 text-amber-500 animate-spin" />
                         )}
@@ -2115,6 +2325,30 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
                       <Reply className="w-2.5 h-2.5" />
                       <span>رد</span>
                     </button>
+
+                    {msg.content && (!msg.type || msg.type === 'text') && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setTranslatedMap((prev) => {
+                            const cur = prev[msg.id];
+                            if (cur) return { ...prev, [msg.id]: { ...cur, show: !cur.show } };
+                            const res = translateChatMessage(msg.content || msg.text || '');
+                            return { ...prev, [msg.id]: { ...res, show: true } };
+                          });
+                        }}
+                        className={`font-black flex items-center gap-0.5 cursor-pointer ${
+                          isDarkRoomBg
+                            ? 'text-sky-200 hover:text-white chat-text-outline-dark'
+                            : 'text-indigo-700 hover:text-indigo-900 chat-text-outline-light'
+                        }`}
+                        title="ترجمة الرسالة"
+                      >
+                        <Languages className="w-2.5 h-2.5" />
+                        <span>ترجمة</span>
+                      </button>
+                    )}
 
                     {isModerator && (
                       <button
@@ -2189,12 +2423,18 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
         </div>
       )}
 
-      {/* 8. Voice Recording Live Banner */}
+      {/* 8. Voice Recording Live Banner (60s Cap + Soundwave) */}
       {isRecordingVoice && (
-        <div className="bg-red-50 border-t border-red-200 px-3 py-1.5 flex items-center justify-between animate-pulse shrink-0">
+        <div className="bg-red-50 border-t border-red-200 px-3 py-1.5 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-2 text-red-700 text-xs font-bold">
             <span className="w-2 h-2 rounded-full bg-red-500 animate-ping"></span>
-            <span>جاري التسجيل الصوتي... 0:{recordingSeconds < 10 ? '0' : ''}{recordingSeconds}</span>
+            <div className="flex items-center gap-0.5 h-3.5">
+              <span className="w-0.5 h-2 rounded-full bg-red-500 animate-soundwave-1" />
+              <span className="w-0.5 h-3.5 rounded-full bg-red-500 animate-soundwave-2" />
+              <span className="w-0.5 h-2 rounded-full bg-red-500 animate-soundwave-3" />
+              <span className="w-0.5 h-3 rounded-full bg-red-500 animate-soundwave-4" />
+            </div>
+            <span>جاري التسجيل الصوتي... 0:{recordingSeconds < 10 ? '0' : ''}{recordingSeconds} / 01:00</span>
           </div>
           <div className="flex items-center gap-1.5">
             <button
@@ -2317,7 +2557,7 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
 
           {/* Compact Popup Emoji & Stickers Picker Modal */}
           {isEmojiPickerOpen && (
-            <div className="absolute bottom-12 left-0 sm:left-auto sm:right-0 z-50 w-72 sm:w-80 bg-white border border-slate-200 rounded-2xl shadow-2xl p-2.5 space-y-2 animate-in slide-in-from-bottom-2">
+            <div className="absolute bottom-12 left-0 sm:left-auto sm:right-0 z-[100] w-72 sm:w-80 bg-white border border-slate-200 rounded-2xl shadow-2xl p-2.5 space-y-2 animate-in slide-in-from-bottom-2">
               <div className="grid grid-cols-4 gap-1 p-1 bg-slate-100 rounded-xl text-[10.5px] font-bold">
                 <button
                   type="button"
@@ -2444,7 +2684,7 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
       {/* Room Settings & Moderator Control Modal (Light Theme) */}
       {isModeratorPanelOpen && isModerator && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/45 backdrop-blur-sm p-4 animate-in fade-in"
+          className="fixed inset-0 z-[200] flex items-center justify-center bg-slate-900/45 backdrop-blur-sm p-4 animate-in fade-in"
           onClick={() => setIsModeratorPanelOpen(false)}
         >
           <div
@@ -2656,7 +2896,7 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
       {/* Room Background Selector Modal (Room Managers Only) */}
       {isRoomBgModalOpen && isModerator && (
         <div
-          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-slate-900/50 backdrop-blur-sm p-0 sm:p-4 animate-in fade-in"
+          className="fixed inset-0 z-[200] flex items-end sm:items-center justify-center bg-slate-900/50 backdrop-blur-sm p-0 sm:p-4 animate-in fade-in"
           dir="rtl"
           onClick={() => setIsRoomBgModalOpen(false)}
         >
@@ -2835,7 +3075,7 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
 
       {/* Invite Members Copied Toast */}
       {inviteToastOpen && (
-        <div className="fixed top-14 left-1/2 -translate-x-1/2 z-50 bg-emerald-600 text-white text-xs font-bold px-4 py-2 rounded-2xl shadow-2xl flex items-center gap-2 animate-in fade-in">
+        <div className="fixed top-14 left-1/2 -translate-x-1/2 z-[300] bg-emerald-600 text-white text-xs font-bold px-4 py-2 rounded-2xl shadow-2xl flex items-center gap-2 animate-in fade-in">
           <Check className="w-4 h-4" />
           <span>تم نسخ رابط دعوة الغرفة! شاركه مع أصدقائك 👥</span>
         </div>
@@ -2843,7 +3083,7 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
 
       {/* Reaction Users Details Modal (Light Theme) */}
       {reactionUsersModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/45 backdrop-blur-sm animate-fade-in" dir="rtl">
+        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-slate-900/45 backdrop-blur-sm animate-fade-in" dir="rtl">
           <div className="w-full max-w-xs bg-white border border-slate-200 rounded-3xl p-4 shadow-2xl text-right space-y-3">
             <div className="flex items-center justify-between border-b border-slate-200 pb-2">
               <div className="flex items-center gap-2">
@@ -2869,7 +3109,7 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
       {/* Floating Message Action Context Menu (Long-press & Right-click - Light Theme) */}
       {activeContextMenu && (
         <div 
-          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-xs p-4 animate-in fade-in"
+          className="fixed inset-0 z-[200] flex items-center justify-center bg-slate-900/40 backdrop-blur-xs p-4 animate-in fade-in"
           onClick={() => setActiveContextMenu(null)}
         >
           <div 
@@ -2965,6 +3205,82 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
                 <Trash2 className="w-4 h-4 text-red-600" />
                 <span>حذف الرسالة نهائياً (للجميع) 🗑️</span>
               </button>
+            )}
+
+            {/* Quick Report Button */}
+            {activeContextMenu.msg.senderId !== currentUser.id && activeContextMenu.msg.senderId !== 'system_bot' && (
+              <button
+                type="button"
+                onClick={async () => {
+                  const target = activeContextMenu.msg;
+                  setActiveContextMenu(null);
+                  const res = await submitUserReport({
+                    reporterId: currentUser.id,
+                    reporterName: currentUser.name,
+                    reportedUserId: target.senderId,
+                    reportedUserName: target.senderName,
+                    reason: 'مخالفة في الغرفة العامة',
+                    details: (target.content || target.text || '').slice(0, 120),
+                    contextType: 'room',
+                    contextId: room.id,
+                    timestamp: Date.now(),
+                  });
+                  toast.success(
+                    res.autoMuted
+                      ? 'تم إرسال البلاغ وتطبيق الكتم الوقائي تلقائياً 🛡️'
+                      : 'تم إرسال البلاغ للإدارة بنجاح 🚩'
+                  );
+                }}
+                className="w-full px-3 py-2 rounded-xl bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 text-xs font-bold flex items-center gap-2 transition cursor-pointer"
+              >
+                <Flag className="w-4 h-4 text-rose-600" />
+                <span>إبلاغ عن الرسالة / العضو 🚩</span>
+              </button>
+            )}
+
+            {/* Quick Moderator Actions: Mute / Kick / Ban */}
+            {isModerator && activeContextMenu.msg.senderId !== currentUser.id && activeContextMenu.msg.senderId !== 'system_bot' && (
+              <div className="grid grid-cols-3 gap-1.5 pt-1">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const target = activeContextMenu.msg;
+                    setActiveContextMenu(null);
+                    await adminUpdateUser(target.senderId, { isMuted: true });
+                    toast.warning(`تم كتم ${target.senderName} 🔇`);
+                  }}
+                  className="py-1.5 rounded-xl bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-800 text-[11px] font-black flex items-center justify-center gap-1 cursor-pointer"
+                >
+                  <VolumeX className="w-3 h-3" />
+                  <span>كتم</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const target = activeContextMenu.msg;
+                    setActiveContextMenu(null);
+                    handleKickUser(target.senderId, target.senderName);
+                  }}
+                  className="py-1.5 rounded-xl bg-orange-50 hover:bg-orange-100 border border-orange-200 text-orange-800 text-[11px] font-black flex items-center justify-center gap-1 cursor-pointer"
+                >
+                  <ShieldAlert className="w-3 h-3" />
+                  <span>طرد</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const target = activeContextMenu.msg;
+                    setActiveContextMenu(null);
+                    await adminUpdateUser(target.senderId, { isBanned: true });
+                    handleKickUser(target.senderId, target.senderName);
+                    toast.error(`تم حظر ${target.senderName} نهائياً 🚫`);
+                  }}
+                  className="py-1.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-[11px] font-black flex items-center justify-center gap-1 cursor-pointer"
+                >
+                  <Ban className="w-3 h-3" />
+                  <span>حظر</span>
+                </button>
+              </div>
             )}
 
             <button

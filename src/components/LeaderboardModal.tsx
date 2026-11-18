@@ -5,6 +5,7 @@ import { User } from '../types/chat';
 import { subscribeToLeaderboardUsers } from '../services/firebase';
 import { AvatarWithFrame } from './AvatarWithFrame';
 import { getLeaderboardScore, getRankDisplayMeta } from '../utils/userRanks';
+import { VerifiedBadge } from '../utils/verifiedBadge';
 
 interface LeaderboardModalProps {
   isOpen: boolean;
@@ -33,7 +34,7 @@ export const LeaderboardModal: React.FC<LeaderboardModalProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-[105] flex items-center justify-center bg-slate-950/70 backdrop-blur-md p-3 sm:p-4 animate-in fade-in"
+      className="fixed inset-0 z-[200] flex items-center justify-center bg-slate-950/70 backdrop-blur-md p-3 sm:p-4 animate-in fade-in"
       dir="rtl"
       onClick={onClose}
     >
@@ -178,6 +179,7 @@ export const LeaderboardModal: React.FC<LeaderboardModalProps> = ({
                         <span className="text-xs font-black text-white truncate max-w-[140px]">
                           {user.name}
                         </span>
+                        <VerifiedBadge verified={user.verified} size="xs" />
                         {isMe && (
                           <span className="text-[9px] px-1.5 py-0.5 rounded bg-indigo-500/30 text-indigo-200 font-bold">
                             أنت

@@ -43,6 +43,7 @@ export const LuxuryGiftModal: React.FC<LuxuryGiftModalProps> = ({
       'مضيف المجلس 👑'
   );
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [confirmingSend, setConfirmingSend] = useState(false);
 
   const visibleGifts = LUXURY_GIFTS.filter(
     (g) => (g.category || 'luxury') === activeCategory
@@ -51,6 +52,7 @@ export const LuxuryGiftModal: React.FC<LuxuryGiftModalProps> = ({
   useEffect(() => {
     if (!isOpen) return;
     setErrorMsg(null);
+    setConfirmingSend(false);
     if (preselectedRecipient?.name && preselectedRecipient.id !== currentUser.id) {
       setSelectedRecipient(preselectedRecipient.name);
     } else {
@@ -72,7 +74,7 @@ export const LuxuryGiftModal: React.FC<LuxuryGiftModalProps> = ({
         otherRoomUsers.some(u => u.name === preselectedRecipient.name))
   );
 
-  const handleSend = () => {
+  const handleRequestSend = () => {
     if (!isOwner && currentUser.coins < selectedGift.cost) {
       if (currentUser.coins < selectedGift.cost / 2) {
         window.dispatchEvent(
@@ -84,7 +86,10 @@ export const LuxuryGiftModal: React.FC<LuxuryGiftModalProps> = ({
       setErrorMsg(`رصيدك غير كافٍ! تحتاج إلى ${selectedGift.cost - currentUser.coins} كوينز إضافية.`);
       return;
     }
+    setConfirmingSend(true);
+  };
 
+  const handleConfirmSend = () => {
     sounds.playGiftFanfare();
 
     // Trigger explosive celebratory confetti
@@ -99,55 +104,68 @@ export const LuxuryGiftModal: React.FC<LuxuryGiftModalProps> = ({
       otherRoomUsers.find((u) => u.name === selectedRecipient)?.id ||
       speakers.find((s) => s.user?.name === selectedRecipient)?.user?.id;
 
+    setConfirmingSend(false);
     onSendGift(selectedGift, selectedRecipient, targetRecipientId);
     onClose();
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/80 backdrop-blur-sm p-0 sm:p-4 animate-in fade-in">
-      <div className="w-full sm:max-w-lg bg-[#0e1626] border border-slate-700/80 rounded-t-3xl sm:rounded-3xl overflow-hidden shadow-2xl">
+    <div
+      className="fixed inset-0 z-[200] flex items-end sm:items-center justify-center bg-slate-900/60 backdrop-blur-sm p-0 sm:p-4 animate-in fade-in"
+      dir="rtl"
+      onClick={onClose}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          backgroundColor: 'var(--app-surface)',
+          color: 'var(--app-text)',
+          borderColor: 'var(--app-border)',
+        }}
+        className="w-full sm:max-w-lg bg-white border border-slate-200 rounded-t-3xl sm:rounded-3xl overflow-hidden shadow-2xl flex flex-col max-h-[88vh]"
+      >
         
         {/* Header */}
-        <div className="p-4 bg-gradient-to-r from-purple-950/60 via-indigo-950/60 to-pink-950/60 border-b border-slate-800 flex items-center justify-between">
+        <div className="p-4 bg-gradient-to-r from-purple-50 via-indigo-50 to-amber-50 border-b border-slate-200 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-2">
-            <div className="w-9 h-9 rounded-xl bg-pink-500/20 border border-pink-500/40 flex items-center justify-center text-xl">
+            <div className="w-9 h-9 rounded-xl bg-pink-100 border border-pink-200 flex items-center justify-center text-xl">
               🎁
             </div>
             <div>
-              <h3 className="text-base font-black text-white flex items-center gap-1.5">
+              <h3 className="text-base font-black text-slate-900 flex items-center gap-1.5">
                 متجر الهدايا الفاخرة
-                <Sparkles className="w-4 h-4 text-amber-400" />
+                <Sparkles className="w-4 h-4 text-amber-500" />
               </h3>
-              <p className="text-xs text-slate-300">أبهر المجلس بمؤثرات خرافية وشاشة كاملة</p>
+              <p className="text-xs text-slate-600">أبهر المجلس بمؤثرات خرافية وشاشة كاملة</p>
             </div>
           </div>
 
-          <button onClick={onClose} className="p-1.5 rounded-full text-slate-400 hover:text-white bg-slate-800">
+          <button onClick={onClose} className="p-1.5 rounded-full text-slate-500 hover:text-slate-900 bg-slate-100 hover:bg-slate-200">
             <X className="w-4 h-4" />
           </button>
         </div>
 
         {/* Content Body */}
-        <div className="p-4 space-y-4 max-h-[75vh] overflow-y-auto">
+        <div className="p-4 space-y-4 flex-1 overflow-y-auto min-h-0">
           
           {/* User Balance Strip */}
-          <div className="flex items-center justify-between bg-slate-900/90 rounded-2xl p-3 border border-slate-800">
+          <div className="flex items-center justify-between bg-slate-50 rounded-2xl p-3 border border-slate-200">
             <div className="flex items-center gap-2 text-xs">
-              <span className="text-slate-400">رصيدك الحالي:</span>
-              <span className="text-amber-400 font-black text-sm flex items-center gap-1">
+              <span className="text-slate-600 font-bold">رصيدك الحالي:</span>
+              <span className="text-amber-600 font-black text-sm flex items-center gap-1">
                 🪙 {currentUser.coins.toLocaleString()} كوينز
               </span>
             </div>
 
             {isOwner ? (
-              <span className="px-3 py-1 rounded-xl bg-purple-500/20 border border-purple-500/40 text-purple-300 font-bold text-xs flex items-center gap-1">
-                <Crown className="w-3.5 h-3.5 text-amber-400 fill-amber-400" />
-                <span>حساب المالك/المطور: هدايا مجانية ومفتوحة</span>
+              <span className="px-3 py-1 rounded-xl bg-purple-50 border border-purple-200 text-purple-700 font-bold text-xs flex items-center gap-1">
+                <Crown className="w-3.5 h-3.5 text-amber-500 fill-amber-400" />
+                <span>حساب المالك: هدايا مجانية</span>
               </span>
             ) : (
               <button
                 onClick={onOpenWallet}
-                className="px-3 py-1 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-500 text-slate-950 font-black text-xs hover:scale-105 active:scale-95 transition-all shadow-sm"
+                className="px-3 py-1 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-500 text-slate-950 font-black text-xs hover:scale-105 active:scale-95 transition-all shadow-sm cursor-pointer"
               >
                 + شحن سريع
               </button>
@@ -156,13 +174,16 @@ export const LuxuryGiftModal: React.FC<LuxuryGiftModalProps> = ({
 
           {/* Recipient Selector */}
           <div>
-            <label className="text-xs font-bold text-slate-300 block mb-1.5">
+            <label className="text-xs font-bold text-slate-700 block mb-1.5">
               إهداء إلى:
             </label>
             <select
               value={selectedRecipient}
-              onChange={(e) => setSelectedRecipient(e.target.value)}
-              className="w-full bg-[#121c32] border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
+              onChange={(e) => {
+                setSelectedRecipient(e.target.value);
+                setConfirmingSend(false);
+              }}
+              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 focus:outline-none focus:border-indigo-500"
             >
               {preselectedRecipient?.name &&
                 preselectedRecipient.id !== currentUser.id &&
@@ -189,7 +210,7 @@ export const LuxuryGiftModal: React.FC<LuxuryGiftModalProps> = ({
           </div>
 
           {/* Category Tabs */}
-          <div className="grid grid-cols-2 gap-2 p-1 rounded-2xl bg-slate-900 border border-slate-800">
+          <div className="grid grid-cols-2 gap-2 p-1 rounded-2xl bg-slate-100 border border-slate-200">
             <button
               type="button"
               onClick={() => {
@@ -197,11 +218,12 @@ export const LuxuryGiftModal: React.FC<LuxuryGiftModalProps> = ({
                 const firstLux = LUXURY_GIFTS.find((g) => (g.category || 'luxury') === 'luxury');
                 if (firstLux) setSelectedGift(firstLux);
                 setErrorMsg(null);
+                setConfirmingSend(false);
               }}
               className={`py-2 px-3 rounded-xl text-xs font-black flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
                 activeCategory === 'luxury'
                   ? 'bg-gradient-to-r from-amber-500 to-yellow-500 text-slate-950 shadow-sm'
-                  : 'text-slate-300 hover:text-white'
+                  : 'text-slate-600 hover:text-slate-900'
               }`}
             >
               <span>💎</span>
@@ -214,11 +236,12 @@ export const LuxuryGiftModal: React.FC<LuxuryGiftModalProps> = ({
                 const firstInteractive = LUXURY_GIFTS.find((g) => g.category === 'interactive');
                 if (firstInteractive) setSelectedGift(firstInteractive);
                 setErrorMsg(null);
+                setConfirmingSend(false);
               }}
               className={`py-2 px-3 rounded-xl text-xs font-black flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
                 activeCategory === 'interactive'
                   ? 'bg-gradient-to-r from-pink-600 via-purple-600 to-indigo-600 text-white shadow-sm'
-                  : 'text-slate-300 hover:text-white'
+                  : 'text-slate-600 hover:text-slate-900'
               }`}
             >
               <span>🎆</span>
@@ -228,7 +251,7 @@ export const LuxuryGiftModal: React.FC<LuxuryGiftModalProps> = ({
 
           {/* Luxury Gifts Grid */}
           <div>
-            <label className="text-xs font-bold text-slate-300 block mb-1.5">
+            <label className="text-xs font-bold text-slate-700 block mb-1.5">
               {activeCategory === 'interactive'
                 ? 'هدايا تفاعلية تملأ شاشة الغرفة للجميع:'
                 : 'اختر هديتك:'}
@@ -242,20 +265,21 @@ export const LuxuryGiftModal: React.FC<LuxuryGiftModalProps> = ({
                     onClick={() => {
                       setSelectedGift(gift);
                       setErrorMsg(null);
+                      setConfirmingSend(false);
                     }}
                     className={`relative p-3 rounded-2xl flex flex-col items-center justify-center cursor-pointer transition-all ${
                       isSelected
-                        ? 'bg-gradient-to-b from-purple-900/60 to-indigo-950 border-2 border-amber-400 shadow-[0_0_15px_rgba(245,158,11,0.3)] scale-[1.03]'
-                        : 'bg-slate-900/60 border border-slate-800 hover:border-slate-700'
+                        ? 'bg-indigo-50 border-2 border-amber-500 shadow-md scale-[1.03]'
+                        : 'bg-slate-50 border border-slate-200 hover:border-indigo-300'
                     }`}
                   >
                     {/* Top Cost Tag */}
-                    <span className="absolute top-1.5 right-2 text-[10px] font-black text-amber-300 flex items-center gap-0.5">
+                    <span className="absolute top-1.5 right-2 text-[10px] font-black text-amber-600 flex items-center gap-0.5">
                       🪙 {gift.cost}
                     </span>
 
                     {gift.category === 'interactive' && (
-                      <span className="absolute top-1.5 left-1.5 text-[8.5px] px-1.5 py-0.5 rounded-full bg-pink-500/25 border border-pink-400/40 text-pink-200 font-black">
+                      <span className="absolute top-1.5 left-1.5 text-[8.5px] px-1.5 py-0.5 rounded-full bg-pink-100 border border-pink-200 text-pink-700 font-black">
                         ملء الشاشة
                       </span>
                     )}
@@ -266,7 +290,7 @@ export const LuxuryGiftModal: React.FC<LuxuryGiftModalProps> = ({
                     </div>
 
                     {/* Gift Name */}
-                    <span className="text-[11px] font-bold text-white text-center truncate w-full">
+                    <span className="text-[11px] font-bold text-slate-900 text-center truncate w-full">
                       {gift.name}
                     </span>
                   </div>
@@ -276,11 +300,11 @@ export const LuxuryGiftModal: React.FC<LuxuryGiftModalProps> = ({
           </div>
 
           {/* Selected Gift Banner Info */}
-          <div className="bg-purple-950/40 border border-purple-800/40 rounded-2xl p-3 text-center space-y-1">
-            <p className="text-xs font-black text-amber-300">
+          <div className="bg-indigo-50 border border-indigo-200 rounded-2xl p-3 text-center space-y-1">
+            <p className="text-xs font-black text-indigo-800">
               « {selectedGift.bannerText} »
             </p>
-            <p className="text-[11px] text-slate-400">
+            <p className="text-[11px] text-slate-600">
               {selectedGift.category === 'interactive'
                 ? 'تُطلق رسوماً متحركة احتفالية تملأ شاشة الغرفة بالكامل أمام جميع المتواجدين!'
                 : 'سيظهر إشعار فخم على كامل شاشة الغرفة مع أنيميشن وتأثير صوتي ملكي'}
@@ -289,29 +313,56 @@ export const LuxuryGiftModal: React.FC<LuxuryGiftModalProps> = ({
 
           {/* Error Message if not enough coins */}
           {errorMsg && (
-            <div className="bg-red-950/60 border border-red-700/60 rounded-xl p-2.5 flex items-center justify-between text-xs text-red-200">
+            <div className="bg-rose-50 border border-rose-200 rounded-xl p-2.5 flex items-center justify-between text-xs text-rose-700">
               <div className="flex items-center gap-1.5">
-                <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
+                <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
                 <span>{errorMsg}</span>
               </div>
               <button
                 onClick={onOpenWallet}
-                className="underline font-bold text-amber-300 ml-2"
+                className="underline font-bold text-amber-600 ml-2 cursor-pointer"
               >
                 شحن الآن
               </button>
             </div>
           )}
+        </div>
 
-          {/* Send Button */}
-          <button
-            onClick={handleSend}
-            className="w-full py-3 rounded-2xl bg-gradient-to-r from-pink-600 via-purple-600 to-indigo-600 hover:from-pink-500 hover:to-indigo-500 text-white font-black text-sm flex items-center justify-center gap-2 shadow-lg shadow-purple-900/50 active:scale-95 transition-all"
-          >
-            <Send className="w-4 h-4" />
-            <span>إرسال {selectedGift.name} ({selectedGift.cost} 🪙)</span>
-          </button>
-
+        {/* Sticky Bottom Footer with 2-Step Confirmation */}
+        <div className="sticky bottom-0 z-10 p-3.5 bg-white border-t border-slate-200 shrink-0">
+          {confirmingSend ? (
+            <div className="space-y-2 animate-in fade-in">
+              <p className="text-xs font-black text-center text-slate-800">
+                تأكيد إرسال {selectedGift.icon} <span className="text-indigo-600">{selectedGift.name}</span> إلى <span className="text-amber-600">{selectedRecipient}</span> مقابل {isOwner ? '0 (مجاني للمالك)' : `${selectedGift.cost} كوينز`}؟
+              </p>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={handleConfirmSend}
+                  className="py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs flex items-center justify-center gap-1.5 shadow-sm active:scale-95 transition cursor-pointer"
+                >
+                  <Check className="w-4 h-4" />
+                  <span>تأكيد الإرسال الآن</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setConfirmingSend(false)}
+                  className="py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs transition cursor-pointer"
+                >
+                  تراجع
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={handleRequestSend}
+              className="w-full py-3 rounded-2xl bg-gradient-to-r from-pink-600 via-purple-600 to-indigo-600 hover:from-pink-500 hover:to-indigo-500 text-white font-black text-sm flex items-center justify-center gap-2 shadow-lg active:scale-95 transition-all cursor-pointer"
+            >
+              <Send className="w-4 h-4" />
+              <span>إرسال هدية - {isOwner ? 'مجاني للمالك' : `${selectedGift.cost} كوينز`}</span>
+            </button>
+          )}
         </div>
 
       </div>

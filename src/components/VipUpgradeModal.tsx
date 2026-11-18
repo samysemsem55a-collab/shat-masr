@@ -16,6 +16,7 @@ import { User, VipTier } from '../types/chat';
 import { VIP_TIERS, isUserAdminOrOwner } from '../data/seedData';
 import { sounds } from '../utils/soundEffects';
 import { submitPaymentRequest } from '../services/firebase';
+import { maskPhone } from '../utils/maskData';
 
 interface VipUpgradeModalProps {
   isOpen: boolean;
@@ -73,6 +74,11 @@ export const VipUpgradeModal: React.FC<VipUpgradeModalProps> = ({
         note: `طلب ترقية عضوية إلى ${selectedTier.name} (${selectedTier.badge}) من ${cleanedAccount}`
       });
 
+      if (res.duplicate) {
+        setFormError('رقم العملية / الحساب مستخدم بالفعل في طلب معلق.');
+        return;
+      }
+
       sounds.playCoinsReward();
       setSubmittedOrderId(res.orderId);
       setStep('success');
@@ -88,7 +94,7 @@ export const VipUpgradeModal: React.FC<VipUpgradeModalProps> = ({
     <div
       dir="rtl"
       onClick={onClose}
-      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-slate-900/45 backdrop-blur-sm p-0 sm:p-4 animate-in fade-in"
+      className="fixed inset-0 z-[200] flex items-end sm:items-center justify-center bg-slate-900/45 backdrop-blur-sm p-0 sm:p-4 animate-in fade-in"
     >
       <div
         onClick={(e) => e.stopPropagation()}
@@ -327,7 +333,7 @@ export const VipUpgradeModal: React.FC<VipUpgradeModalProps> = ({
                 </div>
                 <div className="flex justify-between text-slate-600">
                   <span>الحساب المحوّل منه:</span>
-                  <span className="text-[#1E293B] font-mono font-bold">{senderPhone}</span>
+                  <span className="text-[#1E293B] font-mono font-bold">{maskPhone(senderPhone)}</span>
                 </div>
               </div>
 

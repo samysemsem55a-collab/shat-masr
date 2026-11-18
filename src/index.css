@@ -1,6 +1,22 @@
 @import "tailwindcss";
 @custom-variant dark (&:where(.dark, .dark *));
 
+:root {
+  --app-surface: #ffffff;
+  --app-surface-muted: #f8fafc;
+  --app-border: #e2e8f0;
+  --app-text: #0f172a;
+  --app-muted: #64748b;
+}
+
+html.dark {
+  --app-surface: #0f172a;
+  --app-surface-muted: #162033;
+  --app-border: #334155;
+  --app-text: #f8fafc;
+  --app-muted: #cbd5e1;
+}
+
 @layer base {
   body {
     font-family: 'Cairo', 'Tajawal', system-ui, -apple-system, sans-serif;
@@ -394,45 +410,48 @@
 .chat-text-outline-light,
 .chat-text-outline-strong,
 .chat-msg-row .chat-text-outline-light,
+.chat-msg-row .chat-text-outline-strong,
 .vip-msg-border .chat-text-outline-light,
 .vip-msg-border .chat-text-outline-strong {
   text-shadow:
-    -1.75px  0      0 rgba(255, 255, 255, 0.99),
-     1.75px  0      0 rgba(255, 255, 255, 0.99),
-     0      -1.75px 0 rgba(255, 255, 255, 0.99),
-     0       1.75px 0 rgba(255, 255, 255, 0.99),
-    -1.35px -1.35px 0 rgba(255, 255, 255, 0.99),
-     1.35px -1.35px 0 rgba(255, 255, 255, 0.99),
-    -1.35px  1.35px 0 rgba(255, 255, 255, 0.99),
-     1.35px  1.35px 0 rgba(255, 255, 255, 0.99),
+    -2px  0     0 rgba(255, 255, 255, 0.99),
+     2px  0     0 rgba(255, 255, 255, 0.99),
+     0   -2px   0 rgba(255, 255, 255, 0.99),
+     0    2px   0 rgba(255, 255, 255, 0.99),
+    -1.45px -1.45px 0 rgba(255, 255, 255, 0.99),
+     1.45px -1.45px 0 rgba(255, 255, 255, 0.99),
+    -1.45px  1.45px 0 rgba(255, 255, 255, 0.99),
+     1.45px  1.45px 0 rgba(255, 255, 255, 0.99),
     -1px     0      0 rgba(255, 255, 255, 0.98),
      1px     0      0 rgba(255, 255, 255, 0.98),
      0      -1px    0 rgba(255, 255, 255, 0.98),
      0       1px    0 rgba(255, 255, 255, 0.98),
-     0       0      6px rgba(255, 255, 255, 0.96),
-     0       1px    9px rgba(255, 255, 255, 0.88);
+     0       0      7px rgba(255, 255, 255, 0.96),
+     0       1.5px  10px rgba(255, 255, 255, 0.9);
 }
 
 .chat-text-outline-dark,
 .chat-text-outline-strong-dark,
 .chat-msg-row .chat-text-outline-dark,
+.chat-msg-row .chat-text-outline-strong-dark,
 .vip-msg-border .chat-text-outline-dark,
-.vip-msg-border .chat-text-outline-strong-dark {
+.vip-msg-border .chat-text-outline-strong-dark,
+html.dark .chat-msg-row:not([data-preserve-light="true"]) .chat-text-outline-strong {
   text-shadow:
-    -1.75px  0      0 rgba(2, 6, 23, 0.98),
-     1.75px  0      0 rgba(2, 6, 23, 0.98),
-     0      -1.75px 0 rgba(2, 6, 23, 0.98),
-     0       1.75px 0 rgba(2, 6, 23, 0.98),
-    -1.35px -1.35px 0 rgba(2, 6, 23, 0.98),
-     1.35px -1.35px 0 rgba(2, 6, 23, 0.98),
-    -1.35px  1.35px 0 rgba(2, 6, 23, 0.98),
-     1.35px  1.35px 0 rgba(2, 6, 23, 0.98),
-    -1px     0      0 rgba(2, 6, 23, 0.97),
-     1px     0      0 rgba(2, 6, 23, 0.97),
-     0      -1px    0 rgba(2, 6, 23, 0.97),
-     0       1px    0 rgba(2, 6, 23, 0.97),
-     0       0      6px rgba(2, 6, 23, 0.95),
-     0       1.5px  8px rgba(0, 0, 0, 0.92);
+    -2px  0     0 rgba(2, 6, 23, 0.99),
+     2px  0     0 rgba(2, 6, 23, 0.99),
+     0   -2px   0 rgba(2, 6, 23, 0.99),
+     0    2px   0 rgba(2, 6, 23, 0.99),
+    -1.45px -1.45px 0 rgba(2, 6, 23, 0.99),
+     1.45px -1.45px 0 rgba(2, 6, 23, 0.99),
+    -1.45px  1.45px 0 rgba(2, 6, 23, 0.99),
+     1.45px  1.45px 0 rgba(2, 6, 23, 0.99),
+    -1px     0      0 rgba(2, 6, 23, 0.98),
+     1px     0      0 rgba(2, 6, 23, 0.98),
+     0      -1px    0 rgba(2, 6, 23, 0.98),
+     0       1px    0 rgba(2, 6, 23, 0.98),
+     0       0      7px rgba(2, 6, 23, 0.96),
+     0       1.5px  9px rgba(0, 0, 0, 0.95);
 }
 
 

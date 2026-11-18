@@ -24,9 +24,10 @@ import { User } from '../types/chat';
 import { BADGES_CATALOG } from '../data/seedData';
 import { getRankDisplayMeta, hasPrivilegedRank, resolveBannerStyle } from '../utils/userRanks';
 import { AvatarWithFrame } from './AvatarWithFrame';
-import { sendFriendRequest, submitUserRating, submitUserReport } from '../services/firebase';
+import { sendFriendRequest, submitUserRating, submitUserReport, recordProfileVisit } from '../services/firebase';
 import { realtimeSocket } from '../services/realtimeSocket';
 import { sounds } from '../utils/soundEffects';
+import { VerifiedBadge } from '../utils/verifiedBadge';
 import { toast } from 'sonner';
 
 interface UserProfileModalProps {
@@ -84,6 +85,10 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
       }
     } catch {
       setIsAlreadyFriend(false);
+    }
+
+    if (user?.id && currentUser?.id && user.id !== currentUser.id) {
+      recordProfileVisit(user.id, currentUser.id).catch(() => {});
     }
 
     return () => {
@@ -207,7 +212,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
     <div
       dir="rtl"
       onClick={onClose}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/45 backdrop-blur-sm p-4 animate-in fade-in"
+      className="fixed inset-0 z-[200] flex items-center justify-center bg-slate-900/45 backdrop-blur-sm p-4 animate-in fade-in"
     >
       <div
         onClick={(e) => e.stopPropagation()}
@@ -259,6 +264,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
           <div>
             <div className="flex items-center justify-center gap-1.5">
               <h3 className={`text-base ${rankMeta.nameColorClass}`}>{user.name}</h3>
+              <VerifiedBadge verified={user.verified} size="sm" />
               <span className="text-lg">{user.countryFlag || '🇪🇬'}</span>
             </div>
 
@@ -288,6 +294,12 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                   <span className="font-semibold text-slate-600">
                     {user.gender === 'female' ? 'أنثى' : 'ذكر'}{typeof user.age === 'number' ? `، ${user.age} سنة` : ''}
                   </span>
+                </>
+              )}
+              {user.zodiacSign && (
+                <>
+                  <span>•</span>
+                  <span className="font-bold text-indigo-700">{user.zodiacSign}</span>
                 </>
               )}
             </div>
@@ -353,7 +365,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
           )}
 
           {/* Stats Bar */}
-          <div className="grid grid-cols-3 gap-2 text-center text-xs">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center text-xs">
             <div className="p-2 rounded-xl bg-amber-50/70 border border-amber-200">
               <span className="text-[10px] text-slate-500 block">نقاط التقييم ⭐</span>
               <span className="font-black text-amber-700">{userRating}</span>
@@ -365,6 +377,10 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
             <div className="p-2 rounded-xl bg-rose-50/70 border border-rose-200">
               <span className="text-[10px] text-slate-500 block">الإعجابات ❤️</span>
               <span className="font-black text-rose-700">{user.likesReceived || 0}</span>
+            </div>
+            <div className="p-2 rounded-xl bg-indigo-50/70 border border-indigo-200">
+              <span className="text-[10px] text-slate-500 block">الزيارات 👁️</span>
+              <span className="font-black text-indigo-700">{user.profileVisitsCount || 0}</span>
             </div>
           </div>
 
@@ -483,7 +499,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
 
         {/* Report User Modal Overlay */}
         {isReportOpen && (
-          <div className="absolute inset-0 bg-white/95 backdrop-blur-md z-30 p-4 flex flex-col justify-between text-right animate-in fade-in">
+          <div className="absolute inset-0 bg-white/95 backdrop-blur-md z-[210] p-4 flex flex-col justify-between text-right animate-in fade-in">
             <div className="space-y-3">
               <div className="flex items-center justify-between border-b border-slate-200 pb-2">
                 <div className="flex items-center gap-2 text-rose-600">

@@ -38,7 +38,7 @@ export const PrivateRoomPromptModal: React.FC<PrivateRoomPromptModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-sm p-4 animate-in fade-in">
+    <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/85 backdrop-blur-sm p-4 animate-in fade-in">
       <div className="w-full max-w-sm bg-[#0e1626] border border-amber-500/50 rounded-3xl overflow-hidden shadow-2xl p-5 text-center space-y-4">
         
         {/* Lock Icon */}

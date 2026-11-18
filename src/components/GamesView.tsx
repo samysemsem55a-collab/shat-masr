@@ -22,6 +22,7 @@ import { realtimeSocket } from '../services/realtimeSocket';
 import { getRankDisplayMeta } from '../utils/userRanks';
 import { AvatarWithFrame } from './AvatarWithFrame';
 import { sounds } from '../utils/soundEffects';
+import { VerifiedBadge } from '../utils/verifiedBadge';
 
 interface GamesViewProps {
   currentUser: User;
@@ -97,14 +98,20 @@ export const GamesView: React.FC<GamesViewProps> = ({
     coinsRef.current = currentUser.coins || 0;
   }, [currentUser.coins]);
 
-  // Trivia State
-  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
+  // Trivia State (5-question rounds)
+  const TRIVIA_ROUND_SIZE = 5;
+  const [roundStartOffset, setRoundStartOffset] = useState(0);
+  const [roundQuestionStep, setRoundQuestionStep] = useState(0);
+  const [roundCorrectCount, setRoundCorrectCount] = useState(0);
+  const [roundCoinsEarned, setRoundCoinsEarned] = useState(0);
+  const [isRoundFinished, setIsRoundFinished] = useState(false);
   const [selectedOption, setSelectedOption] = useState<number | null>(null);
   const [hasAnswered, setHasAnswered] = useState(false);
   const [timerSeconds, setTimerSeconds] = useState(15);
   const [scoreStreak, setScoreStreak] = useState(0);
   const [totalTriviaPoints, setTotalTriviaPoints] = useState(0);
 
+  const currentQuestionIndex = (roundStartOffset + roundQuestionStep) % TRIVIA_QUESTIONS.length;
   const question = TRIVIA_QUESTIONS[currentQuestionIndex];
 
   // Live Leaderboard State
@@ -118,7 +125,7 @@ export const GamesView: React.FC<GamesViewProps> = ({
 
   // Question Timer
   useEffect(() => {
-    if (activeSubTab !== 'trivia' || hasAnswered) return;
+    if (activeSubTab !== 'trivia' || hasAnswered || isRoundFinished) return;
 
     if (timerSeconds <= 0) {
       setHasAnswered(true);
@@ -131,10 +138,10 @@ export const GamesView: React.FC<GamesViewProps> = ({
     }, 1000);
 
     return () => clearInterval(timer);
-  }, [timerSeconds, activeSubTab, hasAnswered]);
+  }, [timerSeconds, activeSubTab, hasAnswered, isRoundFinished]);
 
   const handleSelectAnswer = (optionIdx: number) => {
-    if (hasAnswered) return;
+    if (hasAnswered || isRoundFinished) return;
     setSelectedOption(optionIdx);
     setHasAnswered(true);
 
@@ -142,10 +149,12 @@ export const GamesView: React.FC<GamesViewProps> = ({
     if (isCorrect) {
       sounds.playCoinsReward();
       confetti({ particleCount: 60, spread: 50, origin: { y: 0.6 } });
-      const reward = 10;
+      const reward = question.coinsReward || 10;
       onUpdateCoins(coinsRef.current + reward);
       setScoreStreak((prev) => prev + 1);
       setTotalTriviaPoints((prev) => prev + reward);
+      setRoundCorrectCount((prev) => prev + 1);
+      setRoundCoinsEarned((prev) => prev + reward);
     } else {
       sounds.playMessageSent();
       setScoreStreak(0);
@@ -156,7 +165,24 @@ export const GamesView: React.FC<GamesViewProps> = ({
     setSelectedOption(null);
     setHasAnswered(false);
     setTimerSeconds(15);
-    setCurrentQuestionIndex((prev) => (prev + 1) % TRIVIA_QUESTIONS.length);
+    if (roundQuestionStep + 1 >= TRIVIA_ROUND_SIZE) {
+      setIsRoundFinished(true);
+      sounds.playGiftFanfare();
+      confetti({ particleCount: 90, spread: 70, origin: { y: 0.6 } });
+      return;
+    }
+    setRoundQuestionStep((prev) => prev + 1);
+  };
+
+  const handleStartNewTriviaRound = () => {
+    setRoundStartOffset((prev) => (prev + TRIVIA_ROUND_SIZE) % TRIVIA_QUESTIONS.length);
+    setRoundQuestionStep(0);
+    setRoundCorrectCount(0);
+    setRoundCoinsEarned(0);
+    setIsRoundFinished(false);
+    setSelectedOption(null);
+    setHasAnswered(false);
+    setTimerSeconds(15);
   };
 
   // =========================================================================
@@ -686,13 +712,21 @@ export const GamesView: React.FC<GamesViewProps> = ({
 
           {/* Question Card */}
           <div className="bg-white border border-slate-200 rounded-3xl p-4 sm:p-5 shadow-sm space-y-3.5">
-            <div className="flex items-center justify-between text-xs">
-              <span className="px-2.5 py-0.5 rounded-full bg-indigo-50 border border-indigo-200 text-indigo-700 font-bold text-[11px]">
-                {question.category}
-              </span>
-              <span className="text-slate-500 text-[11px]">
-                سؤال رقم {currentQuestionIndex + 1} من {TRIVIA_QUESTIONS.length}
-              </span>
+            <div className="space-y-2">
+              <div className="flex items-center justify-between text-xs">
+                <span className="px-2.5 py-0.5 rounded-full bg-indigo-50 border border-indigo-200 text-indigo-700 font-bold text-[11px]">
+                  {question.category}
+                </span>
+                <span className="text-slate-700 font-black text-[11px]">
+                  السؤال {roundQuestionStep + 1} من {TRIVIA_ROUND_SIZE}
+                </span>
+              </div>
+              <div className="w-full h-1.5 rounded-full bg-slate-100 overflow-hidden">
+                <div
+                  className="h-full bg-gradient-to-l from-indigo-600 to-emerald-500 transition-all duration-300"
+                  style={{ width: `${((roundQuestionStep + 1) / TRIVIA_ROUND_SIZE) * 100}%` }}
+                />
+              </div>
             </div>
 
             <h2 className="text-sm sm:text-base font-black text-slate-900 leading-relaxed">
@@ -755,13 +789,61 @@ export const GamesView: React.FC<GamesViewProps> = ({
                     onClick={handleNextQuestion}
                     className="px-3.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs flex items-center gap-1 shadow-sm active:scale-95 transition-all cursor-pointer"
                   >
-                    <span>السؤال التالي</span>
+                    <span>{roundQuestionStep + 1 >= TRIVIA_ROUND_SIZE ? 'عرض نتيجة الجولة 🏆' : 'السؤال التالي'}</span>
                     <ChevronRight className="w-3.5 h-3.5" />
                   </button>
                 </div>
               </div>
             )}
           </div>
+
+          {/* 5-Question Round Completion Summary Modal */}
+          {isRoundFinished && (
+            <div className="fixed inset-0 z-[200] flex items-center justify-center bg-slate-900/55 backdrop-blur-sm p-4 animate-in fade-in">
+              <div className="w-full max-w-sm bg-white border border-indigo-200 rounded-3xl p-5 shadow-2xl text-center space-y-4">
+                <div className="w-16 h-16 rounded-full bg-gradient-to-tr from-amber-400 to-yellow-300 text-slate-950 flex items-center justify-center mx-auto shadow-md text-3xl">
+                  🏆
+                </div>
+                <div className="space-y-1">
+                  <h3 className="text-base font-black text-slate-900">اكتملت جولة الـ {TRIVIA_ROUND_SIZE} أسئلة!</h3>
+                  <p className="text-xs text-slate-600">
+                    أجبت بشكل صحيح على <strong className="text-emerald-700">{roundCorrectCount} من {TRIVIA_ROUND_SIZE}</strong> أسئلة ({Math.round((roundCorrectCount / TRIVIA_ROUND_SIZE) * 100)}%)
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                  <div className="p-3 rounded-2xl bg-emerald-50 border border-emerald-200">
+                    <span className="text-[10px] text-emerald-700 block font-bold">دقة الإجابات</span>
+                    <span className="text-base font-black text-emerald-800">{Math.round((roundCorrectCount / TRIVIA_ROUND_SIZE) * 100)}%</span>
+                  </div>
+                  <div className="p-3 rounded-2xl bg-amber-50 border border-amber-200">
+                    <span className="text-[10px] text-amber-700 block font-bold">مكسب الجولة</span>
+                    <span className="text-base font-black text-amber-800">+{roundCoinsEarned} 🪙</span>
+                  </div>
+                </div>
+
+                <div className="flex flex-col gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={handleStartNewTriviaRound}
+                    className="w-full py-2.5 rounded-2xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-black text-xs shadow-md active:scale-95 transition cursor-pointer"
+                  >
+                    جولة جديدة (5 أسئلة) 🚀
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsRoundFinished(false);
+                      setActiveSubTab('leaderboard');
+                    }}
+                    className="w-full py-2 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs transition cursor-pointer"
+                  >
+                    عرض لوحة الصدارة
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -1045,6 +1127,7 @@ export const GamesView: React.FC<GamesViewProps> = ({
                       <div className="min-w-0 text-right">
                         <h4 className={`text-xs font-black truncate flex items-center gap-1 ${rankMeta.nameColorClass}`}>
                           <span className="truncate">{user.name}</span>
+                          <VerifiedBadge verified={user.verified} size="xs" />
                           <span>{user.countryFlag || '🇪🇬'}</span>
                         </h4>
                         <span className="text-[10px] text-amber-700 font-bold">

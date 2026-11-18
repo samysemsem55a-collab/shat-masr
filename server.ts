@@ -1203,6 +1203,25 @@ wss.on('connection', (ws: WebSocket) => {
           break;
         }
 
+        case 'LIVE_AUDIO_RAISE_HAND': {
+          const { roomId, userId, raised } = payload || {};
+          if (roomId && userId) {
+            const current = (globalThis as any).__liveAudioHands?.get(roomId) || new Set<string>();
+            if (!(globalThis as any).__liveAudioHands) {
+              (globalThis as any).__liveAudioHands = new Map<string, Set<string>>();
+            }
+            if (raised) current.add(userId);
+            else current.delete(userId);
+            (globalThis as any).__liveAudioHands.set(roomId, current);
+            broadcastToRoom(roomId, {
+              type: 'LIVE_AUDIO_STAGE_UPDATE',
+              roomId,
+              raisedHandUserIds: Array.from(current)
+            });
+          }
+          break;
+        }
+
         default:
           break;
       }
@@ -1336,6 +1355,51 @@ app.get('/api/stats/visitors', (_req: Request, res: Response) => {
   res.json({ count: cumulativeVisitorsCount });
 });
 
+// Automated & Manual Daily Backups API
+const BACKUP_FILE_PATH = path.resolve(process.cwd(), '.daily-backups.json');
+
+function readBackupsFile(): any[] {
+  try {
+    if (fs.existsSync(BACKUP_FILE_PATH)) {
+      const raw = fs.readFileSync(BACKUP_FILE_PATH, 'utf8');
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
+    }
+  } catch {}
+  return [];
+}
+
+function writeBackupsFile(list: any[]) {
+  try {
+    fs.writeFileSync(BACKUP_FILE_PATH, JSON.stringify(list.slice(0, 14), null, 2), 'utf8');
+  } catch {}
+}
+
+app.get('/api/backups', (_req: Request, res: Response) => {
+  res.json({ backups: readBackupsFile() });
+});
+
+app.post('/api/backups', (req: Request, res: Response) => {
+  const dateKey = String(req.body?.dateKey || new Date().toISOString().split('T')[0]);
+  const createdBy = String(req.body?.createdBy || 'النظام التلقائي');
+  const existing = readBackupsFile();
+  const snapshot = {
+    id: `bak_${dateKey}_${Date.now()}`,
+    dateKey,
+    createdAt: Date.now(),
+    createdBy,
+    usersCount: Number(req.body?.usersCount) || usersStore.size,
+    roomsCount: Number(req.body?.roomsCount) || messagesByRoom.size,
+    postsCount: Number(req.body?.postsCount) || 0,
+    usersData: Array.isArray(req.body?.usersData) ? req.body.usersData : Array.from(usersStore.values()).slice(0, 100),
+    notes: String(req.body?.notes || 'نسخة احتياطية يومية تلقائية'),
+  };
+  const filtered = existing.filter((b: any) => b.dateKey !== dateKey);
+  filtered.unshift(snapshot);
+  writeBackupsFile(filtered);
+  res.json({ ok: true, backup: snapshot });
+});
+
 app.post('/api/stats/visitors/visit', (req: Request, res: Response) => {
   const visitKey = String(req.body?.visitToken || req.body?.deviceId || '').trim();
   const clientHighest = Number(req.body?.clientHighestCount) || BASE_VISITORS_COUNT;
@@ -1352,6 +1416,61 @@ app.post('/api/stats/visitors/visit', (req: Request, res: Response) => {
     });
   }
   res.json({ count: cumulativeVisitorsCount });
+});
+
+// Server-side HTTPS Radio Stream Health Check (avoids browser CORS false-negatives)
+async function probeRadioStreamUrl(url?: string): Promise<boolean> {
+  if (!url || !url.startsWith('https://')) return false;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 4500);
+  try {
+    const response = await fetch(url, {
+      method: 'GET',
+      signal: controller.signal,
+      redirect: 'follow',
+      headers: {
+        'Icy-MetaData': '1',
+        'User-Agent': 'ShatMasrRadioChecker/1.0'
+      }
+    });
+    const contentType = (response.headers.get('content-type') || '').toLowerCase();
+    try {
+      await response.body?.cancel();
+    } catch {}
+    if (!response.ok) return false;
+    if (contentType.includes('text/html')) return false;
+    return true;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+app.post('/api/radio/check', async (req: Request, res: Response) => {
+  try {
+    const stations = Array.isArray(req.body?.stations) ? req.body.stations.slice(0, 40) : [];
+    const entries = await Promise.all(
+      stations.map(async (st: { id?: string; streamUrl?: string; fallbackUrl?: string }) => {
+        const id = String(st?.id || '').trim();
+        if (!id) return null;
+        const primaryOk = await probeRadioStreamUrl(st.streamUrl);
+        if (primaryOk) return [id, true] as const;
+        if (st.fallbackUrl) {
+          const fallbackOk = await probeRadioStreamUrl(st.fallbackUrl);
+          return [id, fallbackOk] as const;
+        }
+        return [id, false] as const;
+      })
+    );
+    const availability: Record<string, boolean> = {};
+    entries.forEach((entry) => {
+      if (entry) availability[entry[0]] = entry[1];
+    });
+    res.json({ availability, checkedAt: Date.now() });
+  } catch {
+    res.status(500).json({ availability: {}, checkedAt: Date.now() });
+  }
 });
 
 // Start server with Vite middleware in development

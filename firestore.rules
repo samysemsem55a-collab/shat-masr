@@ -28,13 +28,36 @@ service cloud.firestore {
         allow read, write: if true;
       }
 
+      match /settings/{settingId} {
+        allow read, write: if true;
+      }
+
       match /{document=**} {
         allow read, write: if true;
       }
     }
 
-    // Real-time Global Online Users Presence
+    // Mandatory Real-time Presence & Global Online Users
+    match /presence/{uid} {
+      allow read, write: if true;
+    }
+
     match /online_users/{userId} {
+      allow read, write: if true;
+    }
+
+    // 24-hour Stories
+    match /stories/{storyId} {
+      allow read, write: if true;
+    }
+
+    // Daily Automated & Manual System Backups
+    match /backups/{backupId} {
+      allow read, write: if true;
+    }
+
+    // Remote Version Config
+    match /config/{docId} {
       allow read, write: if true;
     }
 

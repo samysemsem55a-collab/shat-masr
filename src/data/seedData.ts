@@ -47,6 +47,7 @@ export const CURRENT_USER: User = {
 };
 
 export const PRIMARY_OWNER_EMAIL = 'samielsayed555@gmail.com';
+export const PRIMARY_OWNER_USERNAME = 'samielsayed555';
 
 export function isUserAdminOrOwner(user?: (User & { email?: string }) | null): boolean {
   if (!user) return false;

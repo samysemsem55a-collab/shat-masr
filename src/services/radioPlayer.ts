@@ -1,4 +1,4 @@
-import { ARABIC_100_SONGS, ArabicSong } from '../data/arabicSongsData';
+import { ARABIC_100_SONGS, ArabicSong, formatAudioDuration } from '../data/arabicSongsData';
 import { ARABIC_RADIO_STATIONS, ArabicRadioStation } from '../data/arabicRadioData';
 
 export type RadioPlayerTab = 'radio' | 'songs';
@@ -16,104 +16,15 @@ export interface RadioPlayerSnapshot {
   isMuted: boolean;
   playMode: RadioPlayMode;
   autoplayBlocked: boolean;
-}
-
-const ARCHIVE_TRACKS = {
-  amr_amarain: 'https://archive.org/download/y-2meta.app-amr-diab-amarain-official-music-video-hd-version-128-kbps/Y2meta.app%20-%20Amr%20Diab%20-%20Amarain%20_%20Official%20Music%20Video%20-%20HD%20Version%20_%20%D8%B9%D9%85%D8%B1%D9%88%20%D8%AF%D9%8A%D8%A7%D8%A8%20-%20%D9%82%D9%85%D8%B1%D9%8A%D9%86%20%28128%20kbps%29.mp3',
-  amr_ragein: 'https://archive.org/download/ragein/01%20Ragein.mp3',
-  amr_ma_yethekish: 'https://archive.org/download/ragein/02%20Ma%20Yethekish%20Alieha.mp3',
-  amr_ensa_alby: 'https://archive.org/download/ragein/03%20Ensa%20Alby.mp3',
-  amr_we_regeat: 'https://archive.org/download/ragein/04%20We%20Regeat%20Men%20El%20Safar.mp3',
-  amr_ha_ansak: 'https://archive.org/download/ragein/05%20Ha%20Ansak%20Ana.mp3',
-  amr_sadaateny: 'https://archive.org/download/ragein/06%20Sadaateny.mp3',
-  amr_habiby: 'https://archive.org/download/habiby_202108/01%20Habiby.mp3',
-  amr_ramany: 'https://archive.org/download/habiby_202108/02%20Wi%20Ramany%20El%20Shouq.mp3',
-  amr_khalik: 'https://archive.org/download/10.-khalik-maaaya/10.Khalik_Maaaya.mp3',
-  umm_enta_al_hob: 'https://archive.org/download/umm-kulthum-enta-el-hobal-ahat/01%20Inta%20Al%20Hob.mp3',
-  umm_al_ahat: 'https://archive.org/download/umm-kulthum-enta-el-hobal-ahat/02%20Al%20Ahat.mp3',
-  umm_alf_leila: 'https://archive.org/download/umm-kulthum-alf-leila-we-leila-mcs-6q-mc-uu-ly/Umm%20Kulthum%20-%20Alf%20Leila%20We%20Leila%20%EF%BD%9C%20%D8%A7%D9%85%20%D9%83%D9%84%D8%AB%D9%88%D9%85%20-%20%D8%A7%D9%84%D9%81%20%D9%84%D9%8A%D9%84%D8%A9%20%D9%88%D9%84%D9%8A%D9%84%D8%A9%20%EF%BD%9C%20%D8%AA%D8%B3%D8%AC%D9%8A%D9%84%20%D8%B3%D8%AA%D9%88%D8%AF%D9%8A%D9%88%20%5BMCs6qMcUuLY%5D.mp3',
-  halim_ala_hesb: 'https://archive.org/download/y-2mate.com-ala-hesb-wedad-abdel-halim-hafez_202305/y2mate.com%20-%20Ala%20Hesb%20Wedad%20%20Abdel%20Halim%20Hafez%20%20%D8%B9%D9%84%D9%89%20%D8%AD%D8%B3%D8%A8%20%D9%88%D8%AF%D8%A7%D8%AF%20%D9%82%D9%84%D8%A8%D9%89%20%20%D8%B9%D8%A8%D8%AF%20%D8%A7%D9%84%D8%AD%D9%84%D9%8A%D9%85%20%D8%AD%D8%A7%D9%81%D8%B8.mp3',
-  khaleeji_majeed: 'https://archive.org/download/y-2meta.app-amr-diab-amarain-official-music-video-hd-version-128-kbps/Y2meta.app%20-%20%D8%B9%D8%A8%D8%AF%D8%A7%D9%84%D9%85%D8%AC%D9%8A%D8%AF%20%D8%B9%D8%A8%D8%AF%D8%A7%D9%84%D9%84%D9%87%20-%20%D9%8a%D8%A7%20%D8%A3%D8%A8%D9%86%20%D8%A7%D9%84%D8%A7%D9%88%D8%A7%D8%AF%D9%85%20%28%D8%A3%D9%84%D8%A8%D9%88%D9%85%20%D8%B9%D8%A7%D9%84%D9%85%20%D9%85%D9%88%D8%A7%D8%B2%D9%8a%29%20_%202021%20%28128%20kbps%29.mp3',
-  nancy_betghayar: 'https://archive.org/download/y-2meta.app-amr-diab-amarain-official-music-video-hd-version-128-kbps/Y2meta.app%20-%20Nancy%20Ajram%20-%20Aam%20Betghayar%20_%20Romanized%20Lyrics%20_%20%D9%86%D8%A7%D9%86%D8%B3%D9%8A%20%D8%B9%D8%AC%D8%B1%D9%85%20-%20%D8%B9%D9%85%20%D8%A8%D8%AA%D8%BA%D9%8A%D9%91%D8%B1%20%28128%20kbps%29.mp3',
-};
-
-const MODERN_POOL = [
-  ARCHIVE_TRACKS.amr_amarain,
-  ARCHIVE_TRACKS.amr_khalik,
-  ARCHIVE_TRACKS.amr_ragein,
-  ARCHIVE_TRACKS.amr_habiby,
-  ARCHIVE_TRACKS.amr_ensa_alby,
-  ARCHIVE_TRACKS.amr_sadaateny,
-  ARCHIVE_TRACKS.nancy_betghayar,
-];
-
-const TARAB_POOL = [
-  ARCHIVE_TRACKS.umm_enta_al_hob,
-  ARCHIVE_TRACKS.umm_alf_leila,
-  ARCHIVE_TRACKS.umm_al_ahat,
-  ARCHIVE_TRACKS.halim_ala_hesb,
-];
-
-const CLASSIC_POOL = [
-  ARCHIVE_TRACKS.halim_ala_hesb,
-  ARCHIVE_TRACKS.amr_ma_yethekish,
-  ARCHIVE_TRACKS.amr_we_regeat,
-  ARCHIVE_TRACKS.amr_ramany,
-  ARCHIVE_TRACKS.umm_enta_al_hob,
-];
-
-function pickTrackById(id: string, pool: string[]): string {
-  let num = 0;
-  for (let i = 0; i < id.length; i++) {
-    num = (num * 31 + id.charCodeAt(i)) >>> 0;
-  }
-  return pool[num % pool.length];
-}
-
-export function getSongAudioSource(song: ArabicSong): string {
-  if (song.audioUrl) return song.audioUrl;
-
-  if (song.artist.includes('أم كلثوم')) {
-    if (song.title.includes('ألف ليلة') || song.id === 'song_2') return ARCHIVE_TRACKS.umm_alf_leila;
-    if (song.title.includes('الأطلال') || song.id === 'song_4') return ARCHIVE_TRACKS.umm_al_ahat;
-    return ARCHIVE_TRACKS.umm_enta_al_hob;
-  }
-  if (song.artist.includes('عبد الحليم')) {
-    return ARCHIVE_TRACKS.halim_ala_hesb;
-  }
-  if (song.artist.includes('عمرو دياب')) {
-    if (song.title.includes('قمرين')) return ARCHIVE_TRACKS.amr_amarain;
-    if (song.title.includes('راجعين')) return ARCHIVE_TRACKS.amr_ragein;
-    if (song.title.includes('تملي معاك') || song.title.includes('نور العين')) return ARCHIVE_TRACKS.amr_habiby;
-    if (song.title.includes('أنت الحظ') || song.title.includes('وياه')) return ARCHIVE_TRACKS.amr_khalik;
-    return pickTrackById(song.id, [
-      ARCHIVE_TRACKS.amr_amarain,
-      ARCHIVE_TRACKS.amr_ragein,
-      ARCHIVE_TRACKS.amr_khalik,
-      ARCHIVE_TRACKS.amr_ensa_alby,
-      ARCHIVE_TRACKS.amr_ha_ansak,
-      ARCHIVE_TRACKS.amr_sadaateny,
-    ]);
-  }
-  if (song.artist.includes('عبد المجيد') || song.artist.includes('محمد عبده') || song.category === 'khaleeji') {
-    return ARCHIVE_TRACKS.khaleeji_majeed;
-  }
-  if (song.artist.includes('فيروز') || song.artist.includes('نانسي') || song.category === 'levantine') {
-    return ARCHIVE_TRACKS.nancy_betghayar;
-  }
-  if (song.category === 'tarab') {
-    return pickTrackById(song.id, TARAB_POOL);
-  }
-  if (song.category === 'classic') {
-    return pickTrackById(song.id, CLASSIC_POOL);
-  }
-  if (song.category === 'shaabi' || song.category === 'maghreb') {
-    return pickTrackById(song.id, [ARCHIVE_TRACKS.amr_ragein, ARCHIVE_TRACKS.nancy_betghayar, ARCHIVE_TRACKS.khaleeji_majeed]);
-  }
-  return pickTrackById(song.id, MODERN_POOL);
+  errorMessage?: string | null;
+  unavailableStationIds: string[];
+  unavailableSongIds: string[];
+  songDurations: Record<string, number>;
+  checkingStations: boolean;
 }
 
 class GlobalRadioPlayerService {
+  // Single authoritative HTML5 Audio element for the entire application
   private audio: HTMLAudioElement | null = null;
   private listeners: Set<(snap: RadioPlayerSnapshot) => void> = new Set();
   private timeListeners: Set<(time: { currentTime: number; duration: number }) => void> = new Set();
@@ -121,6 +32,9 @@ class GlobalRadioPlayerService {
   private autoplayAttempted = false;
   private loadingTimer: ReturnType<typeof setTimeout> | null = null;
   private lastTimeEmitAt = 0;
+  private fallbackAttemptedForId: string | null = null;
+  private stationsVerifiedAt = 0;
+  private verifyStationsPromise: Promise<void> | null = null;
 
   private state: RadioPlayerSnapshot = {
     activeTab: 'radio',
@@ -130,11 +44,16 @@ class GlobalRadioPlayerService {
     isPlaying: false,
     isLoading: false,
     currentTime: 0,
-    duration: 240,
+    duration: ARABIC_100_SONGS[0]?.durationSeconds || 0,
     volume: 0.75,
     isMuted: false,
     playMode: 'sequential',
-    autoplayBlocked: false
+    autoplayBlocked: false,
+    errorMessage: null,
+    unavailableStationIds: [],
+    unavailableSongIds: [],
+    songDurations: {},
+    checkingStations: false
   };
 
   private clearLoadingTimer() {
@@ -156,7 +75,60 @@ class GlobalRadioPlayerService {
     }, 350);
   }
 
-  private ensureAudio() {
+  private markStationUnavailable(stationId: string) {
+    if (this.state.unavailableStationIds.includes(stationId)) return;
+    this.state = {
+      ...this.state,
+      unavailableStationIds: [...this.state.unavailableStationIds, stationId]
+    };
+  }
+
+  private markSongUnavailable(songId: string) {
+    if (this.state.unavailableSongIds.includes(songId)) return;
+    this.state = {
+      ...this.state,
+      unavailableSongIds: [...this.state.unavailableSongIds, songId]
+    };
+  }
+
+  private applyRealSongDuration(audio: HTMLAudioElement) {
+    if (
+      this.state.activeTab !== 'songs' ||
+      !audio.duration ||
+      isNaN(audio.duration) ||
+      !isFinite(audio.duration) ||
+      audio.duration <= 0
+    ) {
+      return;
+    }
+    const realDuration = Math.floor(audio.duration);
+    const currentSong = this.state.activeSong;
+    const prevMapped = this.state.songDurations[currentSong.id];
+    const nextDurations =
+      prevMapped !== realDuration
+        ? { ...this.state.songDurations, [currentSong.id]: realDuration }
+        : this.state.songDurations;
+
+    const updatedSong =
+      currentSong.durationSeconds !== realDuration
+        ? {
+            ...currentSong,
+            durationSeconds: realDuration,
+            duration: formatAudioDuration(realDuration)
+          }
+        : currentSong;
+
+    this.state = {
+      ...this.state,
+      duration: audio.duration,
+      activeSong: updatedSong,
+      songDurations: nextDurations
+    };
+    this.emit();
+    this.emitTime();
+  }
+
+  private ensureAudio(): HTMLAudioElement | null {
     if (typeof window === 'undefined') return null;
     if (!this.audio) {
       const audio = new Audio();
@@ -164,36 +136,46 @@ class GlobalRadioPlayerService {
       audio.volume = this.state.isMuted ? 0 : this.state.volume;
 
       audio.onloadedmetadata = () => {
-        if (
-          this.state.activeTab === 'songs' &&
-          audio.duration &&
-          !isNaN(audio.duration) &&
-          isFinite(audio.duration) &&
-          audio.duration > 0
-        ) {
-          this.state = { ...this.state, duration: audio.duration };
-          this.emit();
-          this.emitTime();
-        }
+        this.applyRealSongDuration(audio);
+      };
+
+      audio.ondurationchange = () => {
+        this.applyRealSongDuration(audio);
       };
 
       audio.onplaying = () => {
         this.clearLoadingTimer();
-        const nextDur =
-          this.state.activeTab === 'songs' &&
-          audio.duration &&
-          !isNaN(audio.duration) &&
-          isFinite(audio.duration)
-            ? audio.duration
-            : this.state.duration;
-        if (!this.state.isPlaying || this.state.isLoading || this.state.autoplayBlocked || nextDur !== this.state.duration) {
-          this.state = { ...this.state, isLoading: false, isPlaying: true, autoplayBlocked: false, duration: nextDur };
-          this.emit();
+        if (this.state.activeTab === 'songs') {
+          this.applyRealSongDuration(audio);
         }
+        const currentId =
+          this.state.activeTab === 'radio' ? this.state.activeStation.id : this.state.activeSong.id;
+        // Clear stale unavailable flag if playback succeeded
+        const nextUnavailableStations =
+          this.state.activeTab === 'radio'
+            ? this.state.unavailableStationIds.filter((id) => id !== currentId)
+            : this.state.unavailableStationIds;
+        const nextUnavailableSongs =
+          this.state.activeTab === 'songs'
+            ? this.state.unavailableSongIds.filter((id) => id !== currentId)
+            : this.state.unavailableSongIds;
+
+        this.state = {
+          ...this.state,
+          isLoading: false,
+          isPlaying: true,
+          autoplayBlocked: false,
+          errorMessage: null,
+          unavailableStationIds: nextUnavailableStations,
+          unavailableSongIds: nextUnavailableSongs
+        };
+        this.emit();
       };
+
       audio.onwaiting = () => {
-        // Silent background buffering: never flash loading spinner during live playback
+        // Silent background buffering
       };
+
       audio.onpause = () => {
         this.clearLoadingTimer();
         if (this.state.isPlaying || this.state.isLoading) {
@@ -201,32 +183,86 @@ class GlobalRadioPlayerService {
           this.emit();
         }
       };
+
       audio.ontimeupdate = () => {
-        const dur = audio.duration && !isNaN(audio.duration) && isFinite(audio.duration)
-          ? audio.duration
-          : this.state.duration;
+        const dur =
+          this.state.activeTab === 'songs' &&
+          audio.duration &&
+          !isNaN(audio.duration) &&
+          isFinite(audio.duration) &&
+          audio.duration > 0
+            ? audio.duration
+            : this.state.duration;
         this.state.currentTime = audio.currentTime;
         this.state.duration = dur;
-        // Only notify time listeners for song progress, throttled to once per second
         if (this.state.activeTab === 'songs' && this.timeListeners.size > 0) {
           const now = Date.now();
-          if (now - this.lastTimeEmitAt >= 900) {
+          if (now - this.lastTimeEmitAt >= 750) {
             this.lastTimeEmitAt = now;
             this.emitTime();
           }
         }
       };
+
       audio.onended = () => {
         if (this.state.activeTab === 'songs') {
-          this.next();
+          this.playNextInSameCategory(true);
         }
       };
+
       audio.onerror = () => {
         this.clearLoadingTimer();
-        if (this.state.isLoading || this.state.isPlaying) {
-          this.state = { ...this.state, isLoading: false, isPlaying: false };
+        if (this.state.activeTab === 'radio') {
+          const station = this.state.activeStation;
+          // Try fallback URL ONLY for the SAME station — never switch to another random station
+          if (
+            station.fallbackUrl &&
+            station.fallbackUrl.startsWith('https://') &&
+            this.fallbackAttemptedForId !== station.id &&
+            !this.userPausedManually
+          ) {
+            this.fallbackAttemptedForId = station.id;
+            this.state = {
+              ...this.state,
+              isLoading: true,
+              errorMessage: 'تعذر تشغيل القناة — جارٍ تجربة البث البديل لنفس القناة...'
+            };
+            this.emit();
+            audio.src = station.fallbackUrl;
+            audio.play().catch(() => {
+              this.markStationUnavailable(station.id);
+              this.state = {
+                ...this.state,
+                isLoading: false,
+                isPlaying: false,
+                errorMessage: 'تعذر تشغيل القناة'
+              };
+              this.emit();
+            });
+            return;
+          }
+
+          this.markStationUnavailable(station.id);
+          this.state = {
+            ...this.state,
+            isLoading: false,
+            isPlaying: false,
+            errorMessage: 'تعذر تشغيل القناة'
+          };
           this.emit();
+          return;
         }
+
+        // Music track failed: mark THIS song unavailable, never substitute a different wrong track
+        const song = this.state.activeSong;
+        this.markSongUnavailable(song.id);
+        this.state = {
+          ...this.state,
+          isLoading: false,
+          isPlaying: false,
+          errorMessage: 'تعذر تشغيل الأغنية — غير متاحة'
+        };
+        this.emit();
       };
 
       this.audio = audio;
@@ -272,9 +308,60 @@ class GlobalRadioPlayerService {
     };
   }
 
+  async verifyAllStations(force: boolean = false): Promise<void> {
+    if (typeof window === 'undefined') return;
+    const now = Date.now();
+    if (!force && this.stationsVerifiedAt > 0 && now - this.stationsVerifiedAt < 120000) {
+      return;
+    }
+    if (this.verifyStationsPromise) return this.verifyStationsPromise;
+
+    this.state = { ...this.state, checkingStations: true };
+    this.emit();
+
+    this.verifyStationsPromise = (async () => {
+      try {
+        const res = await fetch('/api/radio/check', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            stations: ARABIC_RADIO_STATIONS.map((s) => ({
+              id: s.id,
+              streamUrl: s.streamUrl,
+              fallbackUrl: s.fallbackUrl
+            }))
+          })
+        });
+        if (res.ok) {
+          const data = await res.json();
+          const availability = (data?.availability || {}) as Record<string, boolean>;
+          const deadIds = Object.entries(availability)
+            .filter(([, isUp]) => isUp === false)
+            .map(([id]) => id);
+          this.stationsVerifiedAt = Date.now();
+          this.state = {
+            ...this.state,
+            unavailableStationIds: deadIds,
+            checkingStations: false
+          };
+          this.emit();
+          return;
+        }
+      } catch {
+        // Keep current availability on network hiccup
+      } finally {
+        this.verifyStationsPromise = null;
+      }
+      this.state = { ...this.state, checkingStations: false };
+      this.emit();
+    })();
+
+    return this.verifyStationsPromise;
+  }
+
   setTab(tab: RadioPlayerTab) {
     if (this.state.activeTab === tab) return;
-    this.state = { ...this.state, activeTab: tab };
+    this.state = { ...this.state, activeTab: tab, errorMessage: null };
     this.emit();
   }
 
@@ -304,7 +391,7 @@ class GlobalRadioPlayerService {
 
   seek(timeSec: number) {
     this.state.currentTime = timeSec;
-    if (this.audio && isFinite(timeSec)) {
+    if (this.audio && isFinite(timeSec) && timeSec >= 0) {
       this.audio.currentTime = timeSec;
     }
     this.emitTime();
@@ -317,20 +404,41 @@ class GlobalRadioPlayerService {
     const audio = this.ensureAudio();
     if (!audio) return;
 
-    // Silent background autoplay attempt without flashing any loading spinner
-    audio.src = this.state.activeStation.streamUrl;
+    this.verifyAllStations(false);
+
+    const st = this.state.activeStation;
+    if (!st.streamUrl || !st.streamUrl.startsWith('https://')) return;
+
+    this.fallbackAttemptedForId = null;
+    audio.src = st.streamUrl;
     audio.play()
       .then(() => {
-        this.state = { ...this.state, activeTab: 'radio', isPlaying: true, isLoading: false, autoplayBlocked: false };
+        this.state = {
+          ...this.state,
+          activeTab: 'radio',
+          isPlaying: true,
+          isLoading: false,
+          autoplayBlocked: false,
+          errorMessage: null
+        };
         this.emit();
       })
       .catch(() => {
-        this.state = { ...this.state, activeTab: 'radio', isPlaying: false, isLoading: false, autoplayBlocked: true };
+        this.state = {
+          ...this.state,
+          activeTab: 'radio',
+          isPlaying: false,
+          isLoading: false,
+          autoplayBlocked: true
+        };
         this.emit();
 
-        // Resume cleanly on first user pointer gesture if browser blocked initial autoplay
         const resumeOnGesture = () => {
-          if (!this.userPausedManually && !this.state.isPlaying && localStorage.getItem('shat_masr_radio_autoplay') !== 'off') {
+          if (
+            !this.userPausedManually &&
+            !this.state.isPlaying &&
+            localStorage.getItem('shat_masr_radio_autoplay') !== 'off'
+          ) {
             this.playCurrent(true);
           }
           window.removeEventListener('pointerdown', resumeOnGesture);
@@ -340,57 +448,120 @@ class GlobalRadioPlayerService {
   }
 
   selectSong(song: ArabicSong) {
+    if (this.state.unavailableSongIds.includes(song.id) || !song.audioUrl || !song.audioUrl.startsWith('https://')) {
+      this.state = {
+        ...this.state,
+        activeTab: 'songs',
+        activeSong: song,
+        isPlaying: false,
+        isLoading: false,
+        errorMessage: 'هذه الأغنية غير متاحة حالياً'
+      };
+      this.emit();
+      return;
+    }
+
     this.userPausedManually = false;
     const audio = this.ensureAudio();
+    const mappedDur = this.state.songDurations[song.id] || song.durationSeconds || 0;
     this.state = {
       ...this.state,
       activeTab: 'songs',
-      activeSong: song,
+      activeSong: {
+        ...song,
+        durationSeconds: mappedDur,
+        duration: mappedDur > 0 ? formatAudioDuration(mappedDur) : song.duration
+      },
       currentTime: 0,
-      duration: song.durationSeconds || 240,
-      isLoading: false
+      duration: mappedDur,
+      isLoading: false,
+      errorMessage: null
     };
     this.emit();
     this.emitTime();
     this.scheduleLoadingIndicator();
+
     if (audio) {
-      audio.src = getSongAudioSource(song);
+      audio.src = song.audioUrl;
       audio.play()
         .then(() => {
           this.clearLoadingTimer();
-          this.state = { ...this.state, isPlaying: true, isLoading: false, autoplayBlocked: false };
+          this.applyRealSongDuration(audio);
+          this.state = {
+            ...this.state,
+            isPlaying: true,
+            isLoading: false,
+            autoplayBlocked: false,
+            errorMessage: null
+          };
           this.emit();
         })
         .catch(() => {
           this.clearLoadingTimer();
-          this.state = { ...this.state, isLoading: false, autoplayBlocked: true };
+          this.state = {
+            ...this.state,
+            isLoading: false,
+            isPlaying: false,
+            autoplayBlocked: true
+          };
           this.emit();
         });
     }
   }
 
   selectStation(station: ArabicRadioStation) {
+    if (
+      this.state.unavailableStationIds.includes(station.id) ||
+      !station.streamUrl ||
+      !station.streamUrl.startsWith('https://')
+    ) {
+      this.state = {
+        ...this.state,
+        activeTab: 'radio',
+        activeStation: station,
+        isPlaying: false,
+        isLoading: false,
+        errorMessage: 'غير متاحة — تعذر تشغيل القناة'
+      };
+      this.emit();
+      return;
+    }
+
     this.userPausedManually = false;
+    this.fallbackAttemptedForId = null;
     const audio = this.ensureAudio();
     this.state = {
       ...this.state,
       activeTab: 'radio',
       activeStation: station,
-      isLoading: false
+      isLoading: false,
+      errorMessage: null
     };
     this.emit();
     this.scheduleLoadingIndicator();
+
     if (audio) {
       audio.src = station.streamUrl;
       audio.play()
         .then(() => {
           this.clearLoadingTimer();
-          this.state = { ...this.state, isPlaying: true, isLoading: false, autoplayBlocked: false };
+          this.state = {
+            ...this.state,
+            isPlaying: true,
+            isLoading: false,
+            autoplayBlocked: false,
+            errorMessage: null
+          };
           this.emit();
         })
         .catch(() => {
           this.clearLoadingTimer();
-          this.state = { ...this.state, isLoading: false, autoplayBlocked: true };
+          this.state = {
+            ...this.state,
+            isLoading: false,
+            isPlaying: false,
+            autoplayBlocked: true
+          };
           this.emit();
         });
     }
@@ -401,20 +572,79 @@ class GlobalRadioPlayerService {
     localStorage.setItem('shat_masr_radio_autoplay', 'on');
     const audio = this.ensureAudio();
     if (!audio) return;
-    const targetUrl =
-      this.state.activeTab === 'songs'
-        ? getSongAudioSource(this.state.activeSong)
-        : this.state.activeStation.streamUrl;
-    if (!silent) {
-      this.scheduleLoadingIndicator();
+
+    if (this.state.activeTab === 'songs') {
+      const song = this.state.activeSong;
+      if (
+        this.state.unavailableSongIds.includes(song.id) ||
+        !song.audioUrl ||
+        !song.audioUrl.startsWith('https://')
+      ) {
+        this.state = {
+          ...this.state,
+          isPlaying: false,
+          isLoading: false,
+          errorMessage: 'هذه الأغنية غير متاحة حالياً'
+        };
+        this.emit();
+        return;
+      }
+      if (!silent) this.scheduleLoadingIndicator();
+      if (audio.src !== song.audioUrl) {
+        audio.src = song.audioUrl;
+      }
+      audio.play()
+        .then(() => {
+          this.clearLoadingTimer();
+          this.applyRealSongDuration(audio);
+          this.state = {
+            ...this.state,
+            isPlaying: true,
+            isLoading: false,
+            autoplayBlocked: false,
+            errorMessage: null
+          };
+          this.emit();
+        })
+        .catch(() => {
+          this.clearLoadingTimer();
+          this.state = { ...this.state, isLoading: false, isPlaying: false };
+          this.emit();
+        });
+      return;
     }
-    if (audio.src !== targetUrl) {
-      audio.src = targetUrl;
+
+    const station = this.state.activeStation;
+    if (
+      this.state.unavailableStationIds.includes(station.id) ||
+      !station.streamUrl ||
+      !station.streamUrl.startsWith('https://')
+    ) {
+      this.state = {
+        ...this.state,
+        isPlaying: false,
+        isLoading: false,
+        errorMessage: 'تعذر تشغيل القناة'
+      };
+      this.emit();
+      return;
+    }
+
+    this.fallbackAttemptedForId = null;
+    if (!silent) this.scheduleLoadingIndicator();
+    if (audio.src !== station.streamUrl && audio.src !== station.fallbackUrl) {
+      audio.src = station.streamUrl;
     }
     audio.play()
       .then(() => {
         this.clearLoadingTimer();
-        this.state = { ...this.state, isPlaying: true, isLoading: false, autoplayBlocked: false };
+        this.state = {
+          ...this.state,
+          isPlaying: true,
+          isLoading: false,
+          autoplayBlocked: false,
+          errorMessage: null
+        };
         this.emit();
       })
       .catch(() => {
@@ -435,7 +665,30 @@ class GlobalRadioPlayerService {
     this.emit();
   }
 
+  pauseForCall() {
+    this.clearLoadingTimer();
+    if (this.audio && !this.audio.paused) {
+      this.audio.pause();
+    }
+    if (this.state.isPlaying || this.state.isLoading) {
+      this.state = { ...this.state, isPlaying: false, isLoading: false };
+      this.emit();
+    }
+  }
+
+  stop() {
+    this.clearLoadingTimer();
+    if (this.audio && !this.audio.paused) {
+      this.audio.pause();
+    }
+    if (this.state.isPlaying || this.state.isLoading || this.state.autoplayBlocked) {
+      this.state = { ...this.state, isPlaying: false, isLoading: false, autoplayBlocked: false };
+      this.emit();
+    }
+  }
+
   togglePlay() {
+    this.state = { ...this.state, errorMessage: null };
     if (this.state.isPlaying) {
       this.pause();
     } else {
@@ -443,44 +696,83 @@ class GlobalRadioPlayerService {
     }
   }
 
-  next() {
-    if (this.state.activeTab === 'radio') {
-      const idx = ARABIC_RADIO_STATIONS.findIndex(s => s.id === this.state.activeStation.id);
-      const nextStation = ARABIC_RADIO_STATIONS[(idx + 1) % ARABIC_RADIO_STATIONS.length];
-      this.selectStation(nextStation);
-      return;
-    }
+  private playNextInSameCategory(fromAutoEnd: boolean) {
     const current = this.state.activeSong;
-    if (this.state.playMode === 'repeat_one') {
+    if (fromAutoEnd && this.state.playMode === 'repeat_one') {
       this.selectSong(current);
       return;
     }
+
+    const unavailable = new Set(this.state.unavailableSongIds);
+    const sameCat = ARABIC_100_SONGS.filter(
+      (s) => s.category === current.category && !unavailable.has(s.id)
+    );
+    const pool =
+      sameCat.length > 0
+        ? sameCat
+        : ARABIC_100_SONGS.filter((s) => !unavailable.has(s.id));
+
+    if (pool.length === 0) return;
+
     if (this.state.playMode === 'shuffle') {
-      const others = ARABIC_100_SONGS.filter(s => s.id !== current.id);
-      const randomSong = others[Math.floor(Math.random() * others.length)] || ARABIC_100_SONGS[0];
+      const others = pool.filter((s) => s.id !== current.id);
+      const pickList = others.length > 0 ? others : pool;
+      const randomSong = pickList[Math.floor(Math.random() * pickList.length)];
       this.selectSong(randomSong);
       return;
     }
-    const idx = ARABIC_100_SONGS.findIndex(s => s.id === current.id);
-    this.selectSong(ARABIC_100_SONGS[(idx + 1) % ARABIC_100_SONGS.length]);
+
+    const idx = pool.findIndex((s) => s.id === current.id);
+    const nextSong = pool[(idx + 1) % pool.length];
+    this.selectSong(nextSong);
+  }
+
+  next() {
+    if (this.state.activeTab === 'radio') {
+      const unavailable = new Set(this.state.unavailableStationIds);
+      const available = ARABIC_RADIO_STATIONS.filter((s) => !unavailable.has(s.id));
+      const pool = available.length > 0 ? available : ARABIC_RADIO_STATIONS;
+      const idx = pool.findIndex((s) => s.id === this.state.activeStation.id);
+      const nextStation = pool[(idx + 1) % pool.length];
+      this.selectStation(nextStation);
+      return;
+    }
+    this.playNextInSameCategory(false);
   }
 
   prev() {
     if (this.state.activeTab === 'radio') {
-      const idx = ARABIC_RADIO_STATIONS.findIndex(s => s.id === this.state.activeStation.id);
-      const prevStation = ARABIC_RADIO_STATIONS[(idx - 1 + ARABIC_RADIO_STATIONS.length) % ARABIC_RADIO_STATIONS.length];
+      const unavailable = new Set(this.state.unavailableStationIds);
+      const available = ARABIC_RADIO_STATIONS.filter((s) => !unavailable.has(s.id));
+      const pool = available.length > 0 ? available : ARABIC_RADIO_STATIONS;
+      const idx = pool.findIndex((s) => s.id === this.state.activeStation.id);
+      const prevStation = pool[(idx - 1 + pool.length) % pool.length];
       this.selectStation(prevStation);
       return;
     }
+
     const current = this.state.activeSong;
+    const unavailable = new Set(this.state.unavailableSongIds);
+    const sameCat = ARABIC_100_SONGS.filter(
+      (s) => s.category === current.category && !unavailable.has(s.id)
+    );
+    const pool =
+      sameCat.length > 0
+        ? sameCat
+        : ARABIC_100_SONGS.filter((s) => !unavailable.has(s.id));
+    if (pool.length === 0) return;
+
     if (this.state.playMode === 'shuffle') {
-      const others = ARABIC_100_SONGS.filter(s => s.id !== current.id);
-      const randomSong = others[Math.floor(Math.random() * others.length)] || ARABIC_100_SONGS[0];
+      const others = pool.filter((s) => s.id !== current.id);
+      const pickList = others.length > 0 ? others : pool;
+      const randomSong = pickList[Math.floor(Math.random() * pickList.length)];
       this.selectSong(randomSong);
       return;
     }
-    const idx = ARABIC_100_SONGS.findIndex(s => s.id === current.id);
-    this.selectSong(ARABIC_100_SONGS[(idx - 1 + ARABIC_100_SONGS.length) % ARABIC_100_SONGS.length]);
+
+    const idx = pool.findIndex((s) => s.id === current.id);
+    const prevSong = pool[(idx - 1 + pool.length) % pool.length];
+    this.selectSong(prevSong);
   }
 }
 

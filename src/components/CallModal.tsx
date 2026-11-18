@@ -17,6 +17,7 @@ import { User } from '../types/chat';
 import { isGuestUser } from '../data/seedData';
 import { sounds } from '../utils/soundEffects';
 import { realtimeSocket } from '../services/realtimeSocket';
+import { globalRadioPlayer } from '../services/radioPlayer';
 
 interface CallModalProps {
   isOpen: boolean;
@@ -168,7 +169,9 @@ export const CallModal: React.FC<CallModalProps> = ({
 
   // Outgoing call setup + WebRTC signaling subscription
   useEffect(() => {
-    if (!isOpen || isGuest) return;
+    if (!isOpen) return;
+    globalRadioPlayer.pauseForCall();
+    if (isGuest) return;
 
     let cancelled = false;
     setDuration(0);
@@ -380,7 +383,7 @@ export const CallModal: React.FC<CallModalProps> = ({
   // Guest Restriction Modal (Light Theme)
   if (isGuest) {
     return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/45 backdrop-blur-sm animate-in fade-in" dir="rtl">
+      <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-slate-900/45 backdrop-blur-sm animate-in fade-in" dir="rtl">
         <div className="w-full max-w-sm bg-white border border-amber-200 rounded-3xl p-6 text-center space-y-4 shadow-2xl">
           <div className="w-16 h-16 rounded-3xl bg-amber-50 border border-amber-200 flex items-center justify-center mx-auto text-amber-600">
             <AlertCircle className="w-8 h-8" />
@@ -415,7 +418,7 @@ export const CallModal: React.FC<CallModalProps> = ({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/45 backdrop-blur-md animate-in fade-in select-none sm:p-4" dir="rtl">
+    <div className="fixed inset-0 z-[200] flex items-center justify-center bg-slate-900/45 backdrop-blur-md animate-in fade-in select-none sm:p-4" dir="rtl">
       <audio ref={remoteAudioRef} autoPlay playsInline className="hidden" />
       <div className="relative w-full max-w-md h-full sm:h-[88vh] sm:rounded-3xl bg-gradient-to-b from-indigo-50/90 via-white to-emerald-50/70 border border-slate-200 flex flex-col justify-between overflow-hidden shadow-2xl p-6 text-slate-900">
         {/* Top Header */}

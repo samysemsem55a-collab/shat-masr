@@ -1,0 +1,902 @@
+[
+  {
+    "id": "song_1",
+    "title": "أنت عمري",
+    "artist": "أم كلثوم",
+    "category": "tarab",
+    "coverImage": "https://archive.org/services/img/1631967",
+    "audioUrl": "https://archive.org/download/1631967/%D9%86%D9%88%D8%A7%D8%AF%D8%B1%20%D8%A3%D9%85%20%D9%83%D9%84%D8%AB%D9%88%D9%85/%D8%A3%D9%86%D8%AA%20%D8%B9%D9%85%D8%B1%D9%8A%20%D8%AD%D9%81%D9%84%20%D8%A7%D9%84%D8%A7%D8%B3%D9%83%D9%86%D8%AF%D8%B1%D9%8A%D8%A9%20%D9%84%D8%AF%D8%B9%D9%85%20%D8%A7%D9%84%D9%85%D8%AC%D9%87%D9%88%D8%AF%20%D8%A7%D9%84%D8%AD%D8%B1%D8%A8%D9%8A%2031%20%D8%A7%D9%88%D8%AA%201967.mp3",
+    "durationSeconds": 4320
+  },
+  {
+    "id": "song_2",
+    "title": "ألف ليلة وليلة",
+    "artist": "أم كلثوم",
+    "category": "tarab",
+    "coverImage": "https://archive.org/services/img/oum-kalthoum-alf-leila-we-leila",
+    "audioUrl": "https://archive.org/download/oum-kalthoum-alf-leila-we-leila/01.%20Alf%20Leila%20We%20Leila.mp3",
+    "durationSeconds": 4104
+  },
+  {
+    "id": "song_3",
+    "title": "سيرة الحب",
+    "artist": "أم كلثوم",
+    "category": "tarab",
+    "coverImage": "https://archive.org/services/img/SeretElHob",
+    "audioUrl": "https://archive.org/download/SeretElHob/Seret_El_Hob.mp3",
+    "durationSeconds": 2365
+  },
+  {
+    "id": "song_4",
+    "title": "الأطلال",
+    "artist": "أم كلثوم",
+    "category": "tarab",
+    "coverImage": "https://archive.org/services/img/umm-kulthum-al-atlal",
+    "audioUrl": "https://archive.org/download/umm-kulthum-al-atlal/Umm%20Kulthum%20-%20Al%20Atlal.mp3",
+    "durationSeconds": 2905
+  },
+  {
+    "id": "song_5",
+    "title": "دارت الأيام",
+    "artist": "أم كلثوم",
+    "category": "tarab",
+    "coverImage": "https://archive.org/services/img/daret-elayem-tessgilette-zemene",
+    "audioUrl": "https://archive.org/download/daret-elayem-tessgilette-zemene/%D8%AF%D8%A7%D8%B1%D8%AA%20%D8%A7%D9%84%D8%A3%D9%8A%D8%A7%D9%85%2030%20%D8%A7%D9%81%D8%B1%D9%8A%D9%84%201970%20%D8%AD%D9%81%D9%84%20%D9%82%D8%B5%D8%B1%20%D8%A7%D9%84%D9%86%D9%8A%D9%84.mp3",
+    "durationSeconds": 4264
+  },
+  {
+    "id": "song_6",
+    "title": "فكروني",
+    "artist": "أم كلثوم",
+    "category": "tarab",
+    "coverImage": "https://archive.org/services/img/fakarouni-tessgilette-zemene",
+    "audioUrl": "https://archive.org/download/fakarouni-tessgilette-zemene/%D9%81%D9%83%D8%B1%D9%88%D9%86%D9%8A%2012%20%D9%8A%D9%88%D9%84%D9%8A%D9%88%201968%20%D8%A8%D8%B9%D9%84%D8%A8%D9%83%20%D9%84%D8%A8%D9%86%D8%A7%D9%86%20%D9%88%D8%B5%D9%84%D9%87%202.mp3",
+    "durationSeconds": 4937
+  },
+  {
+    "id": "song_7",
+    "title": "حب إيه",
+    "artist": "أم كلثوم",
+    "category": "tarab",
+    "coverImage": "https://archive.org/services/img/7obeeh1961-tessgilette-zemene_201512",
+    "audioUrl": "https://archive.org/download/7obeeh1961-tessgilette-zemene_201512/%D8%AD%D8%A8%20%D8%A5%D9%8A%D9%87%205-1-1961%20%D8%A7%D9%84%D8%A3%D8%B2%D8%A8%D9%83%D9%8A%D8%A9%20%D8%A7%D9%84%D9%88%D8%B5%D9%84%D8%A9%20%D8%A7%D9%84%D8%AB%D8%A7%D9%86%D9%8A%D8%A9.mp3",
+    "durationSeconds": 4057
+  },
+  {
+    "id": "song_8",
+    "title": "بعيد عنك",
+    "artist": "أم كلثوم",
+    "category": "tarab",
+    "coverImage": "https://archive.org/services/img/20200515_20200515_0609",
+    "audioUrl": "https://archive.org/download/20200515_20200515_0609/%D8%A8%D8%B9%D9%8A%D8%AF%20%D8%B9%D9%86%D9%83.mp3",
+    "durationSeconds": 2298
+  },
+  {
+    "id": "song_9",
+    "title": "للصبر حدود",
+    "artist": "أم كلثوم",
+    "category": "tarab",
+    "coverImage": "https://archive.org/services/img/20200515_20200515_0840",
+    "audioUrl": "https://archive.org/download/20200515_20200515_0840/%D9%84%D9%84%D8%B5%D8%A8%D8%B1%20%D8%AD%D8%AF%D9%88%D8%AF.mp3",
+    "durationSeconds": 2280
+  },
+  {
+    "id": "song_10",
+    "title": "لسه فاكر",
+    "artist": "أم كلثوم",
+    "category": "tarab",
+    "coverImage": "https://archive.org/services/img/lessafeker1960-tessgilette-zemene",
+    "audioUrl": "https://archive.org/download/lessafeker1960-tessgilette-zemene/%D9%84%D8%B3%D9%87%20%D9%81%D8%A7%D9%83%D8%B1%2031%20%D9%85%D8%A7%D8%B1%D8%B3%201960%20%D8%B1%D9%8A%D9%81%D9%88%D9%84%D9%8A.mp3",
+    "durationSeconds": 3070
+  },
+  {
+    "id": "song_11",
+    "title": "هذه ليلتي",
+    "artist": "أم كلثوم",
+    "category": "tarab",
+    "coverImage": "https://archive.org/services/img/1631967",
+    "audioUrl": "https://archive.org/download/1631967/%D9%86%D9%88%D8%A7%D8%AF%D8%B1%20%D8%A3%D9%85%20%D9%83%D9%84%D8%AB%D9%88%D9%85/Hazehi%20Laylaty%20(19-06-1969)%20Abou%20El%20Houl%20W1.mp3",
+    "durationSeconds": 5512
+  },
+  {
+    "id": "song_12",
+    "title": "أروح لمين",
+    "artist": "أم كلثوم",
+    "category": "tarab",
+    "coverImage": "https://archive.org/services/img/1631967",
+    "audioUrl": "https://archive.org/download/1631967/%D9%86%D9%88%D8%A7%D8%AF%D8%B1%20%D8%A3%D9%85%20%D9%83%D9%84%D8%AB%D9%88%D9%85/%D8%A3%D8%B1%D9%88%D8%AD%20%D9%84%D9%85%D9%8A%D9%86%20%20%D8%AD%D9%81%D9%84%20%D8%A7%D9%84%D9%85%D9%86%D8%B5%D9%88%D8%B1%D8%A9%207%20%D9%85%D8%A7%D9%8A%201960.mp3",
+    "durationSeconds": 3054
+  },
+  {
+    "id": "song_13",
+    "title": "أمل حياتي",
+    "artist": "أم كلثوم",
+    "category": "tarab",
+    "coverImage": "https://archive.org/services/img/amal7ayati1964-tessgilette-zemene",
+    "audioUrl": "https://archive.org/download/amal7ayati1964-tessgilette-zemene/%D8%A7%D9%85%D9%84%20%D8%AD%D9%8A%D8%A7%D8%AA%D9%8A%202%20%D8%AF%D9%8A%D8%B3%D9%85%D8%A8%D8%B1%201965%20%D8%A7%D9%84%D8%AD%D9%81%D9%84%20%D8%A7%D9%84%D8%A7%D9%88%D9%84.MP3",
+    "durationSeconds": 6710
+  },
+  {
+    "id": "song_14",
+    "title": "من أجل عينيك",
+    "artist": "أم كلثوم",
+    "category": "tarab",
+    "coverImage": "https://archive.org/services/img/menagli-3aynaiki1972-tessgilette-zemene",
+    "audioUrl": "https://archive.org/download/menagli-3aynaiki1972-tessgilette-zemene/%D9%85%D9%86%20%D8%A7%D8%AC%D9%84%20%D8%B9%D9%8A%D9%86%D9%8A%D9%83%206%20%D8%A7%D9%81%D8%B1%D9%8A%D9%84%201972.mp3",
+    "durationSeconds": 3901
+  },
+  {
+    "id": "song_15",
+    "title": "أنساك",
+    "artist": "أم كلثوم",
+    "category": "tarab",
+    "coverImage": "https://archive.org/services/img/ansak1962-tessgilette-zemene",
+    "audioUrl": "https://archive.org/download/ansak1962-tessgilette-zemene/%D8%A7%D9%86%D8%B3%D8%A7%D9%83%204%20%D8%AC%D8%A7%D9%86%D9%81%D9%8A%20%201962%20%D9%88%D8%B5%D9%84%D8%A9%20%D8%A7%D9%84%D8%AB%D8%A7%D9%86%D9%8A%D8%A9%20%D9%85%D8%B3%D8%B1%D8%AD%20%D8%A7%D9%84%D8%A7%D8%B2%D8%A8%D9%83%D9%8A%D8%A9.MP3",
+    "durationSeconds": 5179
+  },
+  {
+    "id": "song_16",
+    "title": "غلبت أصالح في روحي",
+    "artist": "أم كلثوم",
+    "category": "tarab",
+    "coverImage": "https://archive.org/services/img/asalh-rou7i1949-tessgilette-zemene",
+    "audioUrl": "https://archive.org/download/asalh-rou7i1949-tessgilette-zemene/%D8%BA%D9%84%D8%A8%D8%AA%20%D8%A7%D8%B5%D8%A7%D9%84%D8%AD%20%D9%81%D9%8A%20%D8%B1%D9%88%D8%AD%D9%8A%203%20%D9%81%D8%A8%D8%B1%D8%A7%D9%8A%D8%B1%201949%20%D8%A7%D9%84%D8%A7%D8%B2%D8%A8%D9%83%D9%8A%D9%87.mp3",
+    "durationSeconds": 2973
+  },
+  {
+    "id": "song_17",
+    "title": "بلاش تفارق",
+    "artist": "وردة الجزائرية",
+    "category": "tarab",
+    "coverImage": "https://archive.org/services/img/WardaAlJazairiaBalashTefarek",
+    "audioUrl": "https://archive.org/download/WardaAlJazairiaBalashTefarek/%D8%A7%D8%AC%D9%85%D9%84%20%D8%A7%D8%BA%D8%A7%D9%86%D9%8A%20%D9%88%D8%B1%D8%AF%D8%A9%20%D8%A7%D9%84%D8%AC%D8%B2%D8%A7%D8%A6%D8%B1%D9%8A%D8%A9%20-%20%D8%A8%D9%84%D8%A7%D8%B4%20%D8%AA%D9%81%D8%A7%D8%B1%D9%82%20-%20%D8%AD%D9%81%D9%84%20%D8%B1%D8%A7%D8%A6%D8%B9%20%D9%83%D8%A7%D9%85%D9%84%20%20warda%20Al%20Jazairia%20-%20Balash%20Tefarek.mp3",
+    "durationSeconds": 2530
+  },
+  {
+    "id": "song_18",
+    "title": "معجزة",
+    "artist": "وردة الجزائرية",
+    "category": "tarab",
+    "coverImage": "https://archive.org/services/img/20250501_20250501_1737",
+    "audioUrl": "https://archive.org/download/20250501_20250501_1737/%F0%9F%93%BB%F0%9F%8E%B5%D9%88%D8%B1%D8%AF%D8%A9%20%D8%A7%D9%84%D8%AC%D8%B2%D8%A7%D8%A6%D8%B1%D9%8A%D8%A9%20%D9%80%20%D9%85%D8%B9%D8%AC%D8%B2%D8%A9.mp3",
+    "durationSeconds": 1633
+  },
+  {
+    "id": "song_19",
+    "title": "أحلى النساء",
+    "artist": "كاظم الساهر",
+    "category": "tarab",
+    "coverImage": "https://archive.org/services/img/ByBillboardArabic_20150904_2337",
+    "audioUrl": "https://archive.org/download/ByBillboardArabic_20150904_2337/%D9%83%D8%A7%D8%B8%D9%85%20%D8%A7%D9%84%D8%B3%D8%A7%D9%87%D8%B1%20%D8%A7%D8%AD%D9%84%D9%89%20%D8%A7%D9%84%D9%86%D8%B3%D8%A7%D8%A1%20%23By_Billboard_Arabic.mp3",
+    "durationSeconds": 350
+  },
+  {
+    "id": "song_20",
+    "title": "إلا أجيبك",
+    "artist": "كاظم الساهر",
+    "category": "tarab",
+    "coverImage": "https://archive.org/services/img/mp-3_20260605_202606",
+    "audioUrl": "https://archive.org/download/mp-3_20260605_202606/%D8%A7%D8%BA%D9%86%D9%8A%D8%A9%20%D9%83%D8%A7%D8%B8%D9%85%20%D8%A7%D9%84%D8%B3%D8%A7%D9%87%D8%B1%20-%20%D8%A5%D9%84%D8%A7%20%D8%A3%D8%AC%D9%8A%D8%A8%D9%83%20MP3.mp3",
+    "durationSeconds": 365
+  },
+  {
+    "id": "song_21",
+    "title": "أكون أو لا أكون",
+    "artist": "كاظم الساهر",
+    "category": "tarab",
+    "coverImage": "https://archive.org/services/img/ByBillboardArabic_20150904_2341",
+    "audioUrl": "https://archive.org/download/ByBillboardArabic_20150904_2341/%D9%83%D8%A7%D8%B8%D9%85%20%D8%A7%D9%84%D8%B3%D8%A7%D9%87%D8%B1%20%D8%A7%D9%83%D9%88%D9%86%20%D8%A7%D9%88%20%D9%84%D8%A7%20%D8%A7%D9%83%D9%88%D9%86%20%23By_Billboard_Arabic.mp3",
+    "durationSeconds": 330
+  },
+  {
+    "id": "song_22",
+    "title": "علم قلبي الشوق",
+    "artist": "جورج وسوف",
+    "category": "tarab",
+    "coverImage": "https://archive.org/services/img/ByBillboardArabic_20150904_2330",
+    "audioUrl": "https://archive.org/download/ByBillboardArabic_20150904_2330/%D8%AC%D9%88%D8%B1%D8%AC%20%D9%88%D8%B3%D9%88%D9%81%20%D8%B9%D9%84%D9%85%20%D9%82%D9%84%D8%A8%D9%8A%20%D8%A7%D9%84%D8%B4%D9%88%D9%82%20%23By_Billboard_Arabic.mp3",
+    "durationSeconds": 300
+  },
+  {
+    "id": "song_23",
+    "title": "قارئة الفنجان",
+    "artist": "عبد الحليم حافظ",
+    "category": "classic",
+    "coverImage": "https://archive.org/services/img/halim_qariat_al_fengan_studio",
+    "audioUrl": "https://archive.org/download/halim_qariat_al_fengan_studio/01%20Kariat%20Al%20Fengan.mp3",
+    "durationSeconds": 2605
+  },
+  {
+    "id": "song_24",
+    "title": "موعود",
+    "artist": "عبد الحليم حافظ",
+    "category": "classic",
+    "coverImage": "https://archive.org/services/img/halim_mawoud_old_recording",
+    "audioUrl": "https://archive.org/download/halim_mawoud_old_recording/%D9%85%D9%88%D8%B9%D9%88%D8%AF.mp3",
+    "durationSeconds": 4164
+  },
+  {
+    "id": "song_25",
+    "title": "سواح",
+    "artist": "عبد الحليم حافظ",
+    "category": "classic",
+    "coverImage": "https://archive.org/services/img/b-sawah",
+    "audioUrl": "https://archive.org/download/b-sawah/A%20-%20%D8%B3%D9%88%D8%A7%D8%AD%20-%20%D8%A5%D9%86%20%D9%84%D8%A7%D9%82%D8%A7%D9%83%D9%85%20%D8%AD%D8%A8%D9%8A%D8%A8%D9%8A.mp3",
+    "durationSeconds": 417
+  },
+  {
+    "id": "song_26",
+    "title": "أهواك",
+    "artist": "عبد الحليم حافظ",
+    "category": "classic",
+    "coverImage": "https://archive.org/services/img/AbdelhalimHafez-Ahwak",
+    "audioUrl": "https://archive.org/download/AbdelhalimHafez-Ahwak/AbdelhalimHafez-Ahwak.mp3",
+    "durationSeconds": 308
+  },
+  {
+    "id": "song_27",
+    "title": "توبة",
+    "artist": "عبد الحليم حافظ",
+    "category": "classic",
+    "coverImage": "https://archive.org/services/img/zay-elhawa-short-version-abdel-halim-hafez",
+    "audioUrl": "https://archive.org/download/zay-elhawa-short-version-abdel-halim-hafez/Abdel%20Halim%20Hafez%20-%20El%20Toba%20-%20Studio%20%D8%B9%D8%A8%D8%AF%20%D8%A7%D9%84%D8%AD%D9%84%D9%8A%D9%85%20%D8%AD%D8%A7%D9%81%D8%B8%20-%20%D8%A7%D9%84%D8%AA%D9%88%D8%A8%D8%A9%20-%20%D8%A7%D8%B3%D8%AA%D9%88%D8%AF%D9%8A%D9%88.mp3",
+    "durationSeconds": 269
+  },
+  {
+    "id": "song_28",
+    "title": "جبار",
+    "artist": "عبد الحليم حافظ",
+    "category": "classic",
+    "coverImage": "https://archive.org/services/img/ammar-el-shariyi-abdel-halim-hafez-maana-dayman-dayman-dayman_202603",
+    "audioUrl": "https://archive.org/download/ammar-el-shariyi-abdel-halim-hafez-maana-dayman-dayman-dayman_202603/A3%20Gabbar%20%D8%AC%D8%A8%D8%A7%D8%B1.mp3",
+    "durationSeconds": 461
+  },
+  {
+    "id": "song_29",
+    "title": "شغلوني",
+    "artist": "عبد الحليم حافظ",
+    "category": "classic",
+    "coverImage": "https://archive.org/services/img/ammar-el-shariyi-abdel-halim-hafez-maana-dayman-dayman-dayman_202603",
+    "audioUrl": "https://archive.org/download/ammar-el-shariyi-abdel-halim-hafez-maana-dayman-dayman-dayman_202603/A1%20Shaghalony%20%D8%B4%D8%BA%D9%84%D9%88%D9%86%D9%8A%20.mp3",
+    "durationSeconds": 160
+  },
+  {
+    "id": "song_30",
+    "title": "مالك ومالي",
+    "artist": "عبد الحليم حافظ",
+    "category": "classic",
+    "coverImage": "https://archive.org/services/img/ammar-el-shariyi-abdel-halim-hafez-maana-dayman-dayman-dayman_202603",
+    "audioUrl": "https://archive.org/download/ammar-el-shariyi-abdel-halim-hafez-maana-dayman-dayman-dayman_202603/A2%20Malak%20Wa%20Maly%20%D9%85%D8%A7%D9%84%D9%83%20%D9%88%D9%85%D8%A7%D9%84%D9%8A%20.mp3",
+    "durationSeconds": 258
+  },
+  {
+    "id": "song_31",
+    "title": "ليه تشغل بالك",
+    "artist": "عبد الحليم حافظ",
+    "category": "classic",
+    "coverImage": "https://archive.org/services/img/ammar-el-shariyi-abdel-halim-hafez-maana-dayman-dayman-dayman_202603",
+    "audioUrl": "https://archive.org/download/ammar-el-shariyi-abdel-halim-hafez-maana-dayman-dayman-dayman_202603/A4%20Leh%20Teshghel%20Balak%20%D9%84%D9%8A%D9%87%20%D8%AA%D8%B4%D9%81%D9%84%20%D8%A8%D8%A7%D9%84%D9%83.mp3",
+    "durationSeconds": 247
+  },
+  {
+    "id": "song_32",
+    "title": "تعالى أقولك",
+    "artist": "عبد الحليم حافظ",
+    "category": "classic",
+    "coverImage": "https://archive.org/services/img/ammar-el-shariyi-abdel-halim-hafez-maana-dayman-dayman-dayman_202603",
+    "audioUrl": "https://archive.org/download/ammar-el-shariyi-abdel-halim-hafez-maana-dayman-dayman-dayman_202603/B1%20Taaly%20Aoulek%20%D8%AA%D8%B9%D8%A7%D9%84%D9%89%20%D8%A3%D9%82%D9%88%D9%84%D9%83.mp3",
+    "durationSeconds": 200
+  },
+  {
+    "id": "song_33",
+    "title": "إيه ذنبي إيه",
+    "artist": "عبد الحليم حافظ",
+    "category": "classic",
+    "coverImage": "https://archive.org/services/img/eih-zanby-eih-live",
+    "audioUrl": "https://archive.org/download/eih-zanby-eih-live/Eih%20Zanby%20Eih%20%5BStudio%5D.mp3",
+    "durationSeconds": 339
+  },
+  {
+    "id": "song_34",
+    "title": "ضحك ولعب",
+    "artist": "عبد الحليم حافظ",
+    "category": "classic",
+    "coverImage": "https://archive.org/services/img/ammar-el-shariyi-abdel-halim-hafez-maana-dayman-dayman-dayman_202603",
+    "audioUrl": "https://archive.org/download/ammar-el-shariyi-abdel-halim-hafez-maana-dayman-dayman-dayman_202603/B3%20Dahk%20Wa%20La'ab%20%D8%B6%D8%AD%D9%83%20%D9%88%20%D9%84%D8%B9%D8%A8%20.mp3",
+    "durationSeconds": 508
+  },
+  {
+    "id": "song_35",
+    "title": "ظلموه",
+    "artist": "عبد الحليم حافظ",
+    "category": "classic",
+    "coverImage": "https://archive.org/services/img/y-2mate.com-zalamoh-abdel-halim-hafez_202305",
+    "audioUrl": "https://archive.org/download/y-2mate.com-zalamoh-abdel-halim-hafez_202305/y2mate.com%20-%20Zalamoh%20%20Abdel%20Halim%20Hafez%20%D8%B8%D9%84%D9%85%D9%88%D9%87%20%20%D8%B9%D8%A8%D8%AF%20%D8%A7%D9%84%D8%AD%D9%84%D9%8A%D9%85%20%D8%AD%D8%A7%D9%81%D8%B8.mp3",
+    "durationSeconds": 539
+  },
+  {
+    "id": "song_36",
+    "title": "بحلم بيوم",
+    "artist": "عبد الحليم حافظ",
+    "category": "classic",
+    "coverImage": "https://archive.org/services/img/bahlam-be-youm",
+    "audioUrl": "https://archive.org/download/bahlam-be-youm/Bahlam%20Be%20Youm.mp3",
+    "durationSeconds": 231
+  },
+  {
+    "id": "song_37",
+    "title": "بأمر الحب",
+    "artist": "عبد الحليم حافظ",
+    "category": "classic",
+    "coverImage": "https://archive.org/services/img/halim-tessgilette-zemene",
+    "audioUrl": "https://archive.org/download/halim-tessgilette-zemene/%D8%A8%D8%A3%D9%85%D8%B1%20%D8%A7%D9%84%D8%AD%D8%A8%20%20-%20%D8%AA%D8%B3%D8%AC%D9%8A%D9%84%20%D9%85%D9%86%D9%82%D9%88%D9%84%20%D9%85%D9%86%20%D8%AD%D9%81%D9%84%20%D8%A3%D8%B6%D9%88%D8%A7%D8%A1%20%D8%A7%D9%84%D9%85%D8%AF%D9%8A%D9%86%D8%A9%20%D9%81%D9%8A%20%D8%AF%D9%85%D8%B4%D9%82%201959%20%D8%A3%D9%88%201960.mp3",
+    "durationSeconds": 800
+  },
+  {
+    "id": "song_38",
+    "title": "يا ترى يا نسمة",
+    "artist": "محمد عبد الوهاب",
+    "category": "classic",
+    "coverImage": "https://archive.org/services/img/yatrayanesma-tessgilette-zemene",
+    "audioUrl": "https://archive.org/download/yatrayanesma-tessgilette-zemene/%D9%85%D8%AD%D9%85%D8%AF%20%D8%B9%D8%A8%D8%AF%20%D8%A7%D9%84%D9%88%D9%87%D8%A7%D8%A8%20%D9%80%20%D9%8A%D8%A7%20%D8%AA%D8%B1%D9%89%20%D9%8A%D8%A7%20%D9%86%D8%B3%D9%85%D8%A9.mp3",
+    "durationSeconds": 362
+  },
+  {
+    "id": "song_39",
+    "title": "فين طريقك فين",
+    "artist": "محمد عبد الوهاب",
+    "category": "classic",
+    "coverImage": "https://archive.org/services/img/14FinTariquak-tessgilette-zemene",
+    "audioUrl": "https://archive.org/download/14FinTariquak-tessgilette-zemene/14%20fin%20tariquak.mp3",
+    "durationSeconds": 531
+  },
+  {
+    "id": "song_40",
+    "title": "طول عمري عايش لوحدي",
+    "artist": "محمد عبد الوهاب",
+    "category": "classic",
+    "coverImage": "https://archive.org/services/img/tool3omri-tessgilette-zemene",
+    "audioUrl": "https://archive.org/download/tool3omri-tessgilette-zemene/%D8%B7%D9%88%D9%84%20%D8%B9%D9%85%D8%B1%D9%8A%20%D8%B9%D8%A7%D9%8A%D8%B4%20%D9%84%D9%88%D8%AD%D8%AF%D9%8A.mp3",
+    "durationSeconds": 396
+  },
+  {
+    "id": "song_41",
+    "title": "حبيتك بالصيف",
+    "artist": "فيروز",
+    "category": "levantine",
+    "coverImage": "https://archive.org/services/img/03-la-fleur-des-cites",
+    "audioUrl": "https://archive.org/download/03-la-fleur-des-cites/The%20Best%20of%20Fairuz/01%20Habbaytak%20Bil%20Sayf.mp3",
+    "durationSeconds": 216
+  },
+  {
+    "id": "song_42",
+    "title": "قديش كان في ناس",
+    "artist": "فيروز",
+    "category": "levantine",
+    "coverImage": "https://archive.org/services/img/03-la-fleur-des-cites",
+    "audioUrl": "https://archive.org/download/03-la-fleur-des-cites/The%20Best%20of%20Fairuz/02%20Addaysh%20Kan%20Fi%20Nas.mp3",
+    "durationSeconds": 227
+  },
+  {
+    "id": "song_43",
+    "title": "زهرة المدائن",
+    "artist": "فيروز",
+    "category": "levantine",
+    "coverImage": "https://archive.org/services/img/03-la-fleur-des-cites",
+    "audioUrl": "https://archive.org/download/03-la-fleur-des-cites/The%20Best%20of%20Fairuz/03%20La%20Fleur%20Des%20Cites.mp3",
+    "durationSeconds": 516
+  },
+  {
+    "id": "song_44",
+    "title": "يا مختار المخاتير",
+    "artist": "فيروز",
+    "category": "levantine",
+    "coverImage": "https://archive.org/services/img/03-la-fleur-des-cites",
+    "audioUrl": "https://archive.org/download/03-la-fleur-des-cites/The%20Best%20of%20Fairuz/04%20Ya%20Moukhtar%20el%20Makhatir.mp3",
+    "durationSeconds": 156
+  },
+  {
+    "id": "song_45",
+    "title": "شادي",
+    "artist": "فيروز",
+    "category": "levantine",
+    "coverImage": "https://archive.org/services/img/03-la-fleur-des-cites",
+    "audioUrl": "https://archive.org/download/03-la-fleur-des-cites/The%20Best%20of%20Fairuz/05%20Shady.mp3",
+    "durationSeconds": 157
+  },
+  {
+    "id": "song_46",
+    "title": "كان الزمان",
+    "artist": "فيروز",
+    "category": "levantine",
+    "coverImage": "https://archive.org/services/img/03-la-fleur-des-cites",
+    "audioUrl": "https://archive.org/download/03-la-fleur-des-cites/The%20Best%20of%20Fairuz/06%20Kaan%20Azzaman.mp3",
+    "durationSeconds": 154
+  },
+  {
+    "id": "song_47",
+    "title": "القدس العتيقة",
+    "artist": "فيروز",
+    "category": "levantine",
+    "coverImage": "https://archive.org/services/img/03-la-fleur-des-cites",
+    "audioUrl": "https://archive.org/download/03-la-fleur-des-cites/The%20Best%20of%20Fairuz/07%20Al%20Kods%20Alatika.mp3",
+    "durationSeconds": 205
+  },
+  {
+    "id": "song_48",
+    "title": "شايف البحر شو كبير",
+    "artist": "فيروز",
+    "category": "levantine",
+    "coverImage": "https://archive.org/services/img/03-la-fleur-des-cites",
+    "audioUrl": "https://archive.org/download/03-la-fleur-des-cites/The%20Best%20of%20Fairuz/08%20Shayef%20El%20Bahr%20Shou%20Kbir.mp3",
+    "durationSeconds": 290
+  },
+  {
+    "id": "song_49",
+    "title": "يا أنا يا أنا",
+    "artist": "فيروز",
+    "category": "levantine",
+    "coverImage": "https://archive.org/services/img/03-la-fleur-des-cites",
+    "audioUrl": "https://archive.org/download/03-la-fleur-des-cites/The%20Best%20of%20Fairuz/09%20Ya%20Ana%20Ya%20Ana.mp3",
+    "durationSeconds": 142
+  },
+  {
+    "id": "song_50",
+    "title": "أعطني الناي وغنّي",
+    "artist": "فيروز",
+    "category": "levantine",
+    "coverImage": "https://archive.org/services/img/03-la-fleur-des-cites",
+    "audioUrl": "https://archive.org/download/03-la-fleur-des-cites/The%20Best%20of%20Fairuz/10%20Aatini%20Nay.mp3",
+    "durationSeconds": 437
+  },
+  {
+    "id": "song_51",
+    "title": "أسعد واحدة",
+    "artist": "إليسا",
+    "category": "levantine",
+    "coverImage": "https://archive.org/services/img/Album_Elissa_Asaad.Wahda",
+    "audioUrl": "https://archive.org/download/Album_Elissa_Asaad.Wahda/Asaad.Wahda.mp3",
+    "durationSeconds": 276
+  },
+  {
+    "id": "song_52",
+    "title": "قلبي حاسس فيك",
+    "artist": "إليسا",
+    "category": "levantine",
+    "coverImage": "https://archive.org/services/img/Album_Elissa_Asaad.Wahda",
+    "audioUrl": "https://archive.org/download/Album_Elissa_Asaad.Wahda/Albi.Hasis.Fik.mp3",
+    "durationSeconds": 306
+  },
+  {
+    "id": "song_53",
+    "title": "في عيونك",
+    "artist": "إليسا",
+    "category": "levantine",
+    "coverImage": "https://archive.org/services/img/Album_Elissa_Asaad.Wahda",
+    "audioUrl": "https://archive.org/download/Album_Elissa_Asaad.Wahda/Fi.Ouyounak.mp3",
+    "durationSeconds": 272
+  },
+  {
+    "id": "song_54",
+    "title": "لولا الملامة",
+    "artist": "إليسا",
+    "category": "levantine",
+    "coverImage": "https://archive.org/services/img/Album_Elissa_Asaad.Wahda",
+    "audioUrl": "https://archive.org/download/Album_Elissa_Asaad.Wahda/Lola.El.Malama.mp3",
+    "durationSeconds": 336
+  },
+  {
+    "id": "song_55",
+    "title": "كرهتك أنا",
+    "artist": "إليسا",
+    "category": "levantine",
+    "coverImage": "https://archive.org/services/img/Album_Elissa_Asaad.Wahda",
+    "audioUrl": "https://archive.org/download/Album_Elissa_Asaad.Wahda/Kerehtak.Ana.mp3",
+    "durationSeconds": 363
+  },
+  {
+    "id": "song_56",
+    "title": "يا طبطب",
+    "artist": "نانسي عجرم",
+    "category": "levantine",
+    "coverImage": "https://archive.org/services/img/nancy-ajram-ya-tabtab-official-music-video",
+    "audioUrl": "https://archive.org/download/nancy-ajram-ya-tabtab-official-music-video/Nancy%20Ajram%20-%20Ya%20Tabtab%20(Official%20Music%20Video)%20_%20%D9%86%D8%A7%D9%86%D8%B3%D9%8A%20%D8%B9%D8%AC%D8%B1%D9%85%20-%20%D9%8A%D8%A7%20%D8%B7%D8%A8%D8%B7%D8%A8.mp3",
+    "durationSeconds": 269
+  },
+  {
+    "id": "song_57",
+    "title": "ابن الجيران",
+    "artist": "نانسي عجرم",
+    "category": "levantine",
+    "coverImage": "https://archive.org/services/img/y-2mate.com-nancy-ajram-ebn-el-geran-official-music-video",
+    "audioUrl": "https://archive.org/download/y-2mate.com-nancy-ajram-ebn-el-geran-official-music-video/y2mate.com%20-%20Nancy%20Ajram%20%20Ebn%20El%20Geran%20Official%20Music%20Video%20%20%D9%86%D8%A7%D9%86%D8%B3%D9%8A%20%D8%B9%D8%AC%D8%B1%D9%85%20%20%D8%A5%D8%A8%D9%86%20%D8%A7%D9%84%D8%AC%D9%8A%D8%B1%D8%A7%D9%86.mp3",
+    "durationSeconds": 250
+  },
+  {
+    "id": "song_58",
+    "title": "بدنا نولع الجو",
+    "artist": "نانسي عجرم",
+    "category": "levantine",
+    "coverImage": "https://archive.org/services/img/y-2mate.com-nancy-ajram-badna-nwalee-el-jaw-official-music-video_202306",
+    "audioUrl": "https://archive.org/download/y-2mate.com-nancy-ajram-badna-nwalee-el-jaw-official-music-video_202306/y2mate.com%20-%20Nancy%20Ajram%20%20Badna%20Nwalee%20El%20Jaw%20Official%20Music%20Video%20%D9%86%D8%A7%D9%86%D8%B3%D9%8A%20%D8%B9%D8%AC%D8%B1%D9%85%20%20%D8%A8%D8%AF%D9%86%D8%A7%20%D9%86%D9%88%D9%84%D8%B9%20%D8%A7%D9%84%D8%AC%D9%88.mp3",
+    "durationSeconds": 284
+  },
+  {
+    "id": "song_59",
+    "title": "تملي معاك",
+    "artist": "عمرو دياب",
+    "category": "modern",
+    "coverImage": "https://archive.org/services/img/amrdiabtamallymaak",
+    "audioUrl": "https://archive.org/download/amrdiabtamallymaak/Amr%20Diab%20-%20Tamally%20Maak.mp3",
+    "durationSeconds": 234
+  },
+  {
+    "id": "song_60",
+    "title": "نور العين",
+    "artist": "عمرو دياب",
+    "category": "modern",
+    "coverImage": "https://archive.org/services/img/amr-diab-nour-el-ein",
+    "audioUrl": "https://archive.org/download/amr-diab-nour-el-ein/AmrDiab-Nour-El-Ein.mp3",
+    "durationSeconds": 407
+  },
+  {
+    "id": "song_61",
+    "title": "يا أنا يا لا",
+    "artist": "عمرو دياب",
+    "category": "modern",
+    "coverImage": "https://archive.org/services/img/amr-diab-ya-ana-ya-la_202101",
+    "audioUrl": "https://archive.org/download/amr-diab-ya-ana-ya-la_202101/Amr%20Diab%20-%20Ya%20Ana%20Ya%20La%20%D8%B9%D9%85%D8%B1%D9%88%20%D8%AF%D9%8A%D8%A7%D8%A8%20-%20%D9%8A%D8%A7%20%D8%A3%D9%86%D8%A7%20%D9%8A%D8%A7%20%D9%84%D8%A7%D8%A1.mp3",
+    "durationSeconds": 229
+  },
+  {
+    "id": "song_62",
+    "title": "وحشتيني",
+    "artist": "عمرو دياب",
+    "category": "modern",
+    "coverImage": "https://archive.org/services/img/AmrDiabWahashtinyDigitallyReMastredVol.2",
+    "audioUrl": "https://archive.org/download/AmrDiabWahashtinyDigitallyReMastredVol.2/Amr%20Diab%20-%20Wahashtiny%20%5BDigitally%20Re-Mastred%20vol.2%5D.mp3",
+    "durationSeconds": 235
+  },
+  {
+    "id": "song_63",
+    "title": "عكس بعض",
+    "artist": "عمرو دياب",
+    "category": "modern",
+    "coverImage": "https://archive.org/services/img/AmrDiabAksBa3d.ByMedoDiab2",
+    "audioUrl": "https://archive.org/download/AmrDiabAksBa3d.ByMedoDiab2/Aks%20Ba3d22.mp3",
+    "durationSeconds": 270
+  },
+  {
+    "id": "song_64",
+    "title": "الليلة",
+    "artist": "عمرو دياب",
+    "category": "modern",
+    "coverImage": "https://archive.org/services/img/AmrDiabElLilh",
+    "audioUrl": "https://archive.org/download/AmrDiabElLilh/amr-diap-AlLeila.mp3",
+    "durationSeconds": 237
+  },
+  {
+    "id": "song_65",
+    "title": "علم قلبي",
+    "artist": "عمرو دياب",
+    "category": "modern",
+    "coverImage": "https://archive.org/services/img/Album_AmrDiab_UnreleasedAlbum",
+    "audioUrl": "https://archive.org/download/Album_AmrDiab_UnreleasedAlbum/Alem_albi.mp3",
+    "durationSeconds": 276
+  },
+  {
+    "id": "song_66",
+    "title": "أنا عايش",
+    "artist": "عمرو دياب",
+    "category": "modern",
+    "coverImage": "https://archive.org/services/img/Album_AmrDiab_UnreleasedAlbum",
+    "audioUrl": "https://archive.org/download/Album_AmrDiab_UnreleasedAlbum/Ana_Ayesh.mp3",
+    "durationSeconds": 234
+  },
+  {
+    "id": "song_67",
+    "title": "محسود",
+    "artist": "عمرو دياب",
+    "category": "modern",
+    "coverImage": "https://archive.org/services/img/maxzik.com_20201230_2143",
+    "audioUrl": "https://archive.org/download/maxzik.com_20201230_2143/Amr%20Diab%20-%20Mahsoud%20(Oriental%20Remix%20%D8%B9%D9%85%D8%B1%D9%88%20%D8%AF%D9%8A%D8%A7%D8%A8%20-%20%D9%85%D8%AD%D8%B3%D9%88%D8%AF%20(%D8%A3%D9%88%D8%B1%D9%8A%D9%86%D8%AA%D8%A7%D9%84%20%D8%B1%D9%8A%D9%85%D9%83%D8%B3.mp3",
+    "durationSeconds": 243
+  },
+  {
+    "id": "song_68",
+    "title": "مالك غيران",
+    "artist": "عمرو دياب",
+    "category": "modern",
+    "coverImage": "https://archive.org/services/img/aghani.club_20200805",
+    "audioUrl": "https://archive.org/download/aghani.club_20200805/Amr%20Diab%20-%20Malak%20Ghayran%20%D8%B9%D9%85%D8%B1%D9%88%20%D8%AF%D9%8A%D8%A7%D8%A8%20-%20%D9%85%D8%A7%D9%84%D9%83%20%D8%BA%D9%8A%D8%B1%D8%A7%D9%86.mp3",
+    "durationSeconds": 207
+  },
+  {
+    "id": "song_69",
+    "title": "بطمنك",
+    "artist": "شيرين عبد الوهاب",
+    "category": "modern",
+    "coverImage": "https://archive.org/services/img/Album_Sherine_Bataminak_Original_Quality",
+    "audioUrl": "https://archive.org/download/Album_Sherine_Bataminak_Original_Quality/01.Bataminak.mp3",
+    "durationSeconds": 289
+  },
+  {
+    "id": "song_70",
+    "title": "بكلمة منك",
+    "artist": "شيرين عبد الوهاب",
+    "category": "modern",
+    "coverImage": "https://archive.org/services/img/Album_Sherine_Bataminak_Original_Quality",
+    "audioUrl": "https://archive.org/download/Album_Sherine_Bataminak_Original_Quality/02.Bekilma.Minak.mp3",
+    "durationSeconds": 257
+  },
+  {
+    "id": "song_71",
+    "title": "مش عاوزة غيرك إنت",
+    "artist": "شيرين عبد الوهاب",
+    "category": "modern",
+    "coverImage": "https://archive.org/services/img/Album_Sherine_Bataminak_Original_Quality",
+    "audioUrl": "https://archive.org/download/Album_Sherine_Bataminak_Original_Quality/04.Mish.Awza.Gherak.Inta.mp3",
+    "durationSeconds": 338
+  },
+  {
+    "id": "song_72",
+    "title": "كلي ملكك",
+    "artist": "شيرين عبد الوهاب",
+    "category": "modern",
+    "coverImage": "https://archive.org/services/img/Album_Sherine_Ana_Keteer_Original_Quality",
+    "audioUrl": "https://archive.org/download/Album_Sherine_Ana_Keteer_Original_Quality/11.Koly.Melkak.mp3",
+    "durationSeconds": 290
+  },
+  {
+    "id": "song_73",
+    "title": "أنا كتير",
+    "artist": "شيرين عبد الوهاب",
+    "category": "modern",
+    "coverImage": "https://archive.org/services/img/Album_Sherine_Ana_Keteer_Original_Quality",
+    "audioUrl": "https://archive.org/download/Album_Sherine_Ana_Keteer_Original_Quality/12.Ana.Keteer.mp3",
+    "durationSeconds": 348
+  },
+  {
+    "id": "song_74",
+    "title": "يا ليالي",
+    "artist": "شيرين عبد الوهاب",
+    "category": "modern",
+    "coverImage": "https://archive.org/services/img/Album_Sherine_Ana_Keteer_Original_Quality",
+    "audioUrl": "https://archive.org/download/Album_Sherine_Ana_Keteer_Original_Quality/04.Ya.Layali.mp3",
+    "durationSeconds": 300
+  },
+  {
+    "id": "song_75",
+    "title": "مفيش مانع",
+    "artist": "شيرين عبد الوهاب",
+    "category": "modern",
+    "coverImage": "https://archive.org/services/img/Album_Sherine_Habeet_Original_Quality",
+    "audioUrl": "https://archive.org/download/Album_Sherine_Habeet_Original_Quality/07.Mafish.Manea.mp3",
+    "durationSeconds": 291
+  },
+  {
+    "id": "song_76",
+    "title": "صبري قليل",
+    "artist": "شيرين عبد الوهاب",
+    "category": "modern",
+    "coverImage": "https://archive.org/services/img/Album_Sherine_Garh_Tani_Original_Quality",
+    "audioUrl": "https://archive.org/download/Album_Sherine_Garh_Tani_Original_Quality/01.Sabri.Aleel.mp3",
+    "durationSeconds": 289
+  },
+  {
+    "id": "song_77",
+    "title": "الأماكن",
+    "artist": "محمد عبده",
+    "category": "khaleeji",
+    "coverImage": "https://archive.org/services/img/20261022_20261022_1948",
+    "audioUrl": "https://archive.org/download/20261022_20261022_1948/%D8%A7%D9%84%D8%A3%D9%85%D8%A7%D9%83%D9%86.mp3",
+    "durationSeconds": 712
+  },
+  {
+    "id": "song_78",
+    "title": "أبعاد كنتم ولا قريبين",
+    "artist": "محمد عبده",
+    "category": "khaleeji",
+    "coverImage": "https://archive.org/services/img/20261022_20261022_1948",
+    "audioUrl": "https://archive.org/download/20261022_20261022_1948/%D8%A7%D8%A8%D8%B9%D8%A7%D8%AF%20%D9%83%D9%86%D8%AA%D9%85%20%D9%88%D9%84%D8%A7%20%D9%82%D8%B1%D9%8A%D8%A8%D9%8A%D9%86.mp3",
+    "durationSeconds": 771
+  },
+  {
+    "id": "song_79",
+    "title": "أيوه قلبي عليك التاع",
+    "artist": "محمد عبده",
+    "category": "khaleeji",
+    "coverImage": "https://archive.org/services/img/20261022_20261022_1948",
+    "audioUrl": "https://archive.org/download/20261022_20261022_1948/%D8%A7%D9%8A%D9%88%D9%87%20%D9%82%D9%84%D8%A8%D9%8A%20%D8%B9%D9%84%D9%8A%D9%83%20%D8%A7%D9%84%D8%AA%D8%A7%D8%B9.mp3",
+    "durationSeconds": 670
+  },
+  {
+    "id": "song_80",
+    "title": "ضناني الشوق",
+    "artist": "محمد عبده",
+    "category": "khaleeji",
+    "coverImage": "https://archive.org/services/img/20261022_20261022_1948",
+    "audioUrl": "https://archive.org/download/20261022_20261022_1948/%D8%B6%D9%86%D8%A7%D9%86%D9%8A%20%D8%A7%D9%84%D8%B4%D9%88%D9%82.mp3",
+    "durationSeconds": 466
+  },
+  {
+    "id": "song_81",
+    "title": "هلا بالطيب الغالي",
+    "artist": "محمد عبده",
+    "category": "khaleeji",
+    "coverImage": "https://archive.org/services/img/20261022_20261022_1948",
+    "audioUrl": "https://archive.org/download/20261022_20261022_1948/%D9%87%D9%84%D8%A7%20%D8%A8%D8%A7%D9%84%D8%B7%D9%8A%D8%A8%20%D8%A7%D9%84%D8%BA%D8%A7%D9%84%D9%8A.mp3",
+    "durationSeconds": 646
+  },
+  {
+    "id": "song_82",
+    "title": "يا راحلة",
+    "artist": "محمد عبده",
+    "category": "khaleeji",
+    "coverImage": "https://archive.org/services/img/Album_Mohamed_Abdu_Ya_Ra7ela",
+    "audioUrl": "https://archive.org/download/Album_Mohamed_Abdu_Ya_Ra7ela/Ya_Ra7ela.mp3",
+    "durationSeconds": 567
+  },
+  {
+    "id": "song_83",
+    "title": "عالي السكوت",
+    "artist": "محمد عبده",
+    "category": "khaleeji",
+    "coverImage": "https://archive.org/services/img/Album_Mohamed_Abdo_Aali_El_Sokot",
+    "audioUrl": "https://archive.org/download/Album_Mohamed_Abdo_Aali_El_Sokot/3ali_El_Sokot.mp3",
+    "durationSeconds": 410
+  },
+  {
+    "id": "song_84",
+    "title": "أنا وياك",
+    "artist": "ماجد المهندس",
+    "category": "khaleeji",
+    "coverImage": "https://archive.org/services/img/Album_Majid.al.Muhandis_Ana.Waiak",
+    "audioUrl": "https://archive.org/download/Album_Majid.al.Muhandis_Ana.Waiak/Ana.Waiak.mp3",
+    "durationSeconds": 337
+  },
+  {
+    "id": "song_85",
+    "title": "على الذكرى",
+    "artist": "ماجد المهندس",
+    "category": "khaleeji",
+    "coverImage": "https://archive.org/services/img/Album_Majid.al.Muhandis_Ana.Waiak",
+    "audioUrl": "https://archive.org/download/Album_Majid.al.Muhandis_Ana.Waiak/3la.El.Zekra.mp3",
+    "durationSeconds": 294
+  },
+  {
+    "id": "song_86",
+    "title": "جيت أحبك",
+    "artist": "ماجد المهندس",
+    "category": "khaleeji",
+    "coverImage": "https://archive.org/services/img/Album_Majid.al.Muhandis_Ana.Waiak",
+    "audioUrl": "https://archive.org/download/Album_Majid.al.Muhandis_Ana.Waiak/Jet.A7ebak.mp3",
+    "durationSeconds": 347
+  },
+  {
+    "id": "song_87",
+    "title": "يا أمي",
+    "artist": "ماجد المهندس",
+    "category": "khaleeji",
+    "coverImage": "https://archive.org/services/img/aghani.club_20200327",
+    "audioUrl": "https://archive.org/download/aghani.club_20200327/%D9%85%D8%A7%D8%AC%D8%AF%20%D8%A7%D9%84%D9%85%D9%87%D9%86%D8%AF%D8%B3%20-%20%D9%8A%D8%A7%20%D8%A3%D9%85%D9%8A.mp3",
+    "durationSeconds": 337
+  },
+  {
+    "id": "song_88",
+    "title": "العاصمة",
+    "artist": "حسين الجسمي",
+    "category": "khaleeji",
+    "coverImage": "https://archive.org/services/img/aghani.club_20191127",
+    "audioUrl": "https://archive.org/download/aghani.club_20191127/%D8%AD%D8%B3%D9%8A%D9%86_%D8%A7%D9%84%D8%AC%D8%B3%D9%85%D9%8A_-_%D8%A7%D9%84%D8%B9%D8%A7%D8%B5%D9%85%D8%A9_(%D8%AD%D8%B5%D8%B1%D9%8A%D8%A7%D9%8B)___2019.mp3",
+    "durationSeconds": 397
+  },
+  {
+    "id": "song_89",
+    "title": "سي لا في (C'est La Vie)",
+    "artist": "الشاب خالد",
+    "category": "maghreb",
+    "coverImage": "https://archive.org/services/img/Album_Cheb.Khaled_Cest.La.Vie",
+    "audioUrl": "https://archive.org/download/Album_Cheb.Khaled_Cest.La.Vie/Cest.La.Vie.mp3",
+    "durationSeconds": 230
+  },
+  {
+    "id": "song_90",
+    "title": "باب الجنة (Bab Jenna)",
+    "artist": "الشاب خالد",
+    "category": "maghreb",
+    "coverImage": "https://archive.org/services/img/Album_Cheb.Khaled_Cest.La.Vie",
+    "audioUrl": "https://archive.org/download/Album_Cheb.Khaled_Cest.La.Vie/Bab.Jenna.mp3",
+    "durationSeconds": 252
+  },
+  {
+    "id": "song_91",
+    "title": "أنا عاشق (Ana Aacheck)",
+    "artist": "الشاب خالد",
+    "category": "maghreb",
+    "coverImage": "https://archive.org/services/img/Album_Cheb.Khaled_Cest.La.Vie",
+    "audioUrl": "https://archive.org/download/Album_Cheb.Khaled_Cest.La.Vie/Ana.Aacheck.mp3",
+    "durationSeconds": 188
+  },
+  {
+    "id": "song_92",
+    "title": "وهران رحتي خسارة",
+    "artist": "الشاب خالد",
+    "category": "maghreb",
+    "coverImage": "https://archive.org/services/img/cheb-khaled-wahran",
+    "audioUrl": "https://archive.org/download/cheb-khaled-wahran/%D8%A7%D9%84%D8%B4%D8%A7%D8%A8%20%D8%AE%D8%A7%D9%84%D8%AF%20%D9%88%D9%87%D8%B1%D8%A7%D9%86%20%D8%B1%D8%AD%D8%AA%D9%8A%20%D8%AE%D8%B3%D8%A7%D8%B1%D8%A9%20cheb%20khaled%20wahran.mp3",
+    "durationSeconds": 261
+  },
+  {
+    "id": "song_93",
+    "title": "عايشة (Aïcha)",
+    "artist": "الشاب خالد",
+    "category": "maghreb",
+    "coverImage": "https://archive.org/services/img/moule-el-kouchi",
+    "audioUrl": "https://archive.org/download/moule-el-kouchi/A%C3%AFcha.mp3",
+    "durationSeconds": 261
+  },
+  {
+    "id": "song_94",
+    "title": "عبد القادر يا بو علام",
+    "artist": "الشاب خالد ورشيد طه",
+    "category": "maghreb",
+    "coverImage": "https://archive.org/services/img/moule-el-kouchi",
+    "audioUrl": "https://archive.org/download/moule-el-kouchi/Abdel%20Kader.mp3",
+    "durationSeconds": 280
+  },
+  {
+    "id": "song_95",
+    "title": "دي دي (Didi)",
+    "artist": "الشاب خالد",
+    "category": "maghreb",
+    "coverImage": "https://archive.org/services/img/moule-el-kouchi",
+    "audioUrl": "https://archive.org/download/moule-el-kouchi/Didi%20Didi.mp3",
+    "durationSeconds": 304
+  },
+  {
+    "id": "song_96",
+    "title": "المعلم",
+    "artist": "سعد لمجرد",
+    "category": "maghreb",
+    "coverImage": "https://archive.org/services/img/Album_SaadLamjarred_Singles_Original_Quality",
+    "audioUrl": "https://archive.org/download/Album_SaadLamjarred_Singles_Original_Quality/05.L.Ma3alm.mp3",
+    "durationSeconds": 231
+  },
+  {
+    "id": "song_97",
+    "title": "أنت باغية واحد",
+    "artist": "سعد لمجرد",
+    "category": "maghreb",
+    "coverImage": "https://archive.org/services/img/Album_SaadLamjarred_Singles_Original_Quality",
+    "audioUrl": "https://archive.org/download/Album_SaadLamjarred_Singles_Original_Quality/02.Anty.Baghya.Wahed.mp3",
+    "durationSeconds": 238
+  },
+  {
+    "id": "song_98",
+    "title": "غلطانة",
+    "artist": "سعد لمجرد",
+    "category": "maghreb",
+    "coverImage": "https://archive.org/services/img/Album_SaadLamjarred_Singles_Original_Quality",
+    "audioUrl": "https://archive.org/download/Album_SaadLamjarred_Singles_Original_Quality/03.Ghaltana.mp3",
+    "durationSeconds": 237
+  },
+  {
+    "id": "song_99",
+    "title": "أنا ماشي ساهل",
+    "artist": "سعد لمجرد",
+    "category": "maghreb",
+    "coverImage": "https://archive.org/services/img/Album_SaadLamjarred_Singles_Original_Quality",
+    "audioUrl": "https://archive.org/download/Album_SaadLamjarred_Singles_Original_Quality/01.Ana.Meshi.Sahel.mp3",
+    "durationSeconds": 219
+  },
+  {
+    "id": "song_100",
+    "title": "لميمة",
+    "artist": "سعد لمجرد",
+    "category": "maghreb",
+    "coverImage": "https://archive.org/services/img/Album_SaadLamjarred_Singles_Original_Quality",
+    "audioUrl": "https://archive.org/download/Album_SaadLamjarred_Singles_Original_Quality/04.L.Mmima.mp3",
+    "durationSeconds": 235
+  }
+]

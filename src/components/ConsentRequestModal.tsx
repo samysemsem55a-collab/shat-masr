@@ -27,7 +27,7 @@ export const ConsentRequestModal: React.FC<ConsentRequestModalProps> = ({
     <AnimatePresence>
       {request && (
         <div
-          className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/65 backdrop-blur-sm p-4"
+          className="fixed inset-0 z-[220] flex items-center justify-center bg-slate-950/65 backdrop-blur-sm p-4"
           dir="rtl"
         >
           <motion.div

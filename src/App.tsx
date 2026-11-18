@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Toaster, toast, type ToasterProps } from 'sonner';
-import { X, Check, RefreshCw, UserPlus, MessageCircle, Sparkles } from 'lucide-react';
+import { X, Check, RefreshCw, UserPlus, MessageCircle, Sparkles, Download } from 'lucide-react';
 import { Header } from './components/Header';
 import { BottomNav, NavTab } from './components/BottomNav';
 import { RoomsView } from './components/RoomsView';
@@ -37,7 +37,9 @@ import {
 import { User, Room, Message, GiftItem, VipTier, SpeakerSeat, FriendRequest, DailyMission, UnreadSenderSummary } from './types/chat';
 import { INITIAL_ROOMS, getOrCreateUser, isUserAdminOrOwner, hasCompletedMandatoryProfile } from './data/seedData';
 import { sounds } from './utils/soundEffects';
+import { preloadAppAssets } from './utils/assetCache';
 import { realtimeSocket } from './services/realtimeSocket';
+import { offlineQueue } from './services/offlineQueue';
 import { globalRadioPlayer } from './services/radioPlayer';
 import {
   initExternalPushNotifications,
@@ -45,8 +47,10 @@ import {
   triggerExternalBrowserNotification,
 } from './services/pushNotifications';
 import { 
+  CLIENT_APP_VERSION,
   subscribeToRoomMessages, 
   sendFirestoreMessage, 
+  sendDirectMessage,
   subscribeToRoomPresence, 
   subscribeToGlobalPresence,
   subscribeToFriendRequests,
@@ -67,11 +71,30 @@ import {
   recordGiftRecipientStats,
   propagateUserIdentityAcrossApp,
   subscribeToAppUpdateNotices,
+  subscribeToRemoteAppVersion,
   subscribeToUnreadMessagesCount,
   resetDirectChatUnreadInDB,
   resetAllDirectChatsUnreadInDB,
+  loadUserThemeSettings,
+  updatePresenceCurrentRoom,
+  markUserPresenceOffline,
+  createDailyBackupSnapshot,
+  grantUserXp,
   AppUpdateNotice
 } from './services/firebase';
+
+function isNewerVersion(remote: string, local: string): boolean {
+  const rParts = remote.split('.').map((n) => parseInt(n, 10) || 0);
+  const lParts = local.split('.').map((n) => parseInt(n, 10) || 0);
+  const len = Math.max(rParts.length, lParts.length);
+  for (let i = 0; i < len; i++) {
+    const r = rParts[i] || 0;
+    const l = lParts[i] || 0;
+    if (r > l) return true;
+    if (r < l) return false;
+  }
+  return false;
+}
 
 function areUserListsEqual(a: User[], b: User[]): boolean {
   if (a === b) return true;
@@ -294,7 +317,7 @@ export default function App() {
   // Real-time messages for active room from Firestore
   const [activeRoomMessages, setActiveRoomMessages] = useState<Message[]>([]);
   const [activeRoom, setActiveRoom] = useState<Room | null>(null);
-  const [currentTab, setCurrentTab] = useState<NavTab>('rooms');
+  const [currentTab, setCurrentTab] = useState<NavTab>('home');
 
   // Real-time Presence
   const [roomActiveUsers, setRoomActiveUsers] = useState<User[]>([]);
@@ -323,6 +346,8 @@ export default function App() {
   const seenFriendBannerIdsRef = useRef<Set<string>>(new Set());
 
   const [appUpdateNotice, setAppUpdateNotice] = useState<AppUpdateNotice | null>(null);
+  const [remoteVersionInfo, setRemoteVersionInfo] = useState<{ version: string; forceUpdate: boolean; message?: string } | null>(null);
+  const [isRemoteBannerDismissed, setIsRemoteBannerDismissed] = useState(false);
 
   // Modals State
   const [isAdminOpen, setIsAdminOpen] = useState(false);
@@ -510,6 +535,102 @@ export default function App() {
     return () => unsub();
   }, [currentUser.id, isProfileReady]);
 
+  // Hydrate persisted Theme & Wallpaper settings + preload static assets + remote version check + offline queue handler
+  useEffect(() => {
+    const unsubRemoteVersion = subscribeToRemoteAppVersion((cfg) => {
+      if (cfg && isNewerVersion(cfg.latestVersion, CLIENT_APP_VERSION)) {
+        setRemoteVersionInfo({
+          version: cfg.latestVersion,
+          forceUpdate: Boolean(cfg.forceUpdate),
+          message: cfg.message,
+        });
+      } else {
+        setRemoteVersionInfo(null);
+      }
+    });
+
+    offlineQueue.setFlushHandler(async (item) => {
+      if (item.targetType === 'room' && item.targetId) {
+        const syncedMsg: Message = { ...item.message, status: 'read' };
+        realtimeSocket.sendMessage(item.targetId, syncedMsg);
+        await sendFirestoreMessage(item.targetId, syncedMsg);
+        setActiveRoomMessages((prev) =>
+          prev.map((m) => (m.id === item.id ? syncedMsg : m))
+        );
+        return;
+      }
+      if (item.targetType === 'dm' && item.recipientId) {
+        const syncedMsg: Message = { ...item.message, status: 'sent' };
+        realtimeSocket.sendDirectMessage(item.targetId, item.recipientId, syncedMsg, item.recipientSessionId);
+        await sendDirectMessage(syncedMsg.senderId || currentUserRef.current.id, item.recipientId, syncedMsg);
+      }
+    });
+    offlineQueue.flushAll();
+
+    return () => {
+      unsubRemoteVersion();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isProfileReady || !currentUser.id) return;
+    loadUserThemeSettings(currentUser.id).then((savedTheme) => {
+      if (!savedTheme) return;
+      if (typeof savedTheme.isDarkMode === 'boolean') {
+        setIsDarkMode(savedTheme.isDarkMode);
+      }
+      if (savedTheme.chatWallpaper) {
+        setCurrentUser((prev) =>
+          prev.chatWallpaper === savedTheme.chatWallpaper
+            ? prev
+            : { ...prev, chatWallpaper: savedTheme.chatWallpaper }
+        );
+      }
+    }).catch(() => {});
+
+    if (!currentUser.dataSaverMode) {
+      const urls: string[] = [];
+      if (currentUser.avatar) urls.push(currentUser.avatar);
+      INITIAL_ROOMS.forEach((r) => {
+        if (r.coverImage) urls.push(r.coverImage);
+        if (r.imageUrl) urls.push(r.imageUrl);
+      });
+      preloadAppAssets(urls);
+    }
+  }, [isProfileReady, currentUser.id, currentUser.dataSaverMode]);
+
+  // Update Firebase presence currentRoom & mark offline on tab close
+  useEffect(() => {
+    if (!isProfileReady || !currentUser.id) return;
+    updatePresenceCurrentRoom(currentUser.id, activeRoom?.id || null).catch(() => {});
+  }, [isProfileReady, currentUser.id, activeRoom?.id]);
+
+  useEffect(() => {
+    if (!isProfileReady || !currentUser.id) return;
+    const handleBeforeUnload = () => {
+      markUserPresenceOffline(currentUser.id).catch(() => {});
+    };
+    window.addEventListener('pagehide', handleBeforeUnload);
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => {
+      window.removeEventListener('pagehide', handleBeforeUnload);
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, [isProfileReady, currentUser.id]);
+
+  // Daily Auto-Backup Scheduler for Primary Owner (once per day after 3:00 AM)
+  useEffect(() => {
+    if (!isProfileReady || currentUser.role !== 'owner') return;
+    const now = new Date();
+    if (now.getHours() < 3) return;
+    const todayKey = now.toISOString().slice(0, 10);
+    try {
+      if (localStorage.getItem('shat_masr_last_auto_backup_day') === todayKey) return;
+      localStorage.setItem('shat_masr_last_auto_backup_day', todayKey);
+    } catch {}
+    createDailyBackupSnapshot(currentUser.id, globalOnlineUsersRef.current, rooms.length).catch(() => {});
+  }, [isProfileReady, currentUser.id, currentUser.role, rooms.length]);
+
   // 1. Initialize Real-Time WebSocket Connection across all devices (gated until mandatory profile complete)
   useEffect(() => {
     if (!isProfileReady) return;
@@ -588,16 +709,8 @@ export default function App() {
       }
     });
 
-    // Global Join Top Banner (auto-dismiss after 5s, visible on Home AND inside rooms)
-    const unsubGlobalJoin = realtimeSocket.subscribeToGlobalUserJoined((joined) => {
-      const me = currentUserRef.current;
-      if (!joined?.name || joined.id === me.id) return;
-      setGlobalJoinBanner({ id: joined.id, name: joined.name, avatar: joined.avatar });
-      if (globalJoinTimerRef.current) clearTimeout(globalJoinTimerRef.current);
-      globalJoinTimerRef.current = setTimeout(() => {
-        setGlobalJoinBanner((curr) => (curr?.id === joined.id ? null : curr));
-      }, 5000);
-    });
+    // Do NOT trigger join notifications upon app login — only inside active rooms
+    const unsubGlobalJoin = realtimeSocket.subscribeToGlobalUserJoined(() => {});
 
     // Real-time App Update Notice Banner
     const unsubAppUpdate = subscribeToAppUpdateNotices((notice) => {
@@ -794,13 +907,28 @@ export default function App() {
 
           setUnreadSendersMap((prev) => {
             const existing = prev[rawMsg.senderId];
+            const nextCount = (existing?.count || 0) + 1;
+            const senderDisplayName = rawMsg.senderName || existing?.senderName || 'عضو شات مصر';
+            const dmPrefsEnabled = currentUser.notificationPrefs?.directMessages !== false;
+            if (dmPrefsEnabled) {
+              toast.info(
+                nextCount > 1
+                  ? `رسائل خاصة جديدة (${nextCount}) من ${senderDisplayName} 💬`
+                  : `رسالة خاصة جديدة من ${senderDisplayName} 💬`,
+                {
+                  id: `grouped_dm_${rawMsg.senderId}`,
+                  description: msgPreview,
+                  duration: 5000,
+                }
+              );
+            }
             return {
               ...prev,
               [rawMsg.senderId]: {
                 senderId: rawMsg.senderId,
-                senderName: rawMsg.senderName || existing?.senderName || 'عضو شات مصر',
+                senderName: senderDisplayName,
                 senderAvatar: rawMsg.senderAvatar || existing?.senderAvatar || '',
-                count: (existing?.count || 0) + 1,
+                count: nextCount,
                 lastMessage: msgPreview,
                 lastTimestamp: rawMsg.timestamp || Date.now()
               }
@@ -1084,6 +1212,20 @@ export default function App() {
           const newest = unseen[0];
           sounds.playMessageReceived();
           setFriendReqBanner(newest);
+          toast.info(
+            pending.length > 1
+              ? `لديك ${pending.length} طلبات صداقة جديدة 🤝`
+              : `لديك طلب صداقة جديد من ${newest.senderName} 🤝`,
+            {
+              id: 'grouped_friend_requests',
+              description: pending.length > 1 ? `آخرهم من ${newest.senderName}` : 'اضغط لفتح قائمة الطلبات',
+              duration: 6000,
+              action: {
+                label: 'عرض',
+                onClick: () => setIsFriendRequestsOpen(true),
+              },
+            }
+          );
           if (friendReqBannerTimerRef.current) clearTimeout(friendReqBannerTimerRef.current);
           friendReqBannerTimerRef.current = setTimeout(() => {
             setFriendReqBanner((curr) => (curr?.id === newest.id ? null : curr));
@@ -1254,8 +1396,8 @@ export default function App() {
         badges: currentUser.badges || [],
         type: 'system_welcome',
         isPrivate: false,
-        content: `انضم ${currentUser.name} إلى شات مصر / نورت الغرفة! 🌸`,
-        text: `انضم ${currentUser.name} إلى شات مصر / نورت الغرفة! 🌸`,
+        content: `✨ ${currentUser.name} انضم للغرفة`,
+        text: `✨ ${currentUser.name} انضم للغرفة`,
         createdAt: Date.now(),
         timestamp: Date.now(),
         status: 'read',
@@ -1462,9 +1604,10 @@ export default function App() {
         console.warn("Realtime DB message write notice:", err);
       });
 
-      // 3. Track Daily Mission & Shared Room Daily Mission
+      // 3. Track Daily Mission, Shared Room Daily Mission, and XP progress
       updateMissionProgress('send_5_messages', 1);
       contributeToSharedRoomMission('messages', currentUser.id, 1).catch(() => {});
+      grantUserXp(currentUser.id, 5).catch(() => {});
 
       // Award "عضو نشط" badge if not yet granted
       if (!currentUser.badges?.includes('عضو نشط')) {
@@ -1563,6 +1706,28 @@ export default function App() {
     });
   };
 
+  // Modal Hygiene: Close all Modals, Overlays, and Radio Player on screen navigation
+  const closeAllModals = useCallback(() => {
+    setIsAdminOpen(false);
+    setIsWalletOpen(false);
+    setIsVipOpen(false);
+    setIsGiftModalOpen(false);
+    setGiftRecipientUser(null);
+    setIsCreateRoomOpen(false);
+    setIsNotificationsOpen(false);
+    setIsOnlineUsersOpen(false);
+    setIsPrivateChatDrawerOpen(false);
+    setIsRadioModalOpen(false);
+    setSelectedProfileUser(null);
+    setIsLeaderboardOpen(false);
+    setIsPhoneAuthOpen(false);
+    setIsPrivatePromptOpen(false);
+    setPrivatePromptRoom(null);
+    setIsDailyMissionsOpen(false);
+    setIsFriendRequestsOpen(false);
+    setIsLogoutModalOpen(false);
+  }, []);
+
   // Enter Room Handler with Room Lock & Private Room Protection
   const handleSelectRoom = useCallback((room: Room) => {
     const me = currentUserRef.current;
@@ -1594,13 +1759,14 @@ export default function App() {
       }
     }
 
+    closeAllModals();
     setActiveRoom(room);
 
     // Track Daily Mission: "دخول مجلس صوتي"
     if (room.type === 'voice' || room.roomType === 'voice' || room.isVoiceActive) {
       updateMissionProgress('join_voice_room', 1);
     }
-  }, []);
+  }, [closeAllModals]);
 
   // Direct Avatar Photo Upload Callback with immediate Firebase & WebSocket propagation across the whole app
   const handleAvatarChanged = useCallback((newAvatarUrl: string) => {
@@ -1720,12 +1886,11 @@ export default function App() {
   // Open Direct Chat With User (inside Side Drawer without kicking user out of active room)
   const handleOpenPrivateChatWith = useCallback((user: User) => {
     clearUnreadForSender(user.id);
-    setSelectedProfileUser(null);
-    setIsOnlineUsersOpen(false);
+    closeAllModals();
     setTargetChatUser(user);
     setIsInsidePrivateChat(true);
     setIsPrivateChatDrawerOpen(true);
-  }, [clearUnreadForSender]);
+  }, [clearUnreadForSender, closeAllModals]);
 
   // Leave room: Automatically delete private rooms when creator exits (Requirement 7)
   const handleLeaveRoom = (roomToLeave?: Room | null) => {
@@ -1747,6 +1912,7 @@ export default function App() {
         } catch {}
       }
     }
+    closeAllModals();
     setActiveRoom(null);
   };
 
@@ -1766,7 +1932,10 @@ export default function App() {
     if (isUserAdminOrOwner(currentUserRef.current)) return;
     setIsVipOpen(true);
   }, []);
-  const openProfileTab = useCallback(() => setCurrentTab('profile'), []);
+  const openProfileTab = useCallback(() => {
+    closeAllModals();
+    setCurrentTab('profile');
+  }, [closeAllModals]);
   const openNotifications = useCallback(() => setIsNotificationsOpen(true), []);
   const openOnlineUsers = useCallback(() => setIsOnlineUsersOpen(true), []);
   const openFriendRequests = useCallback(() => setIsFriendRequestsOpen(true), []);
@@ -1779,11 +1948,11 @@ export default function App() {
     setIsGiftModalOpen(true);
   }, []);
   const openMessagesDrawer = useCallback(() => {
-    setIsOnlineUsersOpen(false);
+    closeAllModals();
     setIsInsidePrivateChat(false);
     setTargetChatUser(null);
     setIsPrivateChatDrawerOpen(true);
-  }, []);
+  }, [closeAllModals]);
   const handleClaimSharedRewardCoins = useCallback((coins: number, label?: string) => {
     const updated = { ...currentUserRef.current, coins: currentUserRef.current.coins + coins };
     setCurrentUser(updated);
@@ -1791,24 +1960,31 @@ export default function App() {
     toast.success(`مبروك! تم استلام +${coins} كوينز من ${label} 🎉`);
   }, []);
   const handleBottomTabChange = useCallback((tab: NavTab) => {
+    closeAllModals();
+    setIsInsidePrivateChat(false);
+    setTargetChatUser(null);
     if (tab === 'chat') {
-      setIsOnlineUsersOpen(false);
-      setIsInsidePrivateChat(false);
-      setTargetChatUser(null);
       setIsPrivateChatDrawerOpen(true);
       return;
     }
-    setIsPrivateChatDrawerOpen(false);
-    setIsInsidePrivateChat(false);
-    setTargetChatUser(null);
     setCurrentTab(tab);
-  }, []);
+    if (tab === 'home') {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    } else if (tab === 'rooms') {
+      requestAnimationFrame(() => {
+        document.getElementById('home-rooms-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
+    }
+  }, [closeAllModals]);
 
   const openLeaderboard = useCallback(() => setIsLeaderboardOpen(true), []);
 
   const confirmLogout = async () => {
     setIsLogoutModalOpen(false);
+    closeAllModals();
+    globalRadioPlayer.stop();
     try {
+      await markUserPresenceOffline(currentUser.id);
       await logOutUser();
     } catch (e) {
       console.warn('Logout notice:', e);
@@ -1873,9 +2049,9 @@ export default function App() {
         return;
       }
 
-      // 3. Return to 'rooms' tab
-      if (currentTab !== 'rooms') {
-        setCurrentTab('rooms');
+      // 3. Return to 'home' tab
+      if (currentTab !== 'home' && currentTab !== 'rooms') {
+        setCurrentTab('home');
         return;
       }
     };
@@ -1971,6 +2147,7 @@ export default function App() {
           closeButton
           expand={false}
           theme={isDarkMode ? 'dark' : 'light'}
+          style={{ zIndex: 300 }}
           toastOptions={toasterOptions}
         />
         <WelcomeAuthModal
@@ -1993,7 +2170,7 @@ export default function App() {
   return (
     <div className={`min-h-screen original-app-bg text-slate-900 dark:text-slate-100 transition-colors duration-300 ${fontClass}`}>
       
-      {/* Sonner Professional Toast Notifications */}
+      {/* Sonner Professional Toast Notifications (z-index 300) */}
       <Toaster
         position="top-center"
         dir="rtl"
@@ -2001,15 +2178,71 @@ export default function App() {
         closeButton
         expand={false}
         theme={isDarkMode ? 'dark' : 'light'}
+        style={{ zIndex: 300 }}
         toastOptions={toasterOptions}
       />
+
+      {/* Forced Update Blocking Overlay (only when remote config forceUpdate === true) */}
+      {remoteVersionInfo?.forceUpdate && (
+        <div
+          dir="rtl"
+          className="fixed inset-0 z-[300] flex items-center justify-center bg-slate-950/85 backdrop-blur-md p-4"
+        >
+          <div className="w-full max-w-sm bg-white dark:bg-slate-900 border border-indigo-400 rounded-3xl p-6 text-center space-y-4 shadow-2xl">
+            <div className="w-16 h-16 rounded-2xl bg-indigo-100 text-indigo-600 flex items-center justify-center mx-auto">
+              <Download className="w-8 h-8 animate-bounce" />
+            </div>
+            <h3 className="text-base font-black text-slate-900 dark:text-white">
+              يتوفر تحديث إجباري جديد ({remoteVersionInfo.version})
+            </h3>
+            <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+              {remoteVersionInfo.message || 'يرجى تحديث التطبيق الآن للاستمتاع بأحدث المزايا وتحسينات الأمان والأداء.'}
+            </p>
+            <button
+              type="button"
+              onClick={() => window.location.reload()}
+              className="w-full py-3 rounded-2xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-black text-xs shadow-lg cursor-pointer"
+            >
+              تحديث الآن 🔄
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Live Floating Top Notification Banners (Global Join, DM Notice, Friend Request, App Update) */}
       <div
         dir="rtl"
-        className="fixed top-3 left-1/2 -translate-x-1/2 z-[115] w-[calc(100%-1.5rem)] max-w-md flex flex-col gap-2 pointer-events-none"
+        className="fixed top-3 left-1/2 -translate-x-1/2 z-[300] w-[calc(100%-1.5rem)] max-w-md flex flex-col gap-2 pointer-events-none"
       >
         <AnimatePresence initial={false}>
+          {/* Silent Firestore App Version Update Banner (non-blocking unless forceUpdate) */}
+          {remoteVersionInfo && !remoteVersionInfo.forceUpdate && !isRemoteBannerDismissed && (
+            <motion.div
+              key={`remote-ver-${remoteVersionInfo.version}`}
+              initial={{ opacity: 0, y: -12, scale: 0.97 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: -10, scale: 0.97 }}
+              transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
+              onClick={() => window.location.reload()}
+              className="pointer-events-auto cursor-pointer flex items-center justify-between gap-2.5 px-3.5 py-2.5 rounded-2xl bg-gradient-to-l from-emerald-600 to-teal-600 text-white shadow-2xl border border-white/25"
+            >
+              <div className="flex items-center gap-2 min-w-0">
+                <Download className="w-4 h-4 text-emerald-200 shrink-0" />
+                <p className="text-xs font-black truncate">يوجد تحديث جديد - اضغط للتحديث</p>
+              </div>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setIsRemoteBannerDismissed(true);
+                }}
+                aria-label="إغلاق"
+                className="p-1 rounded-full hover:bg-white/20 text-white/90 shrink-0 cursor-pointer"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </motion.div>
+          )}
           {/* App Update Push Banner */}
           {appUpdateNotice && (
             <motion.div
@@ -2202,7 +2435,7 @@ export default function App() {
 
       {/* Banned Alert Banner */}
       {currentUser.isBanned && (
-        <div className="bg-rose-600 text-white px-4 py-2.5 text-center text-xs font-black flex flex-wrap items-center justify-center gap-2 shadow-lg sticky top-0 z-50 animate-in slide-in-from-top">
+        <div className="bg-rose-600 text-white px-4 py-2.5 text-center text-xs font-black flex flex-wrap items-center justify-center gap-2 shadow-lg sticky top-0 z-[300] animate-in slide-in-from-top">
           <span>🚫 حسابك محظور حالياً من قِبل إدارة شات مصر والعرب.</span>
           <button
             onClick={openAdmin}
@@ -2215,7 +2448,7 @@ export default function App() {
 
       {/* Muted Alert Banner */}
       {currentUser.isMuted && !currentUser.isBanned && (
-        <div className="bg-amber-400 text-slate-950 px-4 py-1.5 text-center text-xs font-black flex items-center justify-center gap-2 shadow sticky top-0 z-50">
+        <div className="bg-amber-400 text-slate-950 px-4 py-1.5 text-center text-xs font-black flex items-center justify-center gap-2 shadow sticky top-0 z-[300]">
           <span>🔇 أنت مكتوم حالياً بواسطة الإدارة، يمكنك الاستماع فقط ولا يمكنك إرسال الرسائل.</span>
           <button
             onClick={openAdmin}
@@ -2229,7 +2462,7 @@ export default function App() {
       {/* 2. Main View Routing: Home Page (RoomsView) remains persistently mounted & frozen to prevent re-mounts/reloads */}
       <main className={activeRoom ? "w-full h-screen overflow-hidden" : "max-w-7xl mx-auto min-h-[calc(100vh-56px)]"}>
         {/* Frozen Home Page Container (always mounted; hidden via CSS when inside a room or on another tab) */}
-        <div className={!activeRoom && currentTab === 'rooms' ? '' : 'hidden'}>
+        <div className={!activeRoom && (currentTab === 'home' || currentTab === 'rooms') ? '' : 'hidden'}>
           <RoomsView
             rooms={rooms}
             currentUser={currentUser}
@@ -2425,7 +2658,7 @@ export default function App() {
         <div
           dir="rtl"
           onClick={() => setIsPrivateChatDrawerOpen(false)}
-          className="fixed inset-0 z-50 flex justify-end bg-slate-900/45 backdrop-blur-sm animate-in fade-in"
+          className="fixed inset-0 z-[100] flex justify-end bg-slate-900/45 backdrop-blur-sm animate-in fade-in"
         >
           <div
             onClick={(e) => e.stopPropagation()}
@@ -2601,7 +2834,7 @@ export default function App() {
 
       {/* Logout Confirmation Modal */}
       {isLogoutModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm animate-in fade-in" dir="rtl">
+        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm animate-in fade-in" dir="rtl">
           <div className="w-full max-w-sm bg-white border border-rose-200 rounded-3xl p-6 text-center space-y-4 shadow-2xl">
             <div className="w-14 h-14 rounded-2xl bg-rose-50 border border-rose-200 flex items-center justify-center mx-auto text-2xl text-rose-500">
               🚪

@@ -21,8 +21,11 @@ import {
   Database,
   MessageSquareLock,
   Loader2,
+  BadgeCheck,
+  HardDrive,
+  RotateCcw,
 } from 'lucide-react';
-import { User, UserRole, UserReport, Message } from '../types/chat';
+import { User, UserRole, UserReport, Message, BackupSnapshot } from '../types/chat';
 import {
   adminUpdateUser,
   subscribeToAllUsers,
@@ -40,6 +43,9 @@ import {
   subscribeToRealtimeFirestoreHealth,
   SecretDirectChatThread,
   pushAppUpdateNotice,
+  createDailyBackupSnapshot,
+  subscribeToBackups,
+  restoreDailyBackupSnapshot,
 } from '../services/firebase';
 import { realtimeSocket } from '../services/realtimeSocket';
 import { sounds } from '../utils/soundEffects';
@@ -48,6 +54,8 @@ import { getRankDisplayMeta } from '../utils/userRanks';
 import { AvatarWithFrame } from './AvatarWithFrame';
 import { AdminBadWordsManager } from './AdminBadWordsManager';
 import { ActivityReport } from './ActivityReport';
+import { VerifiedBadge } from '../utils/verifiedBadge';
+import { maskPhone, maskTransactionId } from '../utils/maskData';
 
 const ROLE_OPTIONS: Array<{ value: UserRole; label: string; badge: string }> = [
   { value: 'member', label: 'عضو عادي', badge: '' },
@@ -83,7 +91,7 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
     currentUser.email?.toLowerCase() === PRIMARY_OWNER_EMAIL.toLowerCase();
 
   const [activeTab, setActiveTab] = useState<
-    'users' | 'user_reports' | 'payments' | 'bad_words' | 'reports' | 'secret_pms'
+    'users' | 'user_reports' | 'payments' | 'bad_words' | 'reports' | 'secret_pms' | 'backups'
   >('users');
   const [searchQuery, setSearchQuery] = useState('');
   const [broadcastText, setBroadcastText] = useState('');
@@ -107,6 +115,12 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
   const [selectedThread, setSelectedThread] = useState<SecretDirectChatThread | null>(null);
   const [secretMessages, setSecretMessages] = useState<Message[]>([]);
   const [loadingSecretMsgs, setLoadingSecretMsgs] = useState(false);
+
+  // Backups & Restore (Primary Owner Only)
+  const [backupsList, setBackupsList] = useState<BackupSnapshot[]>([]);
+  const [isCreatingBackup, setIsCreatingBackup] = useState(false);
+  const [isRestoringBackup, setIsRestoringBackup] = useState(false);
+  const [confirmRestoreSnapshot, setConfirmRestoreSnapshot] = useState<BackupSnapshot | null>(null);
 
   const runHealthChecks = useCallback(async () => {
     setHealthChecking(true);
@@ -161,9 +175,13 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
     });
 
     let unsubSecret = () => {};
+    let unsubBackups = () => {};
     if (isPrimaryOwner) {
       unsubSecret = subscribeAllDirectChatsForOwner(currentUser.email || true, (threads) => {
         setSecretThreads(threads);
+      });
+      unsubBackups = subscribeToBackups((items) => {
+        setBackupsList(items || []);
       });
     }
 
@@ -173,6 +191,7 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
       unsubPay();
       unsubReports();
       unsubSecret();
+      unsubBackups();
     };
   }, [isOpen, isPrimaryOwner, currentUser.email, runHealthChecks]);
 
@@ -298,6 +317,55 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
     );
   };
 
+  // Toggle Verified Account Blue Check (Primary Owner Only)
+  const handleToggleVerified = async (targetUser: User) => {
+    if (!isPrimaryOwner) return;
+    const isNowVerified = !targetUser.verified;
+    sounds.playCoinsReward();
+    const updates = { verified: isNowVerified };
+
+    await adminUpdateUser(targetUser.id, updates);
+    setUsersList((prev) => prev.map((u) => (u.id === targetUser.id ? { ...u, ...updates } : u)));
+    if (onUserModified) onUserModified({ id: targetUser.id, ...updates });
+    showNotification(
+      isNowVerified ? `تم توثيق حساب ${targetUser.name} بشارة الزرقاء ✓` : `تم إلغاء توثيق حساب ${targetUser.name}`
+    );
+  };
+
+  // Backup Create / Restore Handlers (Primary Owner Only)
+  const handleCreateBackupNow = async () => {
+    if (!isPrimaryOwner || isCreatingBackup) return;
+    setIsCreatingBackup(true);
+    try {
+      const snap = await createDailyBackupSnapshot(currentUser.id, usersList);
+      if (snap) {
+        sounds.playCoinsReward();
+        showNotification(`تم إنشاء النسخة الاحتياطية بنجاح (${snap.usersCount} عضو • ${snap.roomsCount} غرفة) 💾`);
+      } else {
+        showNotification('تعذر إنشاء النسخة الاحتياطية حالياً.');
+      }
+    } finally {
+      setIsCreatingBackup(false);
+    }
+  };
+
+  const handleConfirmRestoreBackup = async () => {
+    if (!isPrimaryOwner || !confirmRestoreSnapshot || isRestoringBackup) return;
+    setIsRestoringBackup(true);
+    try {
+      const ok = await restoreDailyBackupSnapshot(confirmRestoreSnapshot);
+      if (ok) {
+        sounds.playCoinsReward();
+        showNotification(`تمت استعادة النسخة الاحتياطية (${confirmRestoreSnapshot.id}) بنجاح ✅`);
+      } else {
+        showNotification('حدث خطأ أثناء استعادة النسخة الاحتياطية.');
+      }
+    } finally {
+      setIsRestoringBackup(false);
+      setConfirmRestoreSnapshot(null);
+    }
+  };
+
   // Grant Coins
   const handleAddCoins = async (targetUser: User, amount: number) => {
     sounds.playCoinsReward();
@@ -404,7 +472,7 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-2 sm:p-4 animate-in fade-in"
+      className="fixed inset-0 z-[200] flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-2 sm:p-4 animate-in fade-in"
       dir="rtl"
     >
       <div className="w-full max-w-4xl bg-white border border-slate-200 rounded-3xl overflow-hidden shadow-2xl flex flex-col max-h-[92vh] text-slate-900">
@@ -571,17 +639,31 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
           </button>
 
           {isPrimaryOwner && (
-            <button
-              onClick={() => setActiveTab('secret_pms')}
-              className={`py-2 px-3 rounded-xl transition-all flex items-center justify-center gap-1.5 shrink-0 ${
-                activeTab === 'secret_pms'
-                  ? 'bg-slate-900 text-amber-300 font-black shadow-sm'
-                  : 'text-slate-700 hover:bg-slate-200/70'
-              }`}
-            >
-              <EyeOff className="w-3.5 h-3.5 text-amber-500 shrink-0" />
-              <span>الفاحص السري للخاص</span>
-            </button>
+            <>
+              <button
+                onClick={() => setActiveTab('secret_pms')}
+                className={`py-2 px-3 rounded-xl transition-all flex items-center justify-center gap-1.5 shrink-0 ${
+                  activeTab === 'secret_pms'
+                    ? 'bg-slate-900 text-amber-300 font-black shadow-sm'
+                    : 'text-slate-700 hover:bg-slate-200/70'
+                }`}
+              >
+                <EyeOff className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                <span>الفاحص السري للخاص</span>
+              </button>
+
+              <button
+                onClick={() => setActiveTab('backups')}
+                className={`py-2 px-3 rounded-xl transition-all flex items-center justify-center gap-1.5 shrink-0 ${
+                  activeTab === 'backups'
+                    ? 'bg-emerald-700 text-white font-black shadow-sm'
+                    : 'text-slate-700 hover:bg-slate-200/70'
+                }`}
+              >
+                <HardDrive className="w-3.5 h-3.5 shrink-0" />
+                <span>النسخ الاحتياطي ({backupsList.length})</span>
+              </button>
+            </>
           )}
         </div>
 
@@ -794,7 +876,7 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
                             <div className="flex flex-wrap items-center gap-2 text-[11px] bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1.5">
                               {order.senderAccountOrPhone && (
                                 <span className="font-bold text-slate-800">
-                                  📱 المحفظة/الحساب: <span className="font-mono text-indigo-700">{order.senderAccountOrPhone}</span>
+                                  📱 المحفظة/الحساب: <span className="font-mono text-indigo-700">{maskPhone(order.senderAccountOrPhone)}</span>
                                 </span>
                               )}
                               {order.senderName && (
@@ -804,7 +886,7 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
                               )}
                               {order.transactionRef && (
                                 <span className="font-bold text-emerald-800">
-                                  • 🔖 الرقم المرجعي: <span className="font-mono">{order.transactionRef}</span>
+                                  • 🔖 الرقم المرجعي: <span className="font-mono">{maskTransactionId(order.transactionRef)}</span>
                                 </span>
                               )}
                             </div>
@@ -956,6 +1038,80 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
                 </div>
               </div>
             </div>
+          ) : activeTab === 'backups' && isPrimaryOwner ? (
+            <div className="space-y-3">
+              <div className="p-4 bg-white border border-slate-200 rounded-2xl flex flex-wrap items-center justify-between gap-3 shadow-xs">
+                <div>
+                  <h4 className="text-sm font-black text-slate-900 flex items-center gap-1.5">
+                    <HardDrive className="w-4 h-4 text-emerald-600" />
+                    <span>نظام النسخ الاحتياطي التلقائي واليدوي</span>
+                  </h4>
+                  <p className="text-[11px] text-slate-600 mt-0.5">
+                    يتم حفظ لقطة يومية كاملة لحسابات الأعضاء والغرف وإعدادات المنصة في Firestore والملقم
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleCreateBackupNow}
+                  disabled={isCreatingBackup}
+                  className="px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-black text-xs flex items-center gap-1.5 shadow-sm active:scale-95 transition disabled:opacity-50 cursor-pointer"
+                >
+                  {isCreatingBackup ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      <span>جاري الحفظ...</span>
+                    </>
+                  ) : (
+                    <>
+                      <HardDrive className="w-3.5 h-3.5" />
+                      <span>إنشاء نسخة احتياطية الآن 💾</span>
+                    </>
+                  )}
+                </button>
+              </div>
+
+              {backupsList.length === 0 ? (
+                <div className="text-center py-12 bg-white border border-slate-200 rounded-2xl text-slate-500 space-y-2">
+                  <HardDrive className="w-9 h-9 mx-auto text-slate-300" />
+                  <p className="text-xs font-black text-slate-700">لا توجد نسخ احتياطية مسجلة بعد</p>
+                  <p className="text-[11px] text-slate-500">اضغط على "إنشاء نسخة احتياطية الآن" لأخذ أول لقطة أمان</p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {backupsList.map((snap) => (
+                    <div
+                      key={snap.id}
+                      className="p-3.5 rounded-2xl bg-white border border-slate-200 flex flex-wrap items-center justify-between gap-3 shadow-2xs"
+                    >
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-black text-slate-900 font-mono">{snap.id}</span>
+                          <span className="px-2 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-[10px] font-bold">
+                            متاح للاستعادة
+                          </span>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-3 text-[11px] text-slate-600">
+                          <span>📅 {new Date(snap.createdAt).toLocaleString('ar-EG')}</span>
+                          <span>👥 {snap.usersCount} عضو</span>
+                          <span>🏛️ {snap.roomsCount} غرفة</span>
+                          <span>📝 {snap.postsCount} منشور</span>
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => setConfirmRestoreSnapshot(snap)}
+                        className="px-3.5 py-2 rounded-xl bg-amber-50 hover:bg-amber-100 border border-amber-300 text-amber-800 text-xs font-black flex items-center gap-1.5 transition active:scale-95 cursor-pointer"
+                      >
+                        <RotateCcw className="w-3.5 h-3.5" />
+                        <span>استعادة</span>
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           ) : (
             <>
               {/* Quick Broadcast & Room Purge God Mode Controls */}
@@ -1081,6 +1237,7 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
                           <div>
                             <div className="flex items-center gap-1.5 flex-wrap">
                               <h4 className={`text-sm ${rankMeta.nameColorClass}`}>{user.name}</h4>
+                              <VerifiedBadge verified={user.verified} size="xs" />
                               <span className="text-xs">{user.countryFlag || '🇪🇬'}</span>
 
                               {rankMeta.isPrivileged ? (
@@ -1171,6 +1328,21 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
                             <span>🪙</span>
                           </button>
 
+                          {isPrimaryOwner && (
+                            <button
+                              onClick={() => handleToggleVerified(user)}
+                              title={user.verified ? 'إزالة شارة التوثيق' : 'توثيق الحساب بالشارة الزرقاء'}
+                              className={`px-2 py-1.5 rounded-xl border text-[10px] font-black flex items-center gap-1 active:scale-95 transition-all cursor-pointer ${
+                                user.verified
+                                  ? 'bg-sky-600 text-white border-sky-600'
+                                  : 'bg-sky-50 hover:bg-sky-100 text-sky-700 border-sky-200'
+                              }`}
+                            >
+                              <BadgeCheck className="w-3.5 h-3.5" />
+                              <span>{user.verified ? 'موثق ✓' : 'توثيق'}</span>
+                            </button>
+                          )}
+
                           <button
                             onClick={() => handleToggleMute(user)}
                             title={user.isMuted ? 'إلغاء الكتم' : 'كتم العضو'}
@@ -1238,6 +1410,42 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
             إغلاق
           </button>
         </div>
+
+        {/* Backup Restore Confirmation Dialog */}
+        {confirmRestoreSnapshot && (
+          <div className="fixed inset-0 z-[210] flex items-center justify-center bg-slate-950/60 backdrop-blur-xs p-4 animate-in fade-in">
+            <div className="w-full max-w-sm bg-white border border-amber-300 rounded-3xl p-5 shadow-2xl space-y-4 text-right">
+              <div className="flex items-center gap-2 text-amber-700">
+                <RotateCcw className="w-5 h-5" />
+                <h4 className="text-sm font-black text-slate-900">تأكيد استعادة النسخة الاحتياطية</h4>
+              </div>
+              <p className="text-xs text-slate-600 leading-relaxed">
+                هل أنت متأكد من استعادة بيانات اللقطة{' '}
+                <span className="font-mono font-black text-slate-900">{confirmRestoreSnapshot.id}</span>؟
+                سيتم تحديث بيانات الأعضاء والغرف بما يتطابق مع هذه النسخة ({confirmRestoreSnapshot.usersCount} عضو، {confirmRestoreSnapshot.roomsCount} غرفة).
+              </p>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  disabled={isRestoringBackup}
+                  onClick={handleConfirmRestoreBackup}
+                  className="flex-1 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs flex items-center justify-center gap-1.5 shadow-sm disabled:opacity-50 cursor-pointer"
+                >
+                  {isRestoringBackup ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                  <span>{isRestoringBackup ? 'جاري الاستعادة...' : 'تأكيد الاستعادة الآن'}</span>
+                </button>
+                <button
+                  type="button"
+                  disabled={isRestoringBackup}
+                  onClick={() => setConfirmRestoreSnapshot(null)}
+                  className="px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs cursor-pointer"
+                >
+                  إلغاء
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

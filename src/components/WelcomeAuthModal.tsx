@@ -143,7 +143,7 @@ export const WelcomeAuthModal: React.FC<WelcomeAuthModalProps> = ({
   return (
     <div
       onClick={allowClose ? onClose : undefined}
-      className={`fixed inset-0 z-50 flex items-center justify-center p-4 animate-fade-in ${
+      className={`fixed inset-0 z-[200] flex items-center justify-center p-4 animate-fade-in ${
         allowClose ? 'bg-slate-900/50 backdrop-blur-sm' : 'bg-slate-900/75 backdrop-blur-md'
       }`}
       dir="rtl"

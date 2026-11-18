@@ -31,6 +31,25 @@ const consentBus = typeof BroadcastChannel !== 'undefined' ? new BroadcastChanne
 const cooldownStorageKey = (senderId: string, peerId: string, requestType: ConsentRequestType) =>
   `shatmasr_consent_cooldown_${senderId}_${peerId}_${requestType}`;
 
+const peerMediaApprovalKey = (senderId: string, peerId: string) =>
+  `shatmasr_media_approved_${senderId}_${peerId}`;
+
+export function hasPeerMediaApproval(senderId: string, peerId: string): boolean {
+  if (!senderId || !peerId || typeof window === 'undefined') return false;
+  try {
+    return localStorage.getItem(peerMediaApprovalKey(senderId, peerId)) === 'true';
+  } catch {
+    return false;
+  }
+}
+
+export function setPeerMediaApproval(senderId: string, peerId: string): void {
+  if (!senderId || !peerId || typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(peerMediaApprovalKey(senderId, peerId), 'true');
+  } catch {}
+}
+
 export function getConsentCooldownRemaining(
   senderId: string,
   peerId: string,
@@ -85,14 +104,29 @@ export function getConsentActionLabel(requestType: ConsentRequestType): string {
   }
 }
 
+export function cancelConsentRequest(requestId: string, targetUserId: string): void {
+  realtimeSocket.sendConsentSignal({
+    kind: 'cancel',
+    targetUserId,
+    payload: { requestId, cancelledAt: Date.now() },
+  });
+  consentBus?.postMessage({ type: 'CONSENT_CANCEL', payload: { requestId } });
+}
+
 export function requestUserConsent(
   fromUser: User,
   peerId: string,
   _peerName: string,
   requestType: ConsentRequestType,
   previewText?: string,
-  timeoutMs: number = 45000
-): Promise<{ approved: boolean; reason?: 'rejected' | 'timeout' | 'cooldown'; remainingMs?: number }> {
+  timeoutMs: number = 30000,
+  onCreated?: (meta: { requestId: string; cancel: () => void }) => void
+): Promise<{ approved: boolean; reason?: 'rejected' | 'timeout' | 'cooldown' | 'cancelled'; remainingMs?: number }> {
+  // One-time permission check per peer for media/photo sharing
+  if (requestType === 'send_image' && hasPeerMediaApproval(fromUser.id, peerId)) {
+    return Promise.resolve({ approved: true });
+  }
+
   const cooldownMs = getConsentCooldownRemaining(fromUser.id, peerId, requestType);
   if (cooldownMs > 0) {
     return Promise.resolve({ approved: false, reason: 'cooldown', remainingMs: cooldownMs });
@@ -121,11 +155,26 @@ export function requestUserConsent(
       consentBus?.removeEventListener('message', handleBusMessage);
     };
 
+    const doCancel = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      cancelConsentRequest(requestId, peerId);
+      resolve({ approved: false, reason: 'cancelled' });
+    };
+
+    if (onCreated) {
+      onCreated({ requestId, cancel: doCancel });
+    }
+
     const handleResponse = (res: ConsentResponsePayload) => {
       if (settled || !res || res.requestId !== requestId) return;
       settled = true;
       cleanup();
       if (res.approved) {
+        if (requestType === 'send_image') {
+          setPeerMediaApproval(fromUser.id, peerId);
+        }
         resolve({ approved: true });
       } else {
         setConsentCooldown(fromUser.id, peerId, requestType);
@@ -136,6 +185,12 @@ export function requestUserConsent(
     const handleBusMessage = (ev: MessageEvent) => {
       if (ev.data?.type === 'CONSENT_RESPONSE' && ev.data?.payload) {
         handleResponse(ev.data.payload);
+      } else if (ev.data?.type === 'CONSENT_CANCEL' && ev.data?.payload?.requestId === requestId) {
+        if (!settled) {
+          settled = true;
+          cleanup();
+          resolve({ approved: false, reason: 'cancelled' });
+        }
       }
     };
 
@@ -143,6 +198,12 @@ export function requestUserConsent(
     unsubSocket = realtimeSocket.subscribeToConsentSignals((signal) => {
       if (signal.kind === 'response' && signal.payload) {
         handleResponse(signal.payload as ConsentResponsePayload);
+      } else if (signal.kind === 'cancel' && signal.payload?.requestId === requestId) {
+        if (!settled) {
+          settled = true;
+          cleanup();
+          resolve({ approved: false, reason: 'cancelled' });
+        }
       }
     });
 
@@ -158,6 +219,7 @@ export function requestUserConsent(
       if (settled) return;
       settled = true;
       cleanup();
+      cancelConsentRequest(requestId, peerId);
       resolve({ approved: false, reason: 'timeout' });
     }, timeoutMs);
   });
@@ -165,7 +227,8 @@ export function requestUserConsent(
 
 export function subscribeToIncomingConsentRequests(
   currentUserId: string,
-  onRequest: (req: ConsentRequestPayload) => void
+  onRequest: (req: ConsentRequestPayload) => void,
+  onCancelled?: (requestId: string) => void
 ): () => void {
   const seenIds = new Set<string>();
 
@@ -179,6 +242,8 @@ export function subscribeToIncomingConsentRequests(
   const handleBus = (ev: MessageEvent) => {
     if (ev.data?.type === 'CONSENT_REQUEST' && ev.data?.payload) {
       acceptIncoming(ev.data.payload);
+    } else if (ev.data?.type === 'CONSENT_CANCEL' && ev.data?.payload?.requestId) {
+      onCancelled?.(ev.data.payload.requestId);
     }
   };
 
@@ -186,6 +251,8 @@ export function subscribeToIncomingConsentRequests(
   const unsubSocket = realtimeSocket.subscribeToConsentSignals((signal) => {
     if (signal.kind === 'request' && signal.payload) {
       acceptIncoming(signal.payload as ConsentRequestPayload);
+    } else if (signal.kind === 'cancel' && signal.payload?.requestId) {
+      onCancelled?.(signal.payload.requestId);
     }
   });
 

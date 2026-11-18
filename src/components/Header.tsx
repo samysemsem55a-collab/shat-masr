@@ -22,6 +22,8 @@ import { getRankDisplayMeta, hasPrivilegedRank } from '../utils/userRanks';
 import { AvatarWithFrame } from './AvatarWithFrame';
 import { PWAInstallButton } from './PWAInstallButton';
 import { toast } from 'sonner';
+import { VerifiedBadge } from '../utils/verifiedBadge';
+import { realtimeSocket } from '../services/realtimeSocket';
 import appBrandIcon from '../assets/images/shat_masr_icon_1794650535035.jpg';
 
 interface HeaderProps {
@@ -79,16 +81,23 @@ export const Header: React.FC<HeaderProps> = React.memo(({
   const [isBrowserOnline, setIsBrowserOnline] = useState<boolean>(() =>
     typeof navigator !== 'undefined' ? navigator.onLine !== false : true
   );
+  const [socketState, setSocketState] = useState<'connected' | 'reconnecting' | 'disconnected'>(() =>
+    realtimeSocket.getConnectionState()
+  );
 
-  // Unified browser network status (avoids false "غير متصل" during transient socket reconnects)
+  // Unified browser network status + live WebSocket connection state
   useEffect(() => {
     const handleOnline = () => setIsBrowserOnline(true);
     const handleOffline = () => setIsBrowserOnline(false);
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
+    const unsubSocket = realtimeSocket.subscribeToConnectionState((state) => {
+      setSocketState(state);
+    });
     return () => {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
+      unsubSocket();
     };
   }, []);
 
@@ -142,7 +151,7 @@ export const Header: React.FC<HeaderProps> = React.memo(({
   };
 
   return (
-    <header dir="rtl" className="sticky top-0 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-slate-200/90 dark:border-slate-800 px-2 sm:px-5 py-2 pt-[calc(env(safe-area-inset-top,0px)+0.5rem)] shadow-sm transition-colors duration-300">
+    <header dir="rtl" className="sticky top-0 z-[50] bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-slate-200/90 dark:border-slate-800 px-2 sm:px-5 py-2 pt-[calc(env(safe-area-inset-top,0px)+0.5rem)] shadow-sm transition-colors duration-300">
       <div className="max-w-7xl mx-auto flex items-center justify-between gap-1.5 sm:gap-2">
         
         {/* Hidden File Input for Direct Avatar Upload */}
@@ -192,6 +201,7 @@ export const Header: React.FC<HeaderProps> = React.memo(({
                   <span className={`text-xs truncate hover:text-indigo-600 transition ${rankMeta.nameColorClass}`}>
                     {currentUser.name}
                   </span>
+                  <VerifiedBadge verified={currentUser.verified} role={currentUser.role} size="xs" />
                   {isPrivileged && (
                     <span className={`text-[8.5px] px-1 py-0.5 leading-none rounded border font-black shrink-0 ${rankMeta.badgeClass}`}>
                       {rankMeta.shortIcon}
@@ -201,7 +211,9 @@ export const Header: React.FC<HeaderProps> = React.memo(({
                 <div className="flex items-center gap-1 text-[9.5px] font-bold mt-0.5 min-w-0">
                   <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${
                     !isEffectiveOnline
-                      ? 'bg-slate-400'
+                      ? 'bg-rose-500'
+                      : socketState === 'reconnecting'
+                      ? 'bg-amber-500 animate-pulse'
                       : currentUser.status === 'busy'
                       ? 'bg-amber-500'
                       : currentUser.status === 'dnd'
@@ -212,7 +224,9 @@ export const Header: React.FC<HeaderProps> = React.memo(({
                   }`} />
                   <span className={`truncate ${
                     !isEffectiveOnline
-                      ? 'text-slate-500'
+                      ? 'text-rose-600'
+                      : socketState === 'reconnecting'
+                      ? 'text-amber-600'
                       : currentUser.status === 'busy'
                       ? 'text-amber-600'
                       : currentUser.status === 'dnd'
@@ -223,6 +237,8 @@ export const Header: React.FC<HeaderProps> = React.memo(({
                   }`}>
                     {!isEffectiveOnline
                       ? 'غير متصل'
+                      : socketState === 'reconnecting'
+                      ? 'جاري إعادة الاتصال...'
                       : currentUser.status === 'busy'
                       ? 'مشغول'
                       : currentUser.status === 'dnd'
@@ -231,7 +247,7 @@ export const Header: React.FC<HeaderProps> = React.memo(({
                       ? 'في مجلس صوتي'
                       : currentUser.status === 'away'
                       ? 'بالخارج'
-                      : 'متاح'}
+                      : 'متصل الآن'}
                   </span>
                 </div>
               </button>
@@ -430,7 +446,7 @@ export const Header: React.FC<HeaderProps> = React.memo(({
               {/* Floating Dropdown Menu */}
               {isMoreMenuOpen && (
                 <div 
-                  className="absolute left-0 mt-1.5 w-52 rounded-2xl bg-white border border-slate-200 shadow-xl p-1.5 space-y-1 z-50 text-right animate-in fade-in zoom-in-95"
+                  className="absolute left-0 mt-1.5 w-52 rounded-2xl bg-white border border-slate-200 shadow-xl p-1.5 space-y-1 z-[100] text-right animate-in fade-in zoom-in-95"
                   onClick={() => setIsMoreMenuOpen(false)}
                 >
                   {/* Mobile-only quick actions */}

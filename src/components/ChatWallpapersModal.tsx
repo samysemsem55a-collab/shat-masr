@@ -13,7 +13,7 @@ import {
 import { User, ChatWallpaper } from '../types/chat';
 import { CHAT_WALLPAPERS } from '../data/wallpapers';
 import { sounds } from '../utils/soundEffects';
-import { syncUserProfileToFirebase } from '../services/firebase';
+import { syncUserProfileToFirebase, saveUserThemeSettings } from '../services/firebase';
 import { isUserAdminOrOwner } from '../data/seedData';
 
 interface ChatWallpapersModalProps {
@@ -56,6 +56,13 @@ export const ChatWallpapersModal: React.FC<ChatWallpapersModalProps> = ({
     };
     if (onUpdateUser) onUpdateUser(updatedUser);
     syncUserProfileToFirebase(updatedUser);
+    saveUserThemeSettings(currentUser.id, {
+      isDarkMode: document.documentElement.classList.contains('dark'),
+      chatWallpaper: wallpaper.id,
+      fontPreference: currentUser.fontPreference,
+      muteJoinNotices: currentUser.muteJoinNotices,
+      dataSaverMode: currentUser.dataSaverMode,
+    }).catch(() => {});
     localStorage.setItem('arab_chat_active_wallpaper', wallpaper.id);
     onClose();
   };
@@ -82,6 +89,13 @@ export const ChatWallpapersModal: React.FC<ChatWallpapersModalProps> = ({
 
     if (onUpdateUser) onUpdateUser(updatedUser);
     await syncUserProfileToFirebase(updatedUser);
+    saveUserThemeSettings(currentUser.id, {
+      isDarkMode: document.documentElement.classList.contains('dark'),
+      chatWallpaper: wallpaper.id,
+      fontPreference: currentUser.fontPreference,
+      muteJoinNotices: currentUser.muteJoinNotices,
+      dataSaverMode: currentUser.dataSaverMode,
+    }).catch(() => {});
     localStorage.setItem('arab_chat_active_wallpaper', wallpaper.id);
     setPurchasingId(null);
     onClose();
@@ -97,8 +111,14 @@ export const ChatWallpapersModal: React.FC<ChatWallpapersModalProps> = ({
   });
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-slate-900/45 backdrop-blur-sm p-0 sm:p-4 animate-in fade-in">
-      <div className="w-full sm:max-w-2xl bg-white border border-slate-200 rounded-t-3xl sm:rounded-3xl overflow-hidden shadow-2xl flex flex-col max-h-[90vh]">
+    <div
+      onClick={onClose}
+      className="fixed inset-0 z-[200] flex items-end sm:items-center justify-center bg-slate-900/45 backdrop-blur-sm p-0 sm:p-4 animate-in fade-in"
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="w-full sm:max-w-2xl bg-white border border-slate-200 rounded-t-3xl sm:rounded-3xl overflow-hidden shadow-2xl flex flex-col max-h-[90vh]"
+      >
         
         {/* Header */}
         <div className="p-3.5 sm:p-4 bg-gradient-to-r from-indigo-50 via-white to-purple-50 border-b border-slate-200 flex items-center justify-between shrink-0">
@@ -245,7 +265,7 @@ export const ChatWallpapersModal: React.FC<ChatWallpapersModalProps> = ({
         )}
 
         {/* Wallpapers Grid View */}
-        <div className="p-3 sm:p-4 overflow-y-auto flex-1 grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div className="p-3 sm:p-4 overflow-y-auto flex-1 min-h-0 grid grid-cols-1 sm:grid-cols-2 gap-3">
           {filteredWallpapers.map((wallpaper) => {
             const isUnlocked = isOwner || wallpaper.priceCoins === 0 || unlockedIds.has(wallpaper.id);
             const isActive = activeWallpaperId === wallpaper.id;

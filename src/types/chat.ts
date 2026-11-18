@@ -50,6 +50,12 @@ export interface User {
   sessionId?: string;
   profileBanner?: string;
   favoriteMusicUrl?: string;
+  verified?: boolean;
+  zodiacSign?: string;
+  profileVisitsCount?: number;
+  dataSaverMode?: boolean;
+  muteJoinNotices?: boolean;
+  xp?: number;
   notificationPrefs?: {
     directMessages: boolean;
     gifts: boolean;
@@ -116,6 +122,7 @@ export type RoomCategory =
   | 'sham' 
   | 'games' 
   | 'music' 
+  | 'live_audio'
   | 'member_rooms';
 
 export interface Room {
@@ -125,8 +132,8 @@ export interface Room {
   description: string;
   subtext: string;
   category: RoomCategory;
-  type?: 'voice' | 'text';
-  roomType?: 'voice' | 'text_only';
+  type?: 'voice' | 'text' | 'live_audio';
+  roomType?: 'voice' | 'text_only' | 'live_audio';
   icon: string;
   iconBg: string;
   activeUsers: number;
@@ -148,6 +155,7 @@ export interface Room {
   };
   bannedUserIds?: string[];
   mutedUserIds?: string[];
+  raisedHandUserIds?: string[];
   isPrivate?: boolean;
   isPublic?: boolean;
   isLocked?: boolean;
@@ -155,6 +163,8 @@ export interface Room {
   ownerId?: string;
   hostId?: string;
   backgroundTheme?: string;
+  coverImage?: string;
+  imageUrl?: string;
   createdAt?: number;
   cameraAllowedUserIds?: string[];
   allowedUserIds?: string[];
@@ -202,6 +212,7 @@ export interface Message {
   senderAvatar: string;
   senderRole: UserRole;
   senderVipBadge: string;
+  senderVerified?: boolean;
   senderFont?: string;
   badges?: string[];
   type: 'text' | 'voice' | 'image' | 'video' | 'sticker' | 'gift' | 'system_welcome' | 'quick_phrase' | 'private' | 'coins_transfer';
@@ -234,7 +245,7 @@ export interface Message {
   expiresAt?: number;
   createdAt?: number;
   timestamp: number;
-  status: 'sent' | 'delivered' | 'read';
+  status: 'sent' | 'delivered' | 'read' | 'pending_offline';
   likes?: number;
   reactions?: { [emoji: string]: number };
   userReactions?: { [userId: string]: string };
@@ -247,6 +258,7 @@ export interface ForumComment {
   authorId: string;
   authorName: string;
   authorAvatar: string;
+  authorVerified?: boolean;
   text: string;
   createdAt: number;
 }
@@ -270,6 +282,7 @@ export interface ForumPost {
   authorCountryFlag?: string;
   authorVipBadge?: string;
   authorRole?: UserRole;
+  authorVerified?: boolean;
   text: string;
   imageUrl?: string;
   isPinned?: boolean;
@@ -279,7 +292,39 @@ export interface ForumPost {
   likedUsers?: Record<string, ForumLikeUserSummary>;
   likesCount: number;
   commentsCount: number;
+  viewsCount?: number;
+  viewedBy?: string[];
+  mentions?: string[];
   createdAt: number;
+}
+
+export interface StoryItem {
+  id: string;
+  userId: string;
+  userName: string;
+  userAvatar: string;
+  userRole?: UserRole;
+  userVerified?: boolean;
+  mediaType: 'image' | 'text';
+  imageUrl?: string;
+  caption: string;
+  bgGradient?: string;
+  createdAt: number;
+  expiresAt: number;
+  viewers?: Record<string, { id: string; name: string; avatar?: string; viewedAt: number }>;
+}
+
+export interface BackupSnapshot {
+  id: string;
+  dateKey: string;
+  createdAt: number;
+  createdBy: string;
+  usersCount: number;
+  roomsCount: number;
+  postsCount: number;
+  usersData?: any[];
+  roomsData?: any[];
+  notes?: string;
 }
 
 export interface SharedRoomMission {
@@ -305,8 +350,11 @@ export interface UserReport {
   reportedUserName: string;
   reason: string;
   details?: string;
+  contextType?: 'room' | 'dm' | 'profile' | 'forum';
+  contextId?: string;
   status?: 'pending' | 'reviewed' | 'dismissed';
   timestamp: number;
+  createdAt?: number;
 }
 
 export interface RadioStation {

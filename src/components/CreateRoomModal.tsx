@@ -18,7 +18,7 @@ interface CreateRoomModalProps {
   onClose: () => void;
   currentUser: User;
   onCreateRoom: (room: Room, cost: number) => void;
-  defaultRoomType?: 'voice' | 'text_only';
+  defaultRoomType?: 'voice' | 'text_only' | 'live_audio';
 }
 
 export const CreateRoomModal: React.FC<CreateRoomModalProps> = ({
@@ -26,10 +26,14 @@ export const CreateRoomModal: React.FC<CreateRoomModalProps> = ({
   onClose,
   currentUser,
   onCreateRoom,
+  defaultRoomType = 'text_only',
 }) => {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [icon, setIcon] = useState('🇪🇬');
+  const [roomMode, setRoomMode] = useState<'text_only' | 'live_audio'>(
+    defaultRoomType === 'live_audio' ? 'live_audio' : 'text_only'
+  );
   const [isPrivate, setIsPrivate] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
@@ -71,26 +75,40 @@ export const CreateRoomModal: React.FC<CreateRoomModalProps> = ({
     setErrorMsg(null);
 
     sounds.playMessageSent();
+    const isLiveAudio = roomMode === 'live_audio';
     const newRoom: Room = {
       id: `room_${Date.now()}`,
       title: title.trim(),
-      description: description.trim() || 'غرفة دردشة كتابية وسريعة للأصدقاء',
-      subtext: `بإدارة المضيف ${currentUser.name} • رسائل كتابية فقط`,
-      category: 'member_rooms',
-      type: 'text',
-      roomType: 'text_only',
+      description:
+        description.trim() ||
+        (isLiveAudio ? 'مجلس صوتي مباشر للتفاعل والمناقشات الحية' : 'غرفة دردشة كتابية وسريعة للأصدقاء'),
+      subtext: isLiveAudio
+        ? `بإدارة المضيف ${currentUser.name} • غرفة صوتية مباشرة 🎙️`
+        : `بإدارة المضيف ${currentUser.name} • رسائل كتابية فقط`,
+      category: isLiveAudio ? 'live_audio' : 'member_rooms',
+      type: isLiveAudio ? 'live_audio' : 'text',
+      roomType: isLiveAudio ? 'live_audio' : 'text_only',
       icon: icon,
-      iconBg: 'from-cyan-700 to-blue-800',
+      iconBg: isLiveAudio ? 'from-purple-700 to-indigo-800' : 'from-cyan-700 to-blue-800',
       activeUsers: 1,
       visitorsCount: '1',
-      isLive: false,
-      isLiveBroadcasting: false,
-      isVoiceActive: false,
-      accentGradient: 'from-cyan-500 via-blue-600 to-indigo-600',
+      isLive: isLiveAudio,
+      isLiveBroadcasting: isLiveAudio,
+      isVoiceActive: isLiveAudio,
+      accentGradient: isLiveAudio ? 'from-purple-600 via-indigo-600 to-amber-500' : 'from-cyan-500 via-blue-600 to-indigo-600',
       moderators: [currentUser.id],
       isPrivate: isPrivate,
       ownerId: currentUser.id,
-      speakers: []
+      hostId: currentUser.id,
+      raisedHandUserIds: [],
+      speakers: isLiveAudio
+        ? [
+            { seatId: 1, user: currentUser, isMuted: false, isTalking: true, isVideo: false },
+            { seatId: 2, user: null, isMuted: false, isTalking: false, isVideo: false },
+            { seatId: 3, user: null, isMuted: false, isTalking: false, isVideo: false },
+            { seatId: 4, user: null, isMuted: false, isTalking: false, isVideo: false },
+          ]
+        : []
     };
 
     onCreateRoom(newRoom, isPrivate ? PRIVATE_ROOM_COST : 0);
@@ -98,20 +116,30 @@ export const CreateRoomModal: React.FC<CreateRoomModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-slate-900/45 backdrop-blur-sm p-0 sm:p-4 animate-in fade-in">
-      <div className="w-full sm:max-w-md bg-white border border-slate-200 rounded-t-3xl sm:rounded-3xl overflow-hidden shadow-2xl">
+    <div
+      onClick={onClose}
+      className="fixed inset-0 z-[200] flex items-end sm:items-center justify-center bg-slate-900/45 backdrop-blur-sm p-0 sm:p-4 animate-in fade-in"
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="w-full sm:max-w-md bg-white border border-slate-200 rounded-t-3xl sm:rounded-3xl overflow-hidden shadow-2xl"
+      >
         
         {/* Header */}
         <div className="p-3.5 bg-gradient-to-r from-purple-50 to-indigo-50 border-b border-slate-200 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <div className="w-8 h-8 rounded-xl bg-purple-100 border border-purple-200 flex items-center justify-center text-lg">
-              ✨
+              {roomMode === 'live_audio' ? '🎙️' : '✨'}
             </div>
             <div>
               <h3 className="text-sm font-black text-slate-900 flex items-center gap-1.5">
-                إنشاء غرفة دردشة كتابية جديدة
+                {roomMode === 'live_audio' ? 'إنشاء غرفة صوتية مباشرة 🎙️' : 'إنشاء غرفة دردشة جديدة'}
               </h3>
-              <p className="text-[11px] text-slate-500">دردشة سريعة ومريحة بالرسائل النصية بدون مجالس صوتية</p>
+              <p className="text-[11px] text-slate-500">
+                {roomMode === 'live_audio'
+                  ? 'مسرح متحدثين + طلب المايك (رفع اليد) + دردشة كتابية'
+                  : 'دردشة سريعة ومريحة بالرسائل النصية'}
+              </p>
             </div>
           </div>
 
@@ -122,10 +150,32 @@ export const CreateRoomModal: React.FC<CreateRoomModalProps> = ({
 
         {/* Form Body */}
         <form onSubmit={handleSubmit} className="p-3.5 space-y-3">
-          
-          <div className="p-2.5 rounded-xl bg-cyan-50 border border-cyan-200 text-cyan-800 text-xs flex items-center gap-2">
-            <MessageSquare className="w-4 h-4 text-cyan-600 shrink-0" />
-            <span>غرفة دردشة كتابية حرة بالرسائل النصية، الإيموجيات، والهدايا الفاخرة بدون مايكات أو صوت.</span>
+          {/* Room Type Mode Selector */}
+          <div className="grid grid-cols-2 gap-1.5 p-1 rounded-xl bg-slate-100 border border-slate-200">
+            <button
+              type="button"
+              onClick={() => setRoomMode('text_only')}
+              className={`py-2 px-2 rounded-lg text-xs font-black flex items-center justify-center gap-1.5 transition cursor-pointer ${
+                roomMode === 'text_only'
+                  ? 'bg-indigo-600 text-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <MessageSquare className="w-3.5 h-3.5" />
+              <span>دردشة كتابية</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setRoomMode('live_audio')}
+              className={`py-2 px-2 rounded-lg text-xs font-black flex items-center justify-center gap-1.5 transition cursor-pointer ${
+                roomMode === 'live_audio'
+                  ? 'bg-purple-600 text-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <Radio className="w-3.5 h-3.5" />
+              <span>غرفة صوتية مباشرة 🎙️</span>
+            </button>
           </div>
 
           {errorMsg && (

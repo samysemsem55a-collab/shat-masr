@@ -58,7 +58,7 @@ import {
   signInWithPopup,
   signOut
 } from 'firebase/auth';
-import { Message, User, FriendRequest, Friend, ForumPost, ForumComment, ForumLikeUserSummary, SharedRoomMission, UserReport } from '../types/chat';
+import { Message, User, FriendRequest, Friend, ForumPost, ForumComment, ForumLikeUserSummary, SharedRoomMission, UserReport, StoryItem, BackupSnapshot } from '../types/chat';
 import { PRIMARY_OWNER_EMAIL } from '../data/seedData';
 import firebaseConfigJson from '../../firebase-applet-config.json';
 
@@ -447,12 +447,18 @@ export function subscribeToGlobalPresence(
   if (db && user && user.id) {
     try {
       const userOnlineDoc = doc(db, 'online_users', user.id);
+      const userPresenceDoc = doc(db, 'presence', user.id);
       const onlinePayload = {
         id: user.id,
         name: user.name,
+        username: user.username || user.id,
         avatar: user.avatar || '',
         role: user.role || 'member',
         vipBadge: user.vipBadge || '',
+        verified: Boolean(user.verified || user.role === 'owner'),
+        zodiacSign: user.zodiacSign || '',
+        profileVisitsCount: Number(user.profileVisitsCount) || 0,
+        xp: Number(user.xp) || 0,
         badges: user.badges || [],
         frameStyle: user.frameStyle || '',
         profileBanner: user.profileBanner || '',
@@ -472,41 +478,69 @@ export function subscribeToGlobalPresence(
         updatedAt: serverTimestamp()
       };
 
-      // Write heartbeat immediately
-      setDoc(userOnlineDoc, onlinePayload, { merge: true }).catch(() => {});
+      const presencePayload = {
+        online: true,
+        lastSeen: serverTimestamp(),
+        lastSeenMs: Date.now(),
+        currentRoom: null as string | null,
+        username: user.name || user.username || 'عضو',
+        avatar: user.avatar || '',
+      };
 
-      // Keep heartbeat alive every 35 seconds
+      // Write presence immediately
+      setDoc(userOnlineDoc, onlinePayload, { merge: true }).catch(() => {});
+      setDoc(userPresenceDoc, presencePayload, { merge: true }).catch(() => {});
+
+      // Keep heartbeat alive strictly every 30 seconds
       heartbeatTimer = setInterval(() => {
+        const nowTs = Date.now();
         setDoc(userOnlineDoc, {
           ...onlinePayload,
-          lastSeen: Date.now(),
+          lastSeen: nowTs,
           updatedAt: serverTimestamp()
         }, { merge: true }).catch(() => {});
-      }, 35000);
+        setDoc(userPresenceDoc, {
+          online: true,
+          lastSeen: serverTimestamp(),
+          lastSeenMs: nowTs,
+          username: user.name || user.username || 'عضو',
+          avatar: user.avatar || '',
+        }, { merge: true }).catch(() => {});
+      }, 30000);
 
-      // Listen to all online users in Firestore in real time (zero empty-snap block)
+      // Listen to all online users in Firestore in real time (treat lastSeen > 60s as offline)
       const onlineCol = collection(db, 'online_users');
       unsubFirestore = onSnapshot(onlineCol, (snap) => {
         const now = Date.now();
         const currentFsIds = new Set<string>();
         snap.docs.forEach((docSnap) => {
           const data = docSnap.data();
+          if (data.status === 'offline' || data.isOnline === false) {
+            firestoreTrackedIds.delete(docSnap.id);
+            if (docSnap.id !== user.id) liveUsersMap.delete(docSnap.id);
+            return;
+          }
           const lastSeen = typeof data.lastSeen === 'number'
             ? data.lastSeen
             : data.updatedAt?.toMillis
             ? data.updatedAt.toMillis()
             : now;
-          // Consider active within 3 minutes
-          if (now - lastSeen < 180000) {
+          // Timeout: treat users whose lastSeen is older than 60s as Offline
+          if (now - lastSeen <= 65000) {
             currentFsIds.add(docSnap.id);
             firestoreTrackedIds.add(docSnap.id);
             liveUsersMap.set(docSnap.id, {
               ...liveUsersMap.get(docSnap.id),
               id: docSnap.id,
               name: data.name || 'عضو',
+              username: data.username || docSnap.id,
               avatar: data.avatar || '',
               role: data.role || 'member',
               vipBadge: data.vipBadge || '',
+              verified: Boolean(data.verified || data.role === 'owner'),
+              zodiacSign: data.zodiacSign || '',
+              profileVisitsCount: Number(data.profileVisitsCount) || 0,
+              xp: Number(data.xp) || 0,
               badges: Array.isArray(data.badges) ? data.badges : [],
               frameStyle: data.frameStyle || '',
               profileBanner: data.profileBanner || '',
@@ -623,6 +657,12 @@ export function subscribeToGlobalPresence(
     liveChatBus?.removeEventListener('message', handleMsg);
     if (db && user && user.id) {
       deleteDoc(doc(db, 'online_users', user.id)).catch(() => {});
+      setDoc(doc(db, 'presence', user.id), {
+        online: false,
+        lastSeen: serverTimestamp(),
+        lastSeenMs: Date.now(),
+        currentRoom: null
+      }, { merge: true }).catch(() => {});
     }
   };
 }
@@ -1021,6 +1061,13 @@ export async function syncUserProfileToFirebase(user: User): Promise<void> {
     ...(typeof user.age === 'number' ? { age: user.age } : {}),
     role: user.role,
     vipBadge: user.vipBadge,
+    verified: Boolean(user.verified || user.role === 'owner'),
+    zodiacSign: user.zodiacSign || '',
+    profileVisitsCount: Number(user.profileVisitsCount) || 0,
+    xp: Number(user.xp) || 0,
+    level: Number(user.level) || 1,
+    dataSaverMode: Boolean(user.dataSaverMode),
+    muteJoinNotices: Boolean(user.muteJoinNotices),
     coins: user.coins,
     earningsEgp: user.earningsEgp,
     earningsUsd: user.earningsUsd,
@@ -1194,6 +1241,10 @@ export function subscribeToAllUsers(
             ratingPoints: Number(data.ratingPoints) || 0,
             giftsReceivedCount: Number(data.giftsReceivedCount) || 0,
             level: Number(data.level) || 1,
+            xp: Number(data.xp) || 0,
+            verified: Boolean(data.verified || data.role === 'owner'),
+            zodiacSign: data.zodiacSign || '',
+            profileVisitsCount: Number(data.profileVisitsCount) || 0,
             isBanned: Boolean(data.isBanned),
             isMuted: Boolean(data.isMuted),
             isGuest: Boolean(data.isGuest),
@@ -1360,7 +1411,7 @@ export interface PendingPaymentOrder {
   itemName?: string;
   coins?: number;
   vipTierId?: string;
-  paymentMethod?: 'instapay' | 'vodafone_cash' | 'orange_cash' | 'etisalat_cash' | 'we_pay' | 'e_wallet';
+  paymentMethod?: 'instapay' | 'vodafone_cash' | 'orange_cash' | 'etisalat_cash' | 'we_pay' | 'e_wallet' | 'fawry';
   senderAccountOrPhone?: string;
   transactionRef?: string;
   status: 'pending' | 'approved' | 'rejected';
@@ -1376,11 +1427,35 @@ export async function submitPaymentRequest(order: {
   amountEgp: number;
   coinsAmount?: number;
   vipTierId?: string;
-  paymentMethod: 'instapay' | 'vodafone_cash' | 'orange_cash' | 'etisalat_cash' | 'we_pay' | 'e_wallet';
+  paymentMethod: 'instapay' | 'vodafone_cash' | 'orange_cash' | 'etisalat_cash' | 'we_pay' | 'e_wallet' | 'fawry';
   senderAccountOrPhone: string;
   transactionRef?: string;
   note?: string;
-}): Promise<{ success: boolean; orderId: string }> {
+}): Promise<{ success: boolean; orderId: string; duplicate?: boolean }> {
+  const normalizedRef = (order.transactionRef || order.senderAccountOrPhone || '').trim();
+  if (normalizedRef) {
+    // Idempotency guard: block duplicate transaction references
+    try {
+      const localSaved = localStorage.getItem('arab_chat_payment_orders');
+      if (localSaved) {
+        const list: PendingPaymentOrder[] = JSON.parse(localSaved);
+        if (list.some((o) => o.transactionRef === normalizedRef && o.status !== 'rejected')) {
+          return { success: false, orderId: '', duplicate: true };
+        }
+      }
+    } catch {}
+    if (db) {
+      try {
+        const dupSnap = await getDocs(
+          query(collection(db, 'payment_requests'), where('transactionRef', '==', normalizedRef), limit(5))
+        );
+        if (dupSnap.docs.some((d) => d.data()?.status !== 'rejected')) {
+          return { success: false, orderId: '', duplicate: true };
+        }
+      } catch {}
+    }
+  }
+
   const orderId = `PAY_${Date.now()}_${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
   const now = Date.now();
 
@@ -1395,10 +1470,10 @@ export async function submitPaymentRequest(order: {
     itemName: order.itemName,
     ...(typeof order.coinsAmount === 'number' ? { coins: order.coinsAmount } : {}),
     ...(order.vipTierId ? { vipTierId: order.vipTierId } : {}),
-    paymentMethod: order.paymentMethod,
+    paymentMethod: order.paymentMethod as any,
     senderAccountOrPhone: order.senderAccountOrPhone,
-    transactionRef: order.transactionRef || order.senderAccountOrPhone,
-    note: order.note || `${order.type === 'coins' ? 'شحن كوينز' : 'ترقية VIP'}: ${order.itemName} بمبلغ ${order.amountEgp} ج.م عبر ${order.paymentMethod === 'instapay' ? 'InstaPay' : 'المحفظة الإلكترونية'}`,
+    transactionRef: normalizedRef || orderId,
+    note: order.note || `${order.type === 'coins' ? 'شحن كوينز' : 'ترقية VIP'}: ${order.itemName} بمبلغ ${order.amountEgp} ج.م عبر ${order.paymentMethod}`,
     status: 'pending',
     timestamp: now
   };
@@ -1630,10 +1705,14 @@ export async function approvePendingPayment(
     }
   }
 
-  // 2. Update Firestore
+  // 2. Update Firestore (Idempotent check before crediting coins)
   if (db) {
     try {
       const payDocRef = doc(db, 'payment_requests', paymentId);
+      const existingPaySnap = await getDoc(payDocRef);
+      if (existingPaySnap.exists() && existingPaySnap.data()?.status === 'approved') {
+        return; // Already processed — prevent double crediting
+      }
       await setDoc(payDocRef, {
         status: 'approved',
         coinsGranted: coinsToAdd,
@@ -4245,6 +4324,404 @@ export function syncCumulativeVisitorsRealtime(
 }
 
 // ==========================================
+// 28. PRESENCE ROOM TRACKER, THEME SETTINGS, APP VERSION CHECK, STORIES, XP & DAILY BACKUPS
+// ==========================================
+
+export const CLIENT_APP_VERSION = '2.4.0';
+
+export async function updatePresenceCurrentRoom(uid: string, roomId: string | null): Promise<void> {
+  if (!db || !uid) return;
+  try {
+    await setDoc(
+      doc(db, 'presence', uid),
+      {
+        online: true,
+        currentRoom: roomId,
+        lastSeen: serverTimestamp(),
+        lastSeenMs: Date.now()
+      },
+      { merge: true }
+    );
+  } catch {}
+}
+
+export async function markUserPresenceOffline(uid: string): Promise<void> {
+  if (!uid) return;
+  if (db) {
+    try {
+      await setDoc(
+        doc(db, 'presence', uid),
+        {
+          online: false,
+          currentRoom: null,
+          lastSeen: serverTimestamp(),
+          lastSeenMs: Date.now()
+        },
+        { merge: true }
+      );
+      await deleteDoc(doc(db, 'online_users', uid)).catch(() => {});
+    } catch {}
+  }
+}
+
+export interface UserThemeSettings {
+  isDarkMode: boolean;
+  chatWallpaper?: string;
+  fontPreference?: 'cairo' | 'tajawal' | 'amiri';
+  muteJoinNotices?: boolean;
+  dataSaverMode?: boolean;
+}
+
+export async function saveUserThemeSettings(uid: string, settings: UserThemeSettings): Promise<void> {
+  if (!uid) return;
+  try {
+    localStorage.setItem(`shat_masr_theme_settings_${uid}`, JSON.stringify(settings));
+  } catch {}
+  if (db) {
+    try {
+      await setDoc(
+        doc(db, 'users', uid, 'settings', 'theme'),
+        {
+          ...settings,
+          updatedAt: serverTimestamp()
+        },
+        { merge: true }
+      );
+    } catch {}
+  }
+}
+
+export async function loadUserThemeSettings(uid: string): Promise<UserThemeSettings | null> {
+  if (!uid) return null;
+  if (db) {
+    try {
+      const snap = await getDoc(doc(db, 'users', uid, 'settings', 'theme'));
+      if (snap.exists()) {
+        return snap.data() as UserThemeSettings;
+      }
+    } catch {}
+  }
+  try {
+    const raw = localStorage.getItem(`shat_masr_theme_settings_${uid}`);
+    return raw ? (JSON.parse(raw) as UserThemeSettings) : null;
+  } catch {
+    return null;
+  }
+}
+
+export interface RemoteVersionConfig {
+  app_version?: string;
+  version?: string;
+  force_update?: boolean;
+  message?: string;
+}
+
+export function subscribeToRemoteAppVersion(
+  onVersion: (cfg: { latestVersion: string; forceUpdate: boolean; message: string }) => void
+): () => void {
+  if (!db) return () => {};
+  let unsubConfig: (() => void) | null = null;
+  try {
+    unsubConfig = onSnapshot(
+      doc(db, 'config', 'app_version'),
+      (snap) => {
+        if (snap.exists()) {
+          const data = snap.data() as RemoteVersionConfig;
+          const latestVersion = String(data.app_version || data.version || CLIENT_APP_VERSION);
+          onVersion({
+            latestVersion,
+            forceUpdate: Boolean(data.force_update),
+            message: data.message || 'يوجد تحديث جديد - اضغط للتحديث'
+          });
+        }
+      },
+      () => {}
+    );
+  } catch {}
+  return () => {
+    if (unsubConfig) unsubConfig();
+  };
+}
+
+// 29. STORIES BAR (24-HOUR TTL)
+const LOCAL_STORIES_KEY = 'shat_masr_stories_v1';
+
+export function subscribeToActiveStories(onUpdate: (stories: StoryItem[]) => void): () => void {
+  const filterValid = (list: StoryItem[]) => {
+    const now = Date.now();
+    return list
+      .filter((s) => typeof s.expiresAt === 'number' && s.expiresAt > now)
+      .sort((a, b) => b.createdAt - a.createdAt);
+  };
+
+  const readLocal = (): StoryItem[] => {
+    try {
+      const raw = localStorage.getItem(LOCAL_STORIES_KEY);
+      return raw ? filterValid(JSON.parse(raw)) : [];
+    } catch {
+      return [];
+    }
+  };
+
+  onUpdate(readLocal());
+
+  let unsubFs: (() => void) | null = null;
+  if (db) {
+    try {
+      const q = query(collection(db, 'stories'), orderBy('createdAt', 'desc'), limit(40));
+      unsubFs = onSnapshot(
+        q,
+        (snap) => {
+          const items: StoryItem[] = snap.docs.map((d) => ({
+            id: d.id,
+            ...(d.data() as any)
+          }));
+          const valid = filterValid(items);
+          try {
+            localStorage.setItem(LOCAL_STORIES_KEY, JSON.stringify(valid));
+          } catch {}
+          onUpdate(valid);
+        },
+        () => {}
+      );
+    } catch {}
+  }
+
+  const handleBus = (e: MessageEvent) => {
+    if (e.data?.type === 'STORIES_CHANGED') {
+      onUpdate(readLocal());
+    }
+  };
+  liveChatBus?.addEventListener('message', handleBus);
+
+  return () => {
+    if (unsubFs) unsubFs();
+    liveChatBus?.removeEventListener('message', handleBus);
+  };
+}
+
+export async function createStory(
+  user: User,
+  payload: { mediaType: 'image' | 'text'; imageUrl?: string; caption: string; bgGradient?: string }
+): Promise<StoryItem> {
+  const now = Date.now();
+  const id = `story_${now}_${Math.random().toString(36).slice(2, 7)}`;
+  const story: StoryItem = {
+    id,
+    userId: user.id,
+    userName: user.name,
+    userAvatar: user.avatar || '',
+    userRole: user.role,
+    userVerified: Boolean(user.verified || user.role === 'owner'),
+    mediaType: payload.mediaType,
+    ...(payload.imageUrl ? { imageUrl: payload.imageUrl } : {}),
+    caption: payload.caption.trim(),
+    bgGradient: payload.bgGradient || 'from-indigo-600 via-purple-600 to-fuchsia-600',
+    createdAt: now,
+    expiresAt: now + 24 * 60 * 60 * 1000,
+    viewers: {}
+  };
+
+  try {
+    const raw = localStorage.getItem(LOCAL_STORIES_KEY);
+    const list: StoryItem[] = raw ? JSON.parse(raw) : [];
+    list.unshift(story);
+    localStorage.setItem(LOCAL_STORIES_KEY, JSON.stringify(list.slice(0, 40)));
+  } catch {}
+  liveChatBus?.postMessage({ type: 'STORIES_CHANGED' });
+
+  if (db) {
+    try {
+      await setDoc(doc(db, 'stories', id), story);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.CREATE, `stories/${id}`);
+    }
+  }
+  return story;
+}
+
+export async function markStoryViewed(storyId: string, viewer: User): Promise<void> {
+  if (!storyId || !viewer?.id) return;
+  const viewerEntry = {
+    id: viewer.id,
+    name: viewer.name,
+    avatar: viewer.avatar || '',
+    viewedAt: Date.now()
+  };
+
+  try {
+    const raw = localStorage.getItem(LOCAL_STORIES_KEY);
+    if (raw) {
+      const list: StoryItem[] = JSON.parse(raw);
+      const updated = list.map((s) =>
+        s.id === storyId ? { ...s, viewers: { ...(s.viewers || {}), [viewer.id]: viewerEntry } } : s
+      );
+      localStorage.setItem(LOCAL_STORIES_KEY, JSON.stringify(updated));
+    }
+  } catch {}
+
+  if (db) {
+    try {
+      await updateDoc(doc(db, 'stories', storyId), {
+        [`viewers.${viewer.id}`]: viewerEntry
+      });
+    } catch {}
+  }
+}
+
+export async function recordProfileVisit(targetUserId: string, visitorId: string): Promise<void> {
+  if (!targetUserId || !visitorId || targetUserId === visitorId) return;
+  const key = `shatmasr_visited_profile_${visitorId}_${targetUserId}`;
+  try {
+    if (sessionStorage.getItem(key) === '1') return;
+    sessionStorage.setItem(key, '1');
+  } catch {}
+
+  if (db) {
+    try {
+      await setDoc(
+        doc(db, 'users', targetUserId),
+        { profileVisitsCount: increment(1) },
+        { merge: true }
+      );
+      await setDoc(
+        doc(db, 'online_users', targetUserId),
+        { profileVisitsCount: increment(1) },
+        { merge: true }
+      ).catch(() => {});
+    } catch {}
+  }
+}
+
+export async function grantUserXp(
+  userId: string,
+  xpDelta: number,
+  currentXp: number = 0
+): Promise<{ nextXp: number; nextLevel: number; leveledUp: boolean }> {
+  const prevLevel = Math.max(1, Math.floor((currentXp || 0) / 100) + 1);
+  const nextXp = (currentXp || 0) + xpDelta;
+  const nextLevel = Math.max(1, Math.floor(nextXp / 100) + 1);
+  const leveledUp = nextLevel > prevLevel;
+
+  if (db && userId) {
+    setDoc(
+      doc(db, 'users', userId),
+      { xp: nextXp, level: nextLevel, updatedAt: serverTimestamp() },
+      { merge: true }
+    ).catch(() => {});
+  }
+  return { nextXp, nextLevel, leveledUp };
+}
+
+// 30. AUTOMATED DAILY BACKUPS (`backups/{dateKey}` + `/api/backups`)
+export async function createDailyBackupSnapshot(
+  createdBy: string,
+  usersList: User[],
+  roomsCount: number = 10,
+  postsCount: number = 0,
+  notes?: string
+): Promise<BackupSnapshot> {
+  const dateKey = getTodayKey();
+  const sanitizedUsers = usersList.slice(0, 120).map((u) => ({
+    id: u.id,
+    name: u.name,
+    username: u.username,
+    role: u.role,
+    vipBadge: u.vipBadge,
+    verified: Boolean(u.verified),
+    coins: u.coins || 0,
+    level: u.level || 1,
+    badges: u.badges || []
+  }));
+  const snapshot: BackupSnapshot = {
+    id: `bak_${dateKey}`,
+    dateKey,
+    createdAt: Date.now(),
+    createdBy,
+    usersCount: usersList.length,
+    roomsCount,
+    postsCount,
+    usersData: sanitizedUsers,
+    notes: notes || 'نسخة احتياطية يومية تلقائية للبيانات والرتب والأرصدة'
+  };
+
+  try {
+    await fetch('/api/backups', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(snapshot)
+    }).catch(() => {});
+  } catch {}
+
+  if (db) {
+    try {
+      await setDoc(doc(db, 'backups', dateKey), snapshot, { merge: true });
+    } catch {}
+  }
+  return snapshot;
+}
+
+export function subscribeToBackups(onUpdate: (list: BackupSnapshot[]) => void): () => void {
+  const map = new Map<string, BackupSnapshot>();
+  const emit = () => {
+    const sorted = Array.from(map.values()).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    onUpdate(sorted);
+  };
+
+  fetch('/api/backups')
+    .then((r) => (r.ok ? r.json() : null))
+    .then((d) => {
+      if (Array.isArray(d?.backups)) {
+        d.backups.forEach((b: BackupSnapshot) => {
+          if (b?.dateKey) map.set(b.dateKey, b);
+        });
+        emit();
+      }
+    })
+    .catch(() => {});
+
+  let unsubFs: (() => void) | null = null;
+  if (db) {
+    try {
+      unsubFs = onSnapshot(
+        query(collection(db, 'backups'), orderBy('createdAt', 'desc'), limit(14)),
+        (snap) => {
+          snap.docs.forEach((d) => {
+            const data = d.data() as BackupSnapshot;
+            map.set(data.dateKey || d.id, { ...data, id: data.id || d.id });
+          });
+          emit();
+        },
+        () => {}
+      );
+    } catch {}
+  }
+
+  return () => {
+    if (unsubFs) unsubFs();
+  };
+}
+
+export async function restoreDailyBackupSnapshot(snapshot: BackupSnapshot): Promise<number> {
+  if (!snapshot?.usersData || !Array.isArray(snapshot.usersData)) return 0;
+  let restoredCount = 0;
+  for (const u of snapshot.usersData) {
+    if (!u?.id) continue;
+    await adminUpdateUser(u.id, {
+      role: u.role,
+      vipBadge: u.vipBadge,
+      verified: Boolean(u.verified),
+      coins: Number(u.coins) || 0,
+      level: Number(u.level) || 1,
+      badges: Array.isArray(u.badges) ? u.badges : []
+    }).catch(() => {});
+    restoredCount += 1;
+  }
+  return restoredCount;
+}
+
+
+// ==========================================
 // 20. ROOM PINNED MESSAGE (WebSocket + RTDB + BroadcastChannel)
 // ==========================================
 export async function setRoomPinnedMessage(
@@ -4582,12 +5059,14 @@ export async function uploadPrivateChatMedia(
 const LOCAL_FORUM_KEY = 'shat_masr_forum_posts_v1';
 
 export function subscribeToForumPosts(
-  onUpdate: (posts: ForumPost[]) => void
+  onUpdate: (posts: ForumPost[]) => void,
+  pageLimit: number = 20
 ): () => void {
   const readLocal = (): ForumPost[] => {
     try {
       const raw = localStorage.getItem(LOCAL_FORUM_KEY);
-      return raw ? JSON.parse(raw) : [];
+      const parsed: ForumPost[] = raw ? JSON.parse(raw) : [];
+      return parsed.slice(0, pageLimit);
     } catch {
       return [];
     }
@@ -4603,7 +5082,7 @@ export function subscribeToForumPosts(
   let unsubFirestore: (() => void) | null = null;
   if (db) {
     try {
-      const q = query(collection(db, 'forum_posts'), orderBy('createdAt', 'desc'), limit(60));
+      const q = query(collection(db, 'forum_posts'), orderBy('createdAt', 'desc'), limit(pageLimit));
       unsubFirestore = onSnapshot(
         q,
         (snapshot) => {
@@ -4618,6 +5097,7 @@ export function subscribeToForumPosts(
               authorCountryFlag: data.authorCountryFlag || '🇪🇬',
               authorVipBadge: data.authorVipBadge || '',
               authorRole: data.authorRole || 'member',
+              authorVerified: Boolean(data.authorVerified || data.authorRole === 'owner'),
               text: data.text || '',
               imageUrl: data.imageUrl || undefined,
               isPinned: Boolean(data.isPinned),
@@ -4627,6 +5107,9 @@ export function subscribeToForumPosts(
               likedUsers: data.likedUsers && typeof data.likedUsers === 'object' ? data.likedUsers : {},
               likesCount: Number(data.likesCount) || (Array.isArray(data.likedBy) ? data.likedBy.length : 0),
               commentsCount: Number(data.commentsCount) || 0,
+              viewsCount: Number(data.viewsCount) || 0,
+              viewedBy: Array.isArray(data.viewedBy) ? data.viewedBy : [],
+              mentions: Array.isArray(data.mentions) ? data.mentions : [],
               createdAt: typeof data.createdAt === 'number' ? data.createdAt : Date.now()
             };
           });
@@ -4665,8 +5148,42 @@ export function subscribeToForumPosts(
   };
 }
 
+export async function recordForumPostView(postId: string, viewerId: string): Promise<void> {
+  if (!postId || !viewerId) return;
+  const sessionViewKey = `shatmasr_viewed_post_${postId}_${viewerId}`;
+  try {
+    if (sessionStorage.getItem(sessionViewKey) === '1') return;
+    sessionStorage.setItem(sessionViewKey, '1');
+  } catch {}
+
+  try {
+    const raw = localStorage.getItem(LOCAL_FORUM_KEY);
+    if (raw) {
+      const list: ForumPost[] = JSON.parse(raw);
+      const updated = list.map((p) => {
+        if (p.id !== postId) return p;
+        const viewed = new Set(p.viewedBy || []);
+        if (viewed.has(viewerId)) return p;
+        viewed.add(viewerId);
+        return { ...p, viewedBy: Array.from(viewed), viewsCount: Math.max((p.viewsCount || 0) + 1, viewed.size) };
+      });
+      localStorage.setItem(LOCAL_FORUM_KEY, JSON.stringify(updated));
+    }
+  } catch {}
+
+  if (db) {
+    try {
+      await updateDoc(doc(db, 'forum_posts', postId), {
+        viewedBy: arrayUnion(viewerId),
+        viewsCount: increment(1)
+      });
+    } catch {}
+  }
+}
+
 export async function createForumPost(user: User, text: string, imageUrl?: string): Promise<ForumPost> {
   const id = `post_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+  const mentionMatches = Array.from(text.matchAll(/@([^\s،.!؟]+)/g)).map((m) => m[1].trim()).filter(Boolean);
   const post: ForumPost = {
     id,
     authorId: user.id,
@@ -4676,12 +5193,16 @@ export async function createForumPost(user: User, text: string, imageUrl?: strin
     authorCountryFlag: user.countryFlag || '🇪🇬',
     authorVipBadge: user.vipBadge || '',
     authorRole: user.role || 'member',
+    authorVerified: Boolean(user.verified || user.role === 'owner'),
     text: text.trim(),
     ...(imageUrl ? { imageUrl } : {}),
     isPinned: false,
     likedBy: [],
     likesCount: 0,
     commentsCount: 0,
+    viewsCount: 1,
+    viewedBy: [user.id],
+    mentions: mentionMatches,
     createdAt: Date.now()
   };
 
@@ -4692,6 +5213,15 @@ export async function createForumPost(user: User, text: string, imageUrl?: strin
     localStorage.setItem(LOCAL_FORUM_KEY, JSON.stringify(list.slice(0, 80)));
   } catch {}
   liveChatBus?.postMessage({ type: 'FORUM_POSTS_CHANGED' });
+  if (mentionMatches.length > 0) {
+    liveChatBus?.postMessage({
+      type: 'FORUM_MENTION_ALERT',
+      authorId: user.id,
+      authorName: user.name,
+      mentions: mentionMatches,
+      postId: id
+    });
+  }
 
   if (db) {
     try {
@@ -5105,7 +5635,7 @@ export async function claimSharedMissionReward(missionId: string, userId: string
 // ==========================================
 const LOCAL_REPORTS_KEY = 'shat_masr_user_reports_v1';
 
-export async function submitUserReport(report: Omit<UserReport, 'id' | 'status'>): Promise<UserReport> {
+export async function submitUserReport(report: Omit<UserReport, 'id' | 'status'>): Promise<UserReport & { autoMuted?: boolean }> {
   const id = `rep_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
   const full: UserReport = {
     ...report,
@@ -5113,24 +5643,47 @@ export async function submitUserReport(report: Omit<UserReport, 'id' | 'status'>
     status: 'pending'
   };
 
+  let localCountForTarget = 0;
   try {
     const raw = localStorage.getItem(LOCAL_REPORTS_KEY);
     const list: UserReport[] = raw ? JSON.parse(raw) : [];
     list.unshift(full);
     localStorage.setItem(LOCAL_REPORTS_KEY, JSON.stringify(list.slice(0, 150)));
+    localCountForTarget = list.filter(
+      (r) => r.reportedUserId === report.reportedUserId && r.status !== 'dismissed'
+    ).length;
   } catch {}
 
   realtimeSocket.sendUserReport(full);
   liveChatBus?.postMessage({ type: 'USER_REPORTS_CHANGED' });
 
+  let fsCountForTarget = localCountForTarget;
   if (db) {
     try {
       await setDoc(doc(db, 'user_reports', id), full);
+      const q = query(
+        collection(db, 'user_reports'),
+        where('reportedUserId', '==', report.reportedUserId),
+        limit(10)
+      );
+      const snap = await getDocs(q);
+      fsCountForTarget = Math.max(
+        localCountForTarget,
+        snap.docs.filter((d) => d.data()?.status !== 'dismissed').length
+      );
     } catch (err) {
       handleFirestoreError(err, OperationType.CREATE, `user_reports/${id}`);
     }
   }
-  return full;
+
+  // Auto-mute on 3+ reports pending moderator review
+  let autoMuted = false;
+  if (fsCountForTarget >= 3 && report.reportedUserId) {
+    autoMuted = true;
+    await adminUpdateUser(report.reportedUserId, { isMuted: true }).catch(() => {});
+  }
+
+  return { ...full, autoMuted };
 }
 
 export function subscribeToUserReports(onUpdate: (reports: UserReport[]) => void): () => void {

@@ -29,7 +29,11 @@ import {
   Smile,
   Sticker,
   Loader2,
-  Maximize2
+  Maximize2,
+  MoreVertical,
+  Flag,
+  Languages,
+  WifiOff
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { User, Message, Friend, GiftItem, UnreadSenderSummary } from '../types/chat';
@@ -43,7 +47,8 @@ import {
   markDirectMessagesAsRead,
   uploadPrivateChatMedia,
   setPrivateTyping,
-  subscribeToPrivateTyping
+  subscribeToPrivateTyping,
+  submitUserReport
 } from '../services/firebase';
 import { isGuestUser } from '../data/seedData';
 import { FriendsList } from './FriendsList';
@@ -57,10 +62,16 @@ import { getWallpaperStyleById } from '../data/wallpapers';
 import { AvatarWithFrame } from './AvatarWithFrame';
 import { getRankDisplayMeta } from '../utils/userRanks';
 import { ANIMATED_INLINE_EMOJIS, InlineRichText } from './InlineRichText';
+import { VerifiedBadge } from '../utils/verifiedBadge';
+import { compressImageFileToBlob } from '../utils/imageCompression';
+import { offlineQueue } from '../services/offlineQueue';
+import { translateChatMessage } from '../utils/translateMessage';
+import { globalRadioPlayer } from '../services/radioPlayer';
 import {
   ConsentRequestType,
   formatCooldownRemaining,
   getConsentCooldownRemaining,
+  hasPeerMediaApproval,
   requestUserConsent,
 } from '../services/consentService';
 
@@ -139,10 +150,21 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
   const [isUploadingMedia, setIsUploadingMedia] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [requestingConsentType, setRequestingConsentType] = useState<ConsentRequestType | null>(null);
+  const [callWaitingState, setCallWaitingState] = useState<{
+    type: ConsentRequestType;
+    peerName: string;
+    remainingSec: number;
+    cancel: () => void;
+  } | null>(null);
   const [lightboxImageUrl, setLightboxImageUrl] = useState<string | null>(null);
+  const [isActionsMenuOpen, setIsActionsMenuOpen] = useState(false);
+  const [isMessageSearchOpen, setIsMessageSearchOpen] = useState(false);
+  const [messageSearchQuery, setMessageSearchQuery] = useState('');
+  const [translatedMap, setTranslatedMap] = useState<Record<string, { translated: string; targetLang: string; show: boolean }>>({});
   const mediaFileInputRef = useRef<HTMLInputElement>(null);
   const chatInputRef = useRef<HTMLInputElement>(null);
   const emojiStickerPanelRef = useRef<HTMLDivElement>(null);
+  const actionsMenuRef = useRef<HTMLDivElement>(null);
 
   // Real Voice Recording States & Refs
   const [isRecordingVoice, setIsRecordingVoice] = useState(false);
@@ -152,6 +174,49 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
   const recordingTimerRef = useRef<any>(null);
   const recordingSecondsRef = useRef<number>(0);
   const activeAudioRef = useRef<HTMLAudioElement | null>(null);
+
+  // 1-second countdown ticker for bottom Call/Media Waiting Toast
+  useEffect(() => {
+    if (!callWaitingState) return;
+    const interval = setInterval(() => {
+      setCallWaitingState((prev) =>
+        prev ? { ...prev, remainingSec: Math.max(0, prev.remainingSec - 1) } : null
+      );
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [Boolean(callWaitingState)]);
+
+  // Close actions menu on outside click & reset search when switching contact
+  useEffect(() => {
+    setIsActionsMenuOpen(false);
+    setIsMessageSearchOpen(false);
+    setMessageSearchQuery('');
+  }, [activeContact?.id]);
+
+  useEffect(() => {
+    if (!isActionsMenuOpen) return;
+    const handleOutside = (e: MouseEvent) => {
+      if (actionsMenuRef.current && !actionsMenuRef.current.contains(e.target as Node)) {
+        setIsActionsMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleOutside);
+    return () => document.removeEventListener('mousedown', handleOutside);
+  }, [isActionsMenuOpen]);
+
+  // Memory safety on component unmount
+  useEffect(() => {
+    return () => {
+      if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
+      if (activeAudioRef.current) {
+        activeAudioRef.current.pause();
+        activeAudioRef.current = null;
+      }
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+        try { mediaRecorderRef.current.stop(); } catch {}
+      }
+    };
+  }, []);
 
   const getActivePeerSessionId = () => {
     if (!activeContact) return undefined;
@@ -412,7 +477,7 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
     }
   };
 
-  // Pre-approved Audio / Video Call Launcher with 5-minute Rejection Cooldown
+  // Pre-approved Audio / Video Call Launcher with 5-minute Rejection Cooldown + Bottom Waiting Toast
   const handleRequestCall = async (callType: 'audio' | 'video') => {
     if (!activeContact) return;
     if (isGuest) {
@@ -420,6 +485,7 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
       if (onPromptRegister) {
         onPromptRegister();
       } else {
+        globalRadioPlayer.pauseForCall();
         setCallModalState({ isOpen: true, callType });
       }
       return;
@@ -435,20 +501,30 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
     if (requestingConsentType) return;
 
     setRequestingConsentType(consentType);
-    const toastId = toast.loading(
-      `تم إرسال طلب ${callType === 'video' ? 'مكالمة فيديو' : 'مكالمة صوتية'} إلى ${activeContact.name}... في انتظار الموافقة ⏳`
-    );
     try {
       const res = await requestUserConsent(
         currentUser,
         activeContact.id,
         activeContact.name,
-        consentType
+        consentType,
+        undefined,
+        30000,
+        ({ cancel }) => {
+          setCallWaitingState({
+            type: consentType,
+            peerName: activeContact.name,
+            remainingSec: 30,
+            cancel,
+          });
+        }
       );
-      toast.dismiss(toastId);
+      setCallWaitingState(null);
       if (res.approved) {
+        globalRadioPlayer.pauseForCall();
         toast.success(`وافق ${activeContact.name} على المكالمة ✅`);
         setCallModalState({ isOpen: true, callType });
+      } else if (res.reason === 'cancelled') {
+        toast.info('تم إلغاء طلب المكالمة');
       } else if (res.reason === 'rejected') {
         toast.error(
           `رفض ${activeContact.name} طلب المكالمة ❌ (ممنوع إعادة الطلب لمدة 5 دقائق)`
@@ -461,11 +537,12 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
         toast.info(`لم يرد ${activeContact.name} على طلب المكالمة في الوقت المحدد`);
       }
     } finally {
+      setCallWaitingState(null);
       setRequestingConsentType(null);
     }
   };
 
-  // Media file picker & consent-gated upload handler (Images & Videos)
+  // Media file picker & consent-gated upload handler (One-time approval + <200KB image compression)
   const handleMediaFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = '';
@@ -482,50 +559,71 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
       return;
     }
 
-    const cooldownRemaining = getConsentCooldownRemaining(currentUser.id, activeContact.id, 'send_image');
-    if (cooldownRemaining > 0) {
-      toast.warning(
-        `لا يمكنك إرسال صور لـ ${activeContact.name} الآن — متبقي ${formatCooldownRemaining(cooldownRemaining)} ⏳`
-      );
-      return;
-    }
-
-    setRequestingConsentType('send_image');
-    const consentToastId = toast.loading(
-      `في انتظار موافقة ${activeContact.name} على استقبال ${isVideo ? 'الفيديو' : 'الصورة'}... ⏳`
-    );
-    try {
-      const consentRes = await requestUserConsent(
-        currentUser,
-        activeContact.id,
-        activeContact.name,
-        'send_image',
-        isVideo ? 'يرغب في إرسال مقطع فيديو إليك' : 'يرغب في إرسال صورة إليك'
-      );
-      toast.dismiss(consentToastId);
-      if (!consentRes.approved) {
-        if (consentRes.reason === 'rejected') {
-          toast.error(
-            `رفض ${activeContact.name} استقبال الصور ❌ (تم تفعيل منع الإزعاج لمدة 5 دقائق)`
-          );
-        } else if (consentRes.reason === 'cooldown') {
-          toast.warning(
-            `يرجى الانتظار ${formatCooldownRemaining(consentRes.remainingMs || 0)}`
-          );
-        } else {
-          toast.info(`لم يوافق ${activeContact.name} في الوقت المحدد — لم يتم إرسال الملف`);
-        }
+    // One-time peer media approval check
+    if (!hasPeerMediaApproval(currentUser.id, activeContact.id)) {
+      const cooldownRemaining = getConsentCooldownRemaining(currentUser.id, activeContact.id, 'send_image');
+      if (cooldownRemaining > 0) {
+        toast.warning(
+          `لا يمكنك إرسال وسائط لـ ${activeContact.name} الآن — متبقي ${formatCooldownRemaining(cooldownRemaining)} ⏳`
+        );
         return;
       }
-    } finally {
-      setRequestingConsentType(null);
+
+      setRequestingConsentType('send_image');
+      try {
+        const consentRes = await requestUserConsent(
+          currentUser,
+          activeContact.id,
+          activeContact.name,
+          'send_image',
+          isVideo ? 'يرغب في إرسال مقطع فيديو إليك' : 'يرغب في إرسال صورة إليك',
+          30000,
+          ({ cancel }) => {
+            setCallWaitingState({
+              type: 'send_image',
+              peerName: activeContact.name,
+              remainingSec: 30,
+              cancel,
+            });
+          }
+        );
+        setCallWaitingState(null);
+        if (!consentRes.approved) {
+          if (consentRes.reason === 'cancelled') {
+            toast.info('تم إلغاء طلب إرسال الوسائط');
+          } else if (consentRes.reason === 'rejected') {
+            toast.error(
+              `رفض ${activeContact.name} استقبال الصور ❌ (تم تفعيل منع الإزعاج لمدة 5 دقائق)`
+            );
+          } else if (consentRes.reason === 'cooldown') {
+            toast.warning(
+              `يرجى الانتظار ${formatCooldownRemaining(consentRes.remainingMs || 0)}`
+            );
+          } else {
+            toast.info(`لم يوافق ${activeContact.name} في الوقت المحدد — لم يتم إرسال الملف`);
+          }
+          return;
+        }
+      } finally {
+        setCallWaitingState(null);
+        setRequestingConsentType(null);
+      }
     }
 
     const convId = [currentUser.id, activeContact.id].sort().join('_');
     setIsUploadingMedia(true);
     setUploadProgress(5);
     try {
-      const { url, mediaType } = await uploadPrivateChatMedia(file, convId, (pct) => {
+      let uploadFile: File = file;
+      if (isImage) {
+        const { blob: compressedBlob } = await compressImageFileToBlob(file, {
+          maxWidth: 800,
+          maxBytes: 195 * 1024,
+        });
+        const cleanBase = file.name.replace(/\.[^.]+$/, '') || 'photo';
+        uploadFile = new File([compressedBlob], `${cleanBase}.jpg`, { type: 'image/jpeg' });
+      }
+      const { url, mediaType } = await uploadPrivateChatMedia(uploadFile, convId, (pct) => {
         setUploadProgress(pct);
       });
       sounds.playMessageSent();
@@ -588,6 +686,29 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
       status: 'sent'
     };
 
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+      const pendingId = `offline_dm_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+      const convId = [currentUser.id, activeContact.id].sort().join('_');
+      const offlineMsg: Message = {
+        ...(newMsg as Message),
+        id: pendingId,
+        roomId: convId,
+        status: 'pending_offline',
+      };
+      setMessages(prev => [...prev, offlineMsg]);
+      offlineQueue.enqueue({
+        id: pendingId,
+        targetType: 'dm',
+        targetId: convId,
+        recipientId: activeContact.id,
+        recipientSessionId: getActivePeerSessionId(),
+        message: offlineMsg,
+        queuedAt: Date.now(),
+      });
+      toast.info('انقطع الاتصال — تم حفظ الرسالة وسيتم إرسالها تلقائياً عند العودة ⏳');
+      return;
+    }
+
     try {
       const sent = await sendDirectMessage(currentUser.id, activeContact.id, newMsg);
       setMessages(prev => {
@@ -622,9 +743,16 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
 
       mediaRecorder.onstop = async () => {
         stream.getTracks().forEach(track => track.stop());
-        const totalDuration = recordingSecondsRef.current || 2;
+        const totalDuration = Math.min(60, recordingSecondsRef.current || 2);
         if (audioChunksRef.current.length > 0) {
           const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+          if (audioBlob.size > 2 * 1024 * 1024) {
+            toast.error('حجم التسجيل الصوتي يتجاوز الحد الأقصى (2 ميجابايت)');
+            setIsRecordingVoice(false);
+            setRecordingSeconds(0);
+            recordingSecondsRef.current = 0;
+            return;
+          }
           const reader = new FileReader();
           reader.onloadend = async () => {
             const base64Audio = reader.result as string;
@@ -642,6 +770,10 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
         setRecordingSeconds(prev => {
           const next = prev + 1;
           recordingSecondsRef.current = next;
+          if (next >= 60) {
+            toast.info('وصل التسجيل للحد الأقصى (60 ثانية) وتم الإيقاف تلقائياً');
+            stopVoiceRecording();
+          }
           return next;
         });
       }, 1000);
@@ -985,7 +1117,10 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
 
                         <div className="min-w-0">
                           <div className="flex items-center gap-1.5">
-                            <h4 className="text-sm font-black text-slate-900 truncate">{chat.peerName || 'عضو شات مصر'}</h4>
+                            <h4 className="text-sm font-black text-slate-900 truncate flex items-center gap-1">
+                              <span className="truncate">{chat.peerName || 'عضو شات مصر'}</span>
+                              <VerifiedBadge verified={globalOnlineUsers.find(u => u.id === chat.peerId)?.verified} size="xs" />
+                            </h4>
                             <span className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-50 border border-indigo-200 text-indigo-700 font-bold shrink-0">
                               محادثة مباشرة
                             </span>
@@ -1056,7 +1191,10 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                       <div className="flex items-center gap-3">
                         <div className="text-right">
                           <div className="flex items-center gap-1.5 justify-end">
-                            <span className="text-sm font-black text-slate-900">{user.name}</span>
+                            <span className="text-sm font-black text-slate-900 flex items-center gap-1">
+                              <span>{user.name}</span>
+                              <VerifiedBadge verified={user.verified} size="xs" />
+                            </span>
                             <span>{user.countryFlag || '🌍'}</span>
                           </div>
                           <div className="flex items-center gap-1.5 justify-end text-[10px] text-slate-500">
@@ -1091,7 +1229,7 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
           style={getWallpaperStyleById(currentUser.chatWallpaper || 'wp_white_gold_doodle')}
           className={isDrawer
             ? "h-full w-full max-w-full flex flex-col bg-[#fafaf9] overflow-x-hidden overflow-y-hidden"
-            : "fixed inset-0 z-50 w-screen max-w-full h-[100dvh] sm:relative sm:inset-auto sm:w-full sm:h-full flex flex-col bg-[#fafaf9] border-0 sm:border border-slate-200/80 rounded-none sm:rounded-3xl overflow-x-hidden overflow-y-hidden shadow-2xl"
+            : "fixed inset-0 z-[60] w-screen max-w-full h-[100dvh] sm:relative sm:inset-auto sm:z-auto sm:w-full sm:h-full flex flex-col bg-[#fafaf9] border-0 sm:border border-slate-200/80 rounded-none sm:rounded-3xl overflow-x-hidden overflow-y-hidden shadow-2xl"
           }
         >
           {/* Hidden Media File Input (Images & Videos) */}
@@ -1103,52 +1241,54 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
             className="hidden"
           />
 
-          {/* 1. Modern Light Glass Header (Full-Width Mobile Safe) */}
-          <div className="relative z-10 w-full px-2 sm:px-3 py-2 pt-[calc(env(safe-area-inset-top,0px)+0.5rem)] sm:py-2.5 bg-white/95 backdrop-blur-md border-b border-amber-200/70 shadow-xs flex items-center justify-between gap-1.5 shrink-0">
-            <div className="flex items-center gap-2 min-w-0 flex-1">
-              <button
-                type="button"
-                onClick={() => {
-                  setActiveContact(null);
-                  if (onClearTargetUser) onClearTargetUser();
-                }}
-                className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 flex items-center justify-center shrink-0 active:scale-95 border border-slate-200/80 transition"
-                title="الرجوع إلى القائمة"
-              >
-                <ArrowRight className="w-4 h-4" />
-              </button>
+          {/* 1. Simplified 3-Zone Header: Back+User | Audio Call | Actions Dropdown */}
+          {(() => {
+            const resolvedPeerUser: User = globalOnlineUsers.find(u => u.id === activeContact.id) || {
+              id: activeContact.id,
+              name: activeContact.name,
+              username: activeContact.name.toLowerCase().replace(/\s+/g, '_'),
+              avatar: activeContact.avatar,
+              bio: 'عضو في شات مصر',
+              country: 'مصر',
+              countryFlag: activeContact.countryFlag || '🇪🇬',
+              role: 'member',
+              coins: 0,
+              earningsEgp: 0,
+              earningsUsd: 0,
+              vipBadge: '',
+              frameStyle: 'border-slate-300',
+              profileWallpaper: '',
+              fontPreference: 'cairo',
+              isOnline: activeContact.status === 'online',
+              status: activeContact.status,
+              joinedAt: '',
+              gender: 'male',
+              level: 1,
+              likesReceived: 0,
+              giftsReceivedCount: 0,
+            };
 
-              {(() => {
-                const resolvedPeerUser: User = globalOnlineUsers.find(u => u.id === activeContact.id) || {
-                  id: activeContact.id,
-                  name: activeContact.name,
-                  username: activeContact.name.toLowerCase().replace(/\s+/g, '_'),
-                  avatar: activeContact.avatar,
-                  bio: 'عضو في شات مصر',
-                  country: 'مصر',
-                  countryFlag: activeContact.countryFlag || '🇪🇬',
-                  role: 'member',
-                  coins: 0,
-                  earningsEgp: 0,
-                  earningsUsd: 0,
-                  vipBadge: '',
-                  frameStyle: 'border-slate-300',
-                  profileWallpaper: '',
-                  fontPreference: 'cairo',
-                  isOnline: activeContact.status === 'online',
-                  status: activeContact.status,
-                  joinedAt: '',
-                  gender: 'male',
-                  level: 1,
-                  likesReceived: 0,
-                  giftsReceivedCount: 0,
-                };
-                return (
+            return (
+              <div className="relative z-20 w-full px-2.5 sm:px-3.5 py-2 pt-[calc(env(safe-area-inset-top,0px)+0.5rem)] sm:py-2.5 bg-white/95 backdrop-blur-md border-b border-amber-200/70 shadow-xs flex items-center justify-between gap-2 shrink-0">
+                {/* Zone 1: Back + Peer Avatar & Status */}
+                <div className="flex items-center gap-2 min-w-0 flex-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveContact(null);
+                      if (onClearTargetUser) onClearTargetUser();
+                    }}
+                    className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 flex items-center justify-center shrink-0 active:scale-95 border border-slate-200/80 transition cursor-pointer"
+                    title="الرجوع إلى القائمة"
+                  >
+                    <ArrowRight className="w-4 h-4" />
+                  </button>
+
                   <button
                     type="button"
                     onClick={() => onOpenUserProfile?.(resolvedPeerUser)}
                     className="flex items-center gap-2 min-w-0 flex-1 text-right cursor-pointer group"
-                    title="عرض الملف الشخصي والخيارات"
+                    title="عرض الملف الشخصي"
                   >
                     <AvatarWithFrame
                       user={resolvedPeerUser}
@@ -1159,6 +1299,7 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                     <div className="min-w-0 flex-1 text-right">
                       <h3 className="text-xs sm:text-sm font-black text-slate-900 flex items-center gap-1 min-w-0 group-hover:text-indigo-700 transition-colors">
                         <span className="truncate">{activeContact.name}</span>
+                        <VerifiedBadge verified={resolvedPeerUser.verified} size="xs" />
                         <span className="shrink-0">{activeContact.countryFlag}</span>
                       </h3>
                       {isPeerTyping ? (
@@ -1170,7 +1311,7 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                             <span className="w-1 h-1 rounded-full bg-amber-500 animate-bounce" style={{ animationDelay: '300ms' }}></span>
                           </span>
                         </span>
-                      ) : activeContact.status === 'online' ? (
+                      ) : resolvedPeerUser.isOnline || activeContact.status === 'online' ? (
                         <span className="text-[9.5px] sm:text-[10px] text-emerald-600 font-bold flex items-center gap-1 truncate">
                           <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shrink-0"></span>
                           <span className="truncate">متصل الآن • خاص مشفر</span>
@@ -1180,99 +1321,203 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                       )}
                     </div>
                   </button>
-                );
-              })()}
+                </div>
+
+                {/* Zone 2 & 3: Audio Call + Actions Menu Dropdown */}
+                <div className="flex items-center gap-1.5 shrink-0" ref={actionsMenuRef}>
+                  <button 
+                    type="button"
+                    onClick={() => handleRequestCall('audio')}
+                    disabled={Boolean(requestingConsentType)}
+                    className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-emerald-50 hover:bg-emerald-100 disabled:opacity-50 text-emerald-700 border border-emerald-200 flex items-center justify-center transition active:scale-95 shrink-0 cursor-pointer"
+                    title="طلب مكالمة صوتية"
+                  >
+                    {requestingConsentType === 'audio_call' ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Phone className="w-4 h-4" />
+                    )}
+                  </button>
+
+                  <div className="relative">
+                    <button
+                      type="button"
+                      onClick={() => setIsActionsMenuOpen(prev => !prev)}
+                      className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 flex items-center justify-center active:scale-95 transition cursor-pointer"
+                      title="المزيد من الخيارات"
+                    >
+                      <MoreVertical className="w-4 h-4" />
+                    </button>
+
+                    {isActionsMenuOpen && (
+                      <div className="absolute left-0 top-full mt-1.5 w-52 bg-white border border-slate-200 rounded-2xl shadow-2xl py-1.5 z-[100] text-right animate-in fade-in zoom-in-95">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsActionsMenuOpen(false);
+                            handleRequestCall('video');
+                          }}
+                          className="w-full px-3 py-2 text-xs font-bold text-slate-800 hover:bg-sky-50 flex items-center gap-2.5 transition cursor-pointer"
+                        >
+                          <Video className="w-4 h-4 text-sky-600 shrink-0" />
+                          <span>مكالمة فيديو 📹</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsActionsMenuOpen(false);
+                            setIsGiftModalOpen(true);
+                          }}
+                          className="w-full px-3 py-2 text-xs font-bold text-slate-800 hover:bg-rose-50 flex items-center gap-2.5 transition cursor-pointer"
+                        >
+                          <Gift className="w-4 h-4 text-rose-500 shrink-0" />
+                          <span>إرسال هدية فاخرة 🎁</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsActionsMenuOpen(false);
+                            setIsCoinsTransferOpen(true);
+                          }}
+                          className="w-full px-3 py-2 text-xs font-bold text-slate-800 hover:bg-amber-50 flex items-center gap-2.5 transition cursor-pointer"
+                        >
+                          <Coins className="w-4 h-4 text-amber-600 shrink-0" />
+                          <span>تحويل كوينز 🪙</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsActionsMenuOpen(false);
+                            setIsWallpapersModalOpen(true);
+                          }}
+                          className="w-full px-3 py-2 text-xs font-bold text-slate-800 hover:bg-emerald-50 flex items-center gap-2.5 transition cursor-pointer"
+                        >
+                          <Palette className="w-4 h-4 text-emerald-600 shrink-0" />
+                          <span>تخصيص الخلفية 🎨</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsActionsMenuOpen(false);
+                            setIsMessageSearchOpen(prev => !prev);
+                            setMessageSearchQuery('');
+                          }}
+                          className="w-full px-3 py-2 text-xs font-bold text-slate-800 hover:bg-indigo-50 flex items-center gap-2.5 transition cursor-pointer"
+                        >
+                          <Search className="w-4 h-4 text-indigo-600 shrink-0" />
+                          <span>بحث في الرسائل 🔍</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsActionsMenuOpen(false);
+                            onOpenUserProfile?.(resolvedPeerUser);
+                          }}
+                          className="w-full px-3 py-2 text-xs font-bold text-slate-800 hover:bg-slate-100 flex items-center gap-2.5 transition cursor-pointer"
+                        >
+                          <Users className="w-4 h-4 text-slate-600 shrink-0" />
+                          <span>عرض الملف الشخصي 👤</span>
+                        </button>
+                        <div className="my-1 border-t border-slate-100" />
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            setIsActionsMenuOpen(false);
+                            const res = await submitUserReport({
+                              reporterId: currentUser.id,
+                              reporterName: currentUser.name,
+                              reportedUserId: activeContact.id,
+                              reportedUserName: activeContact.name,
+                              reason: 'إبلاغ من المحادثة الخاصة',
+                              contextType: 'dm',
+                              contextId: [currentUser.id, activeContact.id].sort().join('_'),
+                              timestamp: Date.now(),
+                              createdAt: Date.now(),
+                            });
+                            toast.success(
+                              res.autoMuted
+                                ? 'تم إرسال البلاغ وتطبيق إجراء الكتم الوقائي تلقائياً 🛡️'
+                                : 'تم إرسال البلاغ للإدارة للمراجعة الفورية ✅'
+                            );
+                          }}
+                          className="w-full px-3 py-2 text-xs font-bold text-rose-700 hover:bg-rose-50 flex items-center gap-2.5 transition cursor-pointer"
+                        >
+                          <Flag className="w-4 h-4 text-rose-600 shrink-0" />
+                          <span>إبلاغ عن إساءة 🚩</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  {isDrawer && onCloseDrawer && (
+                    <button
+                      type="button"
+                      onClick={onCloseDrawer}
+                      className="w-8 h-8 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 hover:text-slate-900 border border-slate-200/80 flex items-center justify-center transition active:scale-95 shrink-0 cursor-pointer"
+                      title="إغلاق القائمة الجانبية"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* Toggleable Message Search Strip */}
+          {isMessageSearchOpen && (
+            <div className="px-3 py-2 bg-white/95 border-b border-slate-200 flex items-center gap-2 shrink-0 animate-in slide-in-from-top-1">
+              <Search className="w-4 h-4 text-indigo-500 shrink-0" />
+              <input
+                type="text"
+                value={messageSearchQuery}
+                onChange={(e) => setMessageSearchQuery(e.target.value)}
+                placeholder="ابحث داخل هذه المحادثة..."
+                autoFocus
+                className="flex-1 bg-slate-100 border border-slate-200 rounded-xl px-3 py-1.5 text-xs text-slate-900 focus:outline-none focus:border-indigo-400"
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  setIsMessageSearchOpen(false);
+                  setMessageSearchQuery('');
+                }}
+                className="p-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 cursor-pointer"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
             </div>
-
-            {/* Header Left Actions (RTL): Natural Wallpaper, Coins Transfer, Gift, Audio Call */}
-            <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
-              {/* Custom Natural & Shop Wallpaper Picker Button */}
-              <button
-                type="button"
-                onClick={() => setIsWallpapersModalOpen(true)}
-                className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 flex items-center justify-center active:scale-95 transition shadow-xs shrink-0"
-                title="تخصيص خلفية الشات والصور الطبيعية"
-              >
-                <Palette className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-emerald-600" />
-              </button>
-
-              {/* Coins Transfer Button */}
-              <button
-                type="button"
-                onClick={() => setIsCoinsTransferOpen(true)}
-                className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-300/80 flex items-center justify-center active:scale-95 transition shadow-xs shrink-0"
-                title="تحويل كوينز فوري"
-              >
-                <Coins className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-600" />
-              </button>
-
-              {/* Luxury Virtual Gift Button */}
-              <button
-                type="button"
-                onClick={() => setIsGiftModalOpen(true)}
-                className="w-8 h-8 sm:w-auto sm:px-2.5 rounded-xl bg-gradient-to-r from-pink-500 to-rose-500 hover:from-pink-600 hover:to-rose-600 text-white font-black text-xs flex items-center justify-center gap-1 shadow-sm active:scale-95 transition shrink-0 whitespace-nowrap"
-                title="إرسال هدية فاخرة"
-              >
-                <Gift className="w-3.5 h-3.5 shrink-0" />
-                <span className="hidden sm:inline">هدية 🎁</span>
-              </button>
-
-              {/* Audio & Video Calls (Pre-approved consent + 5-min cooldown + visible on mobile & desktop) */}
-              <button 
-                type="button"
-                onClick={() => handleRequestCall('audio')}
-                disabled={Boolean(requestingConsentType)}
-                className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-emerald-50 hover:bg-emerald-100 disabled:opacity-50 text-emerald-700 border border-emerald-200 flex items-center justify-center transition active:scale-95 shrink-0 cursor-pointer"
-                title="طلب مكالمة صوتية"
-              >
-                {requestingConsentType === 'audio_call' ? (
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                ) : (
-                  <Phone className="w-3.5 h-3.5" />
-                )}
-              </button>
-
-              <button 
-                type="button"
-                onClick={() => handleRequestCall('video')}
-                disabled={Boolean(requestingConsentType)}
-                className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-sky-50 hover:bg-sky-100 disabled:opacity-50 text-sky-700 hover:text-indigo-700 border border-sky-200 flex items-center justify-center transition active:scale-95 shrink-0 cursor-pointer"
-                title="طلب مكالمة فيديو"
-              >
-                {requestingConsentType === 'video_call' ? (
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                ) : (
-                  <Video className="w-3.5 h-3.5" />
-                )}
-              </button>
-
-              {isDrawer && onCloseDrawer && (
-                <button
-                  type="button"
-                  onClick={onCloseDrawer}
-                  className="w-8 h-8 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 hover:text-slate-900 border border-slate-200/80 flex items-center justify-center transition active:scale-95 shrink-0"
-                  title="إغلاق القائمة الجانبية"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              )}
-            </div>
-          </div>
+          )}
 
           {/* Messages Feed */}
           <div className="flex-1 overflow-y-auto p-3 space-y-2.5">
-            {messages.length === 0 ? (
+            {(() => {
+              const filteredMessages = messageSearchQuery.trim()
+                ? messages.filter(m =>
+                    (m.content || m.text || '').toLowerCase().includes(messageSearchQuery.trim().toLowerCase()) ||
+                    (m.senderName || '').toLowerCase().includes(messageSearchQuery.trim().toLowerCase())
+                  )
+                : messages;
+
+              if (filteredMessages.length === 0) {
+                return (
               <div className="flex flex-col items-center justify-center h-full text-center p-6 space-y-2.5">
                 <div className="w-16 h-16 rounded-full bg-white border-2 border-amber-300 flex items-center justify-center text-2xl shadow-md">
                   💬
                 </div>
-                <h4 className="text-xs sm:text-sm font-black text-slate-900 bg-white/85 px-3 py-1 rounded-full border border-slate-200">محادثة خاصة جديدة ومشفرة</h4>
+                <h4 className="text-xs sm:text-sm font-black text-slate-900 bg-white/85 px-3 py-1 rounded-full border border-slate-200">
+                  {messageSearchQuery.trim() ? 'لا توجد رسائل مطابقة للبحث' : 'محادثة خاصة جديدة ومشفرة'}
+                </h4>
                 <p className="text-[11px] text-slate-600 max-w-xs leading-relaxed bg-white/85 px-3 py-2 rounded-2xl border border-slate-200/80 shadow-xs">
-                  أهلاً بك! محادثتك مع <span className="text-slate-900 font-black">{activeContact.name}</span> مشفرة بالكامل بين الطرفين. أرسل رسالة للبدء! 👋
+                  {messageSearchQuery.trim()
+                    ? 'جرّب كلمة مفتاحية أخرى.'
+                    : (<>أهلاً بك! محادثتك مع <span className="text-slate-900 font-black">{activeContact.name}</span> مشفرة بالكامل بين الطرفين. أرسل رسالة للبدء! 👋</>)}
                 </p>
               </div>
-            ) : (
-              messages.map((msg, idx) => {
+                );
+              }
+
+              return filteredMessages.map((msg, idx) => {
                 const isMe = msg.senderId === currentUser.id;
 
                 // Virtual Gift Message Rendering in Private Chat (Modern Light Card)
@@ -1360,10 +1605,10 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                     }}
                     className={`max-w-[85%] sm:max-w-[75%] rounded-2xl px-3.5 py-2.5 text-xs sm:text-sm space-y-1 cursor-pointer select-text transition-transform active:scale-[0.99] ${
                     msg.type === 'sticker'
-                      ? 'bg-white/95 text-slate-900 border border-indigo-200/80 shadow-xs'
+                      ? 'bg-white/90 backdrop-blur-md text-slate-900 border border-indigo-200/80 shadow-xs'
                       : isMe
-                      ? 'bg-gradient-to-br from-sky-50 via-indigo-50 to-blue-100/95 text-slate-900 border border-sky-200/90 rounded-tr-none shadow-xs'
-                      : 'bg-white/95 text-slate-900 border border-slate-200/90 rounded-tl-none shadow-xs'
+                      ? 'bg-gradient-to-l from-indigo-600 via-blue-600 to-purple-600 text-white border border-indigo-500/40 rounded-tr-none shadow-sm'
+                      : 'bg-white/88 backdrop-blur-md text-slate-900 border border-slate-200/85 rounded-tl-none shadow-sm'
                   }`}
                     title="اضغط مطولاً لخيارات الرسالة (حذف / نسخ)"
                   >
@@ -1402,11 +1647,15 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                         />
                       </div>
                     ) : msg.type === 'coins_transfer' ? (
-                      <div className="flex items-center gap-2.5 p-2 rounded-xl bg-amber-500/15 border border-amber-400/50 text-amber-900 font-bold text-xs">
+                      <div className={`flex items-center gap-2.5 p-2 rounded-xl border font-bold text-xs ${
+                        isMe
+                          ? 'bg-white/15 border-white/25 text-white'
+                          : 'bg-amber-500/15 border-amber-400/50 text-amber-900'
+                      }`}>
                         <span className="text-2xl shrink-0">💰</span>
                         <div className="text-right">
-                          <div className="text-amber-800 font-black text-xs">تحويل كوينز ناجح 🪙</div>
-                          <div className="text-[11px] text-amber-700 leading-snug">{msg.content || msg.text}</div>
+                          <div className={`font-black text-xs ${isMe ? 'text-amber-200' : 'text-amber-800'}`}>تحويل كوينز ناجح 🪙</div>
+                          <div className={`text-[11px] leading-snug ${isMe ? 'text-white/90' : 'text-amber-700'}`}>{msg.content || msg.text}</div>
                         </div>
                       </div>
                     ) : msg.type === 'voice' ? (
@@ -1441,56 +1690,104 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                               }
                             }
                           }}
-                          className={`p-1.5 rounded-full ${isMe ? 'bg-indigo-600 text-white' : 'bg-amber-600 text-white'}`}
+                          className={`p-1.5 rounded-full ${isMe ? 'bg-white text-indigo-700' : 'bg-indigo-600 text-white'}`}
                         >
                           {playingVoiceId === msg.id ? <Pause className="w-3 h-3" /> : <Play className="w-3 h-3" />}
                         </button>
-                        <span className="text-[11px] font-bold text-slate-800">
+                        <span className={`text-[11px] font-bold ${isMe ? 'text-white' : 'text-slate-800'}`}>
                           تسجيل صوتي ({msg.audioDuration ? `0:${msg.audioDuration.toString().padStart(2, '0')}` : '0:05'})
                         </span>
                       </div>
                     ) : (
-                      <p className="leading-relaxed whitespace-pre-wrap font-medium text-slate-900">
-                        <InlineRichText text={msg.content || msg.text || ''} />
-                      </p>
+                      <div className="space-y-1">
+                        <p className={`leading-relaxed whitespace-pre-wrap font-medium ${isMe ? 'text-white' : 'text-slate-900'}`}>
+                          <InlineRichText text={msg.content || msg.text || ''} />
+                        </p>
+                        {translatedMap[msg.id]?.show && (
+                          <div className={`text-[11px] rounded-xl px-2.5 py-1.5 border ${
+                            isMe
+                              ? 'bg-white/15 border-white/25 text-white'
+                              : 'bg-indigo-50 border-indigo-200 text-indigo-900'
+                          }`}>
+                            <span className="font-black text-[9.5px] opacity-80 block">
+                              الترجمة ({translatedMap[msg.id].targetLang}):
+                            </span>
+                            <span>{translatedMap[msg.id].translated}</span>
+                          </div>
+                        )}
+                      </div>
                     )}
 
-                    <div className="flex items-center justify-end gap-1 text-[10px] text-slate-500">
-                      <span>{new Date(msg.timestamp).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })}</span>
-                      {isMe && (
-                        <span className="inline-flex items-center gap-0.5">
-                          {msg.status === 'read' ? (
-                            <>
-                              <CheckCheck className="w-3.5 h-3.5 text-indigo-600" />
-                              <span className="text-[9px] font-bold text-indigo-700">تم القراءة</span>
-                            </>
-                          ) : (
-                            <Check className="w-3.5 h-3.5 text-slate-400" />
-                          )}
-                        </span>
-                      )}
+                    <div className={`flex items-center justify-between gap-2 text-[10px] ${
+                      isMe && msg.type !== 'sticker' ? 'text-white/80' : 'text-slate-500'
+                    }`}>
+                      {(!msg.type || msg.type === 'private' || msg.type === 'text') && (msg.content || msg.text) ? (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setTranslatedMap((prev) => {
+                              const current = prev[msg.id];
+                              if (current) {
+                                return { ...prev, [msg.id]: { ...current, show: !current.show } };
+                              }
+                              const res = translateChatMessage(msg.content || msg.text || '');
+                              return { ...prev, [msg.id]: { ...res, show: true } };
+                            });
+                          }}
+                          className={`inline-flex items-center gap-0.5 font-bold hover:underline cursor-pointer ${
+                            isMe ? 'text-white/90' : 'text-indigo-600'
+                          }`}
+                          title="ترجمة فورية"
+                        >
+                          <Languages className="w-2.5 h-2.5" />
+                          <span>{translatedMap[msg.id]?.show ? 'إخفاء الترجمة' : 'ترجمة 🌐'}</span>
+                        </button>
+                      ) : <span />}
+
+                      <div className="flex items-center gap-1">
+                        <span>{new Date(msg.timestamp).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })}</span>
+                        {isMe && (
+                          <span className="inline-flex items-center gap-0.5">
+                            {msg.status === 'pending_offline' ? (
+                              <span className="inline-flex items-center gap-0.5 text-amber-200 text-[9px] font-bold">
+                                <WifiOff className="w-3 h-3" />
+                                <span>⏳ جاري الإرسال...</span>
+                              </span>
+                            ) : msg.status === 'read' ? (
+                              <>
+                                <CheckCheck className={`w-3.5 h-3.5 ${msg.type === 'sticker' ? 'text-indigo-600' : 'text-sky-200'}`} />
+                                <span className={`text-[9px] font-bold ${msg.type === 'sticker' ? 'text-indigo-700' : 'text-sky-100'}`}>تم القراءة</span>
+                              </>
+                            ) : (
+                              <Check className={`w-3.5 h-3.5 ${msg.type === 'sticker' ? 'text-slate-400' : 'text-white/75'}`} />
+                            )}
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </motion.div>
               );
-            }))}
+            });
+            })()}
             
-            {/* Live Peer Typing Indicator Bubble */}
+            {/* Live Peer Typing Indicator Bubble (Left / Receiver side in RTL) */}
             {isPeerTyping && (
-              <div className="flex items-center gap-2 justify-start animate-in fade-in slide-in-from-bottom-2 my-1.5">
-                <div className="relative w-7 h-7 rounded-full overflow-hidden border border-amber-400 shrink-0 shadow-xs">
-                  <img src={activeContact.avatar} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                  <span className="absolute bottom-0 right-0 w-2 h-2 rounded-full bg-amber-400 animate-ping"></span>
-                </div>
-                <div className="bg-white border border-amber-300/80 rounded-2xl rounded-tl-none px-3.5 py-2 flex items-center gap-2 shadow-md">
-                  <span className="text-xs font-bold text-slate-800">
-                    {activeContact.name} يكتب الآن...
-                  </span>
+              <div className="flex items-center gap-2 justify-end animate-in fade-in slide-in-from-bottom-2 my-1.5">
+                <div className="bg-white/95 backdrop-blur-md border border-amber-300/80 rounded-2xl rounded-tl-none px-3.5 py-2 flex items-center gap-2 shadow-md">
                   <div className="flex items-center gap-1">
                     <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-bounce" style={{ animationDelay: '0ms' }}></span>
                     <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-bounce" style={{ animationDelay: '150ms' }}></span>
                     <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-bounce" style={{ animationDelay: '300ms' }}></span>
                   </div>
+                  <span className="text-xs font-bold text-slate-800">
+                    {activeContact.name} يكتب الآن...
+                  </span>
+                </div>
+                <div className="relative w-7 h-7 rounded-full overflow-hidden border border-amber-400 shrink-0 shadow-xs">
+                  <img src={activeContact.avatar} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                  <span className="absolute bottom-0 right-0 w-2 h-2 rounded-full bg-amber-400 animate-ping"></span>
                 </div>
               </div>
             )}
@@ -1512,7 +1809,7 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
           <div ref={emojiStickerPanelRef} className="relative w-full p-2 sm:p-3 bg-white/98 backdrop-blur-md border-t border-slate-200/90 flex items-center gap-1 sm:gap-2 shrink-0 pb-[calc(env(safe-area-inset-bottom,0px)+10px)] sm:pb-3 shadow-[0_-4px_20px_rgba(0,0,0,0.06)]">
             {/* Compact Circular Telegram/WhatsApp-Style Emoji & Animated Emoji Picker */}
             {isEmojiStickerOpen && (
-              <div className="absolute bottom-full left-2 right-2 sm:left-auto sm:right-3 mb-2 sm:w-80 bg-white border border-slate-200 rounded-2xl shadow-2xl p-2.5 z-40 space-y-2 animate-in slide-in-from-bottom-2">
+              <div className="absolute bottom-full left-2 right-2 sm:left-auto sm:right-3 mb-2 sm:w-80 bg-white border border-slate-200 rounded-2xl shadow-2xl p-2.5 z-[100] space-y-2 animate-in slide-in-from-bottom-2">
                 <div className="grid grid-cols-2 gap-1 p-1 bg-slate-100 rounded-xl text-[11px] font-black">
                   <button
                     type="button"
@@ -1598,9 +1895,15 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
               <div className="flex-1 flex items-center justify-between gap-2 bg-red-50 border border-red-200 rounded-2xl px-3 py-2 animate-in fade-in">
                 <div className="flex items-center gap-2">
                   <span className="w-3 h-3 rounded-full bg-red-500 animate-ping"></span>
-                  <span className="text-xs font-bold text-red-700">جاري تسجيل الصوت:</span>
+                  <div className="flex items-center gap-0.5 h-4">
+                    <span className="w-0.5 h-2 rounded-full bg-red-500 animate-soundwave-1" />
+                    <span className="w-0.5 h-4 rounded-full bg-red-500 animate-soundwave-2" />
+                    <span className="w-0.5 h-2.5 rounded-full bg-red-500 animate-soundwave-3" />
+                    <span className="w-0.5 h-3.5 rounded-full bg-red-500 animate-soundwave-4" />
+                  </div>
+                  <span className="text-xs font-bold text-red-700">تسجيل صوتي:</span>
                   <span className="text-xs font-black text-red-800 font-mono">
-                    00:{recordingSeconds.toString().padStart(2, '0')}
+                    00:{recordingSeconds.toString().padStart(2, '0')} / 01:00
                   </span>
                 </div>
 
@@ -1707,7 +2010,7 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
           {/* Floating Message Action Context Menu (Modern Light Theme) */}
           {activeContextMenu && (
             <div 
-              className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-xs p-4 animate-in fade-in"
+              className="fixed inset-0 z-[200] flex items-center justify-center bg-slate-900/40 backdrop-blur-xs p-4 animate-in fade-in"
               onClick={() => setActiveContextMenu(null)}
             >
               <div 
@@ -1859,12 +2162,12 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
       {lightboxImageUrl && (
         <div
           onClick={() => setLightboxImageUrl(null)}
-          className="fixed inset-0 z-[70] bg-slate-900/90 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in"
+          className="fixed inset-0 z-[200] bg-slate-900/90 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in"
         >
           <button
             type="button"
             onClick={() => setLightboxImageUrl(null)}
-            className="absolute top-4 left-4 p-2 rounded-full bg-white/15 hover:bg-white/25 text-white transition"
+            className="absolute top-4 left-4 p-2 rounded-full bg-white/15 hover:bg-white/25 text-white transition cursor-pointer"
           >
             <X className="w-5 h-5" />
           </button>
@@ -1874,6 +2177,41 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
             onClick={(e) => e.stopPropagation()}
             className="max-w-full max-h-[88vh] rounded-2xl shadow-2xl object-contain"
           />
+        </div>
+      )}
+
+      {/* Call / Media Consent Waiting Toast (z-[300]) with X Cancel */}
+      {callWaitingState && (
+        <div
+          className="fixed bottom-20 left-1/2 -translate-x-1/2 z-[300] w-[92vw] max-w-sm bg-slate-900/95 text-white border border-indigo-400/50 rounded-2xl px-3.5 py-2.5 shadow-2xl flex items-center justify-between gap-2.5 animate-in slide-in-from-bottom-3"
+          dir="rtl"
+        >
+          <div className="flex items-center gap-2.5 min-w-0">
+            <span className="w-8 h-8 rounded-xl bg-indigo-500/25 border border-indigo-400/40 flex items-center justify-center shrink-0">
+              <Loader2 className="w-4 h-4 animate-spin text-indigo-300" />
+            </span>
+            <div className="min-w-0 text-right">
+              <p className="text-xs font-black truncate">
+                {callWaitingState.type === 'video_call'
+                  ? `طلب مكالمة فيديو مع ${callWaitingState.peerName}`
+                  : callWaitingState.type === 'audio_call'
+                  ? `طلب مكالمة صوتية مع ${callWaitingState.peerName}`
+                  : `طلب إرسال وسائط إلى ${callWaitingState.peerName}`}
+              </p>
+              <p className="text-[10.5px] text-slate-300 font-bold tabular-nums">
+                في انتظار الرد... ({callWaitingState.remainingSec} ثانية)
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => callWaitingState.cancel()}
+            className="px-2.5 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-[11px] font-black flex items-center gap-1 shrink-0 cursor-pointer active:scale-95 transition"
+            title="إلغاء الطلب"
+          >
+            <X className="w-3.5 h-3.5" />
+            <span>إلغاء</span>
+          </button>
         </div>
       )}
 

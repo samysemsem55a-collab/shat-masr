@@ -101,7 +101,7 @@ export const CoinsTransferModal: React.FC<CoinsTransferModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/45 backdrop-blur-sm animate-in fade-in select-none" dir="rtl">
+    <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-slate-900/45 backdrop-blur-sm animate-in fade-in select-none" dir="rtl">
       <div className="relative w-full max-w-sm bg-white border-2 border-amber-300 rounded-3xl p-5 shadow-2xl text-right space-y-4">
         
         {/* Top Header */}
