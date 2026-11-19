@@ -80,7 +80,6 @@ export const OnlineUsersModal: React.FC<OnlineUsersModalProps> = ({
   });
 
   const handleInvite = (user: User) => {
-    sounds.playMessageSent();
     setInvitedUserIds(prev => new Set(prev).add(user.id));
     onInviteToMic(user);
   };

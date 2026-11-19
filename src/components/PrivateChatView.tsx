@@ -91,6 +91,8 @@ interface PrivateChatViewProps {
   onOpenUserProfile?: (user: User) => void;
   isDrawer?: boolean;
   onCloseDrawer?: () => void;
+  prefilledDraft?: string | null;
+  onClearPrefilledDraft?: () => void;
 }
 
 interface ChatContact {
@@ -120,7 +122,9 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
   onClearAllUnreadMessages,
   onOpenUserProfile,
   isDrawer = false,
-  onCloseDrawer
+  onCloseDrawer,
+  prefilledDraft = null,
+  onClearPrefilledDraft
 }) => {
   // Navigation tabs when in list view
   const [activeTab, setActiveTab] = useState<'chats' | 'friends' | 'online'>('chats');
@@ -341,6 +345,12 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
   const [playingVoiceId, setPlayingVoiceId] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
+  useEffect(() => {
+    if (prefilledDraft && activeContact) {
+      setInputText(prefilledDraft);
+    }
+  }, [prefilledDraft, activeContact?.id]);
+
   // Live Typing Indicator via Database-Backed Firestore + RTDB + Real-time Socket
   const [isPeerTyping, setIsPeerTyping] = useState<boolean>(false);
   const typingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -435,7 +445,6 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
 
   const handleDeleteMessage = async (msgId: string) => {
     if (!activeContact) return;
-    sounds.playMessageSent();
     setActiveContextMenu(null);
     setMessages(prev => prev.filter(m => m.id !== msgId));
     await deleteDirectMessage(currentUser.id, activeContact.id, msgId);
@@ -668,6 +677,9 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
     sounds.playMessageSent();
     const content = inputText.trim();
     setInputText('');
+    if (prefilledDraft) {
+      onClearPrefilledDraft?.();
+    }
 
     const newMsg: Partial<Message> & { recipientName?: string; recipientAvatar?: string; recipientSessionId?: string } = {
       senderId: currentUser.id,
@@ -733,7 +745,6 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
       setRecordingSeconds(0);
       recordingSecondsRef.current = 0;
       setIsRecordingVoice(true);
-      sounds.playMessageSent();
 
       mediaRecorder.ondataavailable = (e) => {
         if (e.data && e.data.size > 0) {
@@ -865,6 +876,9 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
   const handleSelectFriendForChat = (friend: Friend) => {
     const fId = friend.friendId || friend.id;
     onMarkSenderRead?.(fId);
+    if (prefilledDraft) {
+      setInputText(prefilledDraft);
+    }
     setActiveContact({
       id: fId,
       name: friend.name,
@@ -880,6 +894,9 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
 
   const handleSelectOnlineUserForChat = (user: User) => {
     onMarkSenderRead?.(user.id);
+    if (prefilledDraft) {
+      setInputText(prefilledDraft);
+    }
     setActiveContact({
       id: user.id,
       name: user.name,
@@ -940,6 +957,27 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
           )}
 
           <div className={isDrawer ? "flex-1 flex flex-col overflow-hidden p-2.5 space-y-2.5" : "flex-1 flex flex-col overflow-hidden space-y-3"}>
+          {/* Prefilled Forum Share Draft Banner */}
+          {prefilledDraft && (
+            <div className="rounded-xl bg-amber-50 border border-amber-200 px-3 py-2 flex items-center justify-between gap-2 shrink-0">
+              <div className="min-w-0 text-right">
+                <p className="text-[11px] font-black text-amber-900 truncate">
+                  📌 رسالة مشاركة المنشور جاهزة — اختر صديقاً أو عضواً لإرسالها
+                </p>
+              </div>
+              {onClearPrefilledDraft && (
+                <button
+                  type="button"
+                  onClick={onClearPrefilledDraft}
+                  className="p-1 rounded-full text-amber-700 hover:bg-amber-200/60 shrink-0 cursor-pointer"
+                  title="إلغاء المشاركة"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+          )}
+
           {/* Incoming Unread Messages Per-Sender Highlight Strip */}
           {unreadMessagesBySender.length > 0 && (
             <div className="rounded-xl bg-indigo-50/90 border border-indigo-200 p-2 space-y-1.5 shrink-0">
@@ -1082,6 +1120,9 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                       key={chat.chatId}
                       onClick={() => {
                         onMarkSenderRead?.(chat.peerId);
+                        if (prefilledDraft) {
+                          setInputText(prefilledDraft);
+                        }
                         setActiveContact({
                           id: chat.peerId,
                           name: chat.peerName || 'عضو شات مصر',
@@ -1672,7 +1713,6 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                               if (activeAudioRef.current) {
                                 activeAudioRef.current.pause();
                               }
-                              sounds.playMessageReceived();
                               setPlayingVoiceId(msg.id);
                               if (msg.voiceUrl) {
                                 try {
@@ -2029,7 +2069,6 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                   <button
                     onClick={() => {
                       navigator.clipboard.writeText(activeContextMenu.msg.content);
-                      sounds.playMessageReceived();
                       setActiveContextMenu(null);
                     }}
                     className="w-full px-3 py-2 rounded-xl bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-800 text-xs font-bold flex items-center gap-2 transition min-h-[40px]"

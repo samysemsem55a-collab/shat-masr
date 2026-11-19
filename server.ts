@@ -114,9 +114,71 @@ const userReportsStore: any[] = [];
 const lastAnnouncedJoinAt: Map<string, number> = new Map();
 const GLOBAL_JOIN_COOLDOWN_MS = 4000;
 let latestAppUpdateNotice: { version: string; message: string; pushedBy: string; timestamp: number } | null = null;
-const socketToUser: Map<WebSocket, { userId: string; sessionId?: string; roomId?: string }> = new Map();
+const socketToUser: Map<WebSocket, { userId: string; sessionId?: string; roomId?: string; lastHeartbeatAt?: number }> = new Map();
 // Global map of connected sockets by userId
 const connectedUsers: Map<string, { ws: WebSocket; user: UserProfile; lastSeen: number }> = new Map();
+
+// 10s WS Heartbeat Keepalive + 30s Stale User Timeout Sweep
+setInterval(() => {
+  const now = Date.now();
+  let presenceChanged = false;
+
+  wss.clients.forEach((client) => {
+    const info = socketToUser.get(client);
+    if (client.readyState === WebSocket.OPEN) {
+      if (info?.lastHeartbeatAt && now - info.lastHeartbeatAt > 35000) {
+        // Stale unresponsive client (>35s without heartbeat/pong)
+        try {
+          client.terminate();
+        } catch {}
+        return;
+      }
+      try {
+        client.ping();
+      } catch {}
+    }
+  });
+
+  // Remove connectedUsers whose heartbeat/lastSeen exceeded 30s and whose socket is no longer open
+  connectedUsers.forEach((entry, uid) => {
+    const socketClosed = !entry.ws || entry.ws.readyState !== WebSocket.OPEN;
+    if (socketClosed && now - entry.lastSeen > 30000) {
+      connectedUsers.delete(uid);
+      presenceChanged = true;
+    }
+  });
+
+  // Clean room occupants whose socket is closed and inactive > 30s
+  roomOccupants.forEach((occMap, rId) => {
+    let roomChanged = false;
+    occMap.forEach((occ, uid) => {
+      const conn = connectedUsers.get(uid);
+      const hasOpenConn = conn && conn.ws && conn.ws.readyState === WebSocket.OPEN;
+      if (!hasOpenConn && now - (occ.joinedAt || 0) > 30000) {
+        occMap.delete(uid);
+        roomChanged = true;
+        presenceChanged = true;
+      }
+    });
+    if (roomChanged) {
+      const list = Array.from(occMap.values());
+      broadcastToRoom(rId, {
+        type: 'PRESENCE_UPDATE',
+        roomId: rId,
+        count: list.length,
+        users: list
+      });
+    }
+  });
+
+  if (presenceChanged) {
+    broadcastToAll({
+      type: 'GLOBAL_PRESENCE_UPDATE',
+      users: getGlobalOnlineUsers(),
+      onlineCount: Math.max(1, connectedUsers.size)
+    });
+  }
+}, 10000);
 
 // Periodic purge of expired public (24h) and direct (7d) messages
 setInterval(() => {
@@ -320,6 +382,20 @@ function getGlobalOnlineUsers(): RoomOccupant[] {
 
 wss.on('connection', (ws: WebSocket) => {
   console.log('[WebSocket] Client connected. Total clients:', wss.clients.size);
+  socketToUser.set(ws, { userId: '', lastHeartbeatAt: Date.now() });
+
+  ws.on('pong', () => {
+    const info = socketToUser.get(ws);
+    const now = Date.now();
+    if (info) {
+      info.lastHeartbeatAt = now;
+      if (info.userId) {
+        const entry = connectedUsers.get(info.userId);
+        if (entry) entry.lastSeen = now;
+      }
+    }
+  });
+
   ws.send(JSON.stringify({
     type: 'CUMULATIVE_VISITORS_UPDATE',
     count: cumulativeVisitorsCount
@@ -347,8 +423,40 @@ wss.on('connection', (ws: WebSocket) => {
     try {
       const action = JSON.parse(raw.toString());
       const { type, payload } = action;
+      const msgInfo = socketToUser.get(ws);
+      if (msgInfo) {
+        msgInfo.lastHeartbeatAt = Date.now();
+        if (msgInfo.userId) {
+          const entry = connectedUsers.get(msgInfo.userId);
+          if (entry) entry.lastSeen = Date.now();
+        }
+      }
 
       switch (type) {
+        case 'PING': {
+          ws.send(JSON.stringify({ type: 'PONG', timestamp: Date.now() }));
+          break;
+        }
+
+        case 'HEARTBEAT': {
+          const uid = payload?.userId || msgInfo?.userId;
+          if (uid) {
+            const entry = connectedUsers.get(uid);
+            if (entry) entry.lastSeen = Date.now();
+            if (msgInfo?.roomId) {
+              const occ = roomOccupants.get(msgInfo.roomId)?.get(uid);
+              if (occ) occ.joinedAt = Date.now();
+            }
+          }
+          ws.send(JSON.stringify({ type: 'HEARTBEAT_ACK', timestamp: Date.now() }));
+          break;
+        }
+
+        case 'TOKEN_REFRESH': {
+          ws.send(JSON.stringify({ type: 'TOKEN_REFRESH_ACK', timestamp: Date.now() }));
+          break;
+        }
+
         case 'USER_REGISTER': {
           const user: UserProfile = payload.user;
           if (user && user.id) {
@@ -356,7 +464,7 @@ wss.on('connection', (ws: WebSocket) => {
             const merged = { ...existing, ...user };
             usersStore.set(user.id, merged);
             const prevInfo = socketToUser.get(ws);
-            socketToUser.set(ws, { userId: user.id, sessionId: user.sessionId, roomId: prevInfo?.roomId });
+            socketToUser.set(ws, { userId: user.id, sessionId: user.sessionId, roomId: prevInfo?.roomId, lastHeartbeatAt: Date.now() });
             connectedUsers.set(user.id, { ws, user: merged, lastSeen: Date.now() });
 
             // Broadcast instant Global Join notification for registered non-guest users (with 4s reconnect cooldown)
@@ -1284,6 +1392,16 @@ wss.on('connection', (ws: WebSocket) => {
 });
 
 // REST API Endpoints
+app.get('/api/auth/session', (req: Request, res: Response) => {
+  const authHeader = req.headers.authorization || '';
+  const hasToken = authHeader.startsWith('Bearer ') && authHeader.length > 10;
+  res.json({
+    ok: true,
+    hasToken,
+    timestamp: Date.now()
+  });
+});
+
 app.get('/api/health', (_req: Request, res: Response) => {
   res.json({
     status: 'ok',

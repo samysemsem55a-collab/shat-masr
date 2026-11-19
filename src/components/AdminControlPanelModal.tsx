@@ -43,12 +43,13 @@ import {
   subscribeToRealtimeFirestoreHealth,
   SecretDirectChatThread,
   pushAppUpdateNotice,
+  subscribeToRemoteAppVersion,
+  setRemoteUpdateNotificationsEnabled,
   createDailyBackupSnapshot,
   subscribeToBackups,
   restoreDailyBackupSnapshot,
 } from '../services/firebase';
 import { realtimeSocket } from '../services/realtimeSocket';
-import { sounds } from '../utils/soundEffects';
 import { isUserAdminOrOwner, PRIMARY_OWNER_EMAIL, VIP_TIERS } from '../data/seedData';
 import { getRankDisplayMeta } from '../utils/userRanks';
 import { AvatarWithFrame } from './AvatarWithFrame';
@@ -81,11 +82,7 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
   allUsers,
   onUserModified,
 }) => {
-  // Strict Security Gate
-  if (!isOpen || !isUserAdminOrOwner(currentUser)) {
-    return null;
-  }
-
+  const isAdminOrOwner = isUserAdminOrOwner(currentUser);
   const isPrimaryOwner =
     currentUser.role === 'owner' ||
     currentUser.email?.toLowerCase() === PRIMARY_OWNER_EMAIL.toLowerCase();
@@ -96,6 +93,7 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [broadcastText, setBroadcastText] = useState('');
   const [appUpdateMsg, setAppUpdateMsg] = useState('');
+  const [remoteNotifsEnabled, setRemoteNotifsEnabled] = useState(true);
   const [actionNotice, setActionNotice] = useState<string | null>(null);
   const [usersList, setUsersList] = useState<User[]>(allUsers);
   const [pendingPayments, setPendingPayments] = useState<PendingPaymentOrder[]>([]);
@@ -144,7 +142,7 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
   }, [allUsers]);
 
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen || !isAdminOrOwner) return;
     runHealthChecks();
 
     const unsubHealth = subscribeToRealtimeFirestoreHealth((health) => {
@@ -185,6 +183,10 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
       });
     }
 
+    const unsubRemoteVer = subscribeToRemoteAppVersion((cfg) => {
+      setRemoteNotifsEnabled(cfg.notificationsEnabled);
+    });
+
     return () => {
       unsubHealth();
       unsubUsers();
@@ -192,8 +194,9 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
       unsubReports();
       unsubSecret();
       unsubBackups();
+      unsubRemoteVer();
     };
-  }, [isOpen, isPrimaryOwner, currentUser.email, runHealthChecks]);
+  }, [isOpen, isAdminOrOwner, isPrimaryOwner, currentUser.email, runHealthChecks]);
 
   const showNotification = (msg: string) => {
     setActionNotice(msg);
@@ -215,7 +218,6 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
 
   // Approve Pending Payment (Coins or VIP)
   const handleApprovePayment = async (order: PendingPaymentOrder) => {
-    sounds.playCoinsReward();
     const vipBonus = order.vipTierId
       ? VIP_TIERS.find((t) => t.id === order.vipTierId)?.coinsBonus || 0
       : 0;
@@ -245,7 +247,6 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
   };
 
   const handleRejectPayment = async (orderId: string) => {
-    sounds.playMessageReceived();
     await rejectPendingPayment(orderId);
     setPendingPayments((prev) =>
       prev.map((p) => (p.id === orderId ? { ...p, status: 'rejected' } : p))
@@ -255,7 +256,6 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
 
   // Upgrade User VIP / Admin Tier
   const handleSetRole = async (targetUser: User, newRole: UserRole, badgeName: string) => {
-    sounds.playCoinsReward();
     const frameStyle =
       newRole === 'owner'
         ? 'border-amber-400 shadow-[0_0_20px_rgba(245,158,11,0.85)]'
@@ -290,7 +290,6 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
   // Ban / Unban
   const handleToggleBan = async (targetUser: User) => {
     const isNowBanned = !targetUser.isBanned;
-    sounds.playMessageReceived();
     const updates = { isBanned: isNowBanned };
 
     await adminUpdateUser(targetUser.id, updates);
@@ -306,7 +305,6 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
   // Mute / Unmute
   const handleToggleMute = async (targetUser: User) => {
     const isNowMuted = !targetUser.isMuted;
-    sounds.playMicToggle(false);
     const updates = { isMuted: isNowMuted };
 
     await adminUpdateUser(targetUser.id, updates);
@@ -321,7 +319,6 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
   const handleToggleVerified = async (targetUser: User) => {
     if (!isPrimaryOwner) return;
     const isNowVerified = !targetUser.verified;
-    sounds.playCoinsReward();
     const updates = { verified: isNowVerified };
 
     await adminUpdateUser(targetUser.id, updates);
@@ -339,7 +336,6 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
     try {
       const snap = await createDailyBackupSnapshot(currentUser.id, usersList);
       if (snap) {
-        sounds.playCoinsReward();
         showNotification(`تم إنشاء النسخة الاحتياطية بنجاح (${snap.usersCount} عضو • ${snap.roomsCount} غرفة) 💾`);
       } else {
         showNotification('تعذر إنشاء النسخة الاحتياطية حالياً.');
@@ -355,7 +351,6 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
     try {
       const ok = await restoreDailyBackupSnapshot(confirmRestoreSnapshot);
       if (ok) {
-        sounds.playCoinsReward();
         showNotification(`تمت استعادة النسخة الاحتياطية (${confirmRestoreSnapshot.id}) بنجاح ✅`);
       } else {
         showNotification('حدث خطأ أثناء استعادة النسخة الاحتياطية.');
@@ -368,7 +363,6 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
 
   // Grant Coins
   const handleAddCoins = async (targetUser: User, amount: number) => {
-    sounds.playCoinsReward();
     const newCoins = (targetUser.coins || 0) + amount;
     const updates = { coins: newCoins };
 
@@ -380,7 +374,6 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
 
   // Award Badge
   const handleAddBadge = async (targetUser: User, badgeTitle: string) => {
-    sounds.playCoinsReward();
     const existing = targetUser.badges || [];
     if (existing.includes(badgeTitle)) {
       showNotification(`العضو يمتلك شارة "${badgeTitle}" بالفعل!`);
@@ -400,7 +393,6 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
     const txt = broadcastText.trim();
     if (!txt) return;
 
-    sounds.playMessageSent();
     const targetRooms = ['room_egypt', 'room_egypt2'];
     const basePayload = {
       senderId: currentUser.id,
@@ -426,14 +418,12 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
 
   // God Mode Room Purge
   const handlePurgeRoom = async (roomId: string, label: string) => {
-    sounds.playMicToggle(false);
     await purgeRoomMessages(roomId);
     showNotification(`تم تفريغ وتنظيف جميع رسائل "${label}" بنجاح 🧹`);
   };
 
   // Handle User Report Actions
   const handleReportBan = async (r: UserReport) => {
-    sounds.playMessageReceived();
     await adminUpdateUser(r.reportedUserId, { isBanned: true });
     await resolveUserReportStatus(r.id, 'reviewed');
     setUsersList((prev) =>
@@ -444,7 +434,6 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
   };
 
   const handleReportMute = async (r: UserReport) => {
-    sounds.playMicToggle(false);
     await adminUpdateUser(r.reportedUserId, { isMuted: true });
     await resolveUserReportStatus(r.id, 'reviewed');
     setUsersList((prev) =>
@@ -455,7 +444,6 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
   };
 
   const handleResolveReport = async (reportId: string, status: 'reviewed' | 'dismissed') => {
-    sounds.playMessageSent();
     await resolveUserReportStatus(reportId, status);
     showNotification(status === 'reviewed' ? 'تم تحديد البلاغ كمُراجع ✅' : 'تم تجاهل البلاغ');
   };
@@ -469,6 +457,11 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
       u.username?.toLowerCase().includes(searchQuery.toLowerCase()) ||
       u.role?.toLowerCase().includes(searchQuery.toLowerCase())
   );
+
+  // Strict Security Gate (placed after all hooks to preserve React hook call order)
+  if (!isOpen || !isAdminOrOwner) {
+    return null;
+  }
 
   return (
     <div
@@ -1175,7 +1168,6 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
                       <button
                         type="button"
                         onClick={async () => {
-                          sounds.playCoinsReward();
                           await pushAppUpdateNotice(currentUser.name, appUpdateMsg);
                           setAppUpdateMsg('');
                           showNotification('تم إرسال إشعار تحديث التطبيق لجميع المتواجدين الآن! 🚀');
@@ -1184,6 +1176,26 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
                       >
                         <RefreshCw className="w-3.5 h-3.5" />
                         <span>إرسال إشعار تحديث للتطبيق 🚀</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          const next = !remoteNotifsEnabled;
+                          setRemoteNotifsEnabled(next);
+                          await setRemoteUpdateNotificationsEnabled(next);
+                          showNotification(
+                            next
+                              ? 'تم تفعيل شريط إشعارات التحديث للأعضاء 🔔'
+                              : 'تم إيقاف شريط إشعارات التحديث للأعضاء 🔕'
+                          );
+                        }}
+                        className={`px-3 py-1.5 rounded-xl border text-[11px] font-black flex items-center justify-center gap-1 shrink-0 cursor-pointer transition ${
+                          remoteNotifsEnabled
+                            ? 'bg-rose-50 hover:bg-rose-100 text-rose-700 border-rose-200'
+                            : 'bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border-emerald-200'
+                        }`}
+                      >
+                        <span>{remoteNotifsEnabled ? 'إيقاف إشعار التحديث 🔕' : 'تفعيل إشعار التحديث 🔔'}</span>
                       </button>
                     </div>
                   </div>

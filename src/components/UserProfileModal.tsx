@@ -47,14 +47,11 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
   onSendGiftToUser,
   onAvatarChanged,
 }) => {
-  if (!user) return null;
-
-  const isMe = user.id === currentUser.id;
   const [friendRequestSent, setFriendRequestSent] = useState(false);
   const [isAlreadyFriend, setIsAlreadyFriend] = useState(false);
   const [showFullDetails, setShowFullDetails] = useState(false);
   const [hasRated, setHasRated] = useState(false);
-  const [userRating, setUserRating] = useState(user.ratingPoints || 0);
+  const [userRating, setUserRating] = useState(user?.ratingPoints || 0);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Report User State
@@ -69,6 +66,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
   const [isMusicPlaying, setIsMusicPlaying] = useState(false);
 
   React.useEffect(() => {
+    if (!user) return;
     setFriendRequestSent(false);
     setHasRated(false);
     setUserRating(user.ratingPoints || 0);
@@ -87,7 +85,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
       setIsAlreadyFriend(false);
     }
 
-    if (user?.id && currentUser?.id && user.id !== currentUser.id) {
+    if (user.id && currentUser?.id && user.id !== currentUser.id) {
       recordProfileVisit(user.id, currentUser.id).catch(() => {});
     }
 
@@ -98,7 +96,11 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
       }
       setIsMusicPlaying(false);
     };
-  }, [user.id, currentUser.id]);
+  }, [user?.id, user?.ratingPoints, currentUser.id]);
+
+  if (!user) return null;
+
+  const isMe = user.id === currentUser.id;
 
   const handleToggleFavoriteMusic = () => {
     if (!user.favoriteMusicUrl) return;
@@ -137,7 +139,6 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
 
   const handleSendFriendReq = async () => {
     if (isMe || friendRequestSent) return;
-    sounds.playMessageSent();
     await sendFriendRequest(currentUser, user.id);
     realtimeSocket.sendFriendRequest({
       id: `req_${Date.now()}`,
@@ -167,7 +168,6 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
         timestamp: Date.now(),
       });
 
-      sounds.playMessageReceived();
       setReportSentSuccess(true);
       setReportNotes('');
       toast.info('تم إرسال البلاغ للإدارة للمراجعة الفورية 🛡️');
@@ -185,7 +185,6 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
 
   const handleGiveRating = async () => {
     if (isMe || hasRated) return;
-    sounds.playCoinsReward();
     const updated = await submitUserRating(currentUser.id, user.id, 10);
     setUserRating(updated);
     setHasRated(true);

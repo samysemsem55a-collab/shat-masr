@@ -88,7 +88,8 @@ import {
   contributeToSharedRoomMission,
   purgeRoomMessages,
   submitUserReport,
-  adminUpdateUser
+  adminUpdateUser,
+  sendFriendRequest
 } from '../services/firebase';
 import { realtimeSocket } from '../services/realtimeSocket';
 import { sounds } from '../utils/soundEffects';
@@ -592,9 +593,10 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Sequential 1-by-1 Room Join System Notice (5 seconds per user, silent, centered gray text)
-  const [activeJoinNotice, setActiveJoinNotice] = useState<{ id: string; name: string } | null>(null);
-  const joinNoticeQueueRef = useRef<{ id: string; name: string }[]>([]);
+  // Sequential 1-by-1 Room Join System Notice (5 seconds per user, clickable for 3 quick actions)
+  const [activeJoinNotice, setActiveJoinNotice] = useState<{ id: string; userId: string; name: string; avatar: string } | null>(null);
+  const [isJoinActionMenuOpen, setIsJoinActionMenuOpen] = useState(false);
+  const joinNoticeQueueRef = useRef<{ id: string; userId: string; name: string; avatar: string }[]>([]);
   const processedJoinIdsRef = useRef<Set<string>>(new Set());
   const joinNoticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -603,6 +605,7 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
       clearTimeout(joinNoticeTimerRef.current);
       joinNoticeTimerRef.current = null;
     }
+    setIsJoinActionMenuOpen(false);
     const next = joinNoticeQueueRef.current.shift() || null;
     setActiveJoinNotice(next);
     if (next) {
@@ -615,6 +618,7 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
   useEffect(() => {
     joinNoticeQueueRef.current = [];
     setActiveJoinNotice(null);
+    setIsJoinActionMenuOpen(false);
     if (joinNoticeTimerRef.current) {
       clearTimeout(joinNoticeTimerRef.current);
       joinNoticeTimerRef.current = null;
@@ -694,7 +698,12 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
         processedJoinIdsRef.current.add(msg.id);
         const ageMs = Date.now() - (msg.timestamp || Date.now());
         if (ageMs < 15000 && msg.content?.includes('انضم')) {
-          joinNoticeQueueRef.current.push({ id: msg.id, name: msg.senderName });
+          joinNoticeQueueRef.current.push({
+            id: msg.id,
+            userId: msg.senderId,
+            name: msg.senderName,
+            avatar: msg.senderAvatar || '',
+          });
         }
       }
     }
@@ -1240,7 +1249,6 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
   };
 
   const handleTasbeehClick = () => {
-    sounds.playTasbeehClick();
     setTasbeehCount(prev => prev + 1);
   };
 
@@ -1280,13 +1288,11 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
 
   const openUserQuickMenu = (msg: Message, _e?: React.MouseEvent | React.KeyboardEvent) => {
     if (!msg.senderId || msg.senderId === 'system_bot') return;
-    sounds.playMessageReceived();
     onOpenUserProfile(buildUserFromMsg(msg));
   };
 
   const handleSelectRoomBackground = (themeId: string) => {
     if (!isModerator) return;
-    sounds.playMessageSent();
     const normalized = themeId && themeId !== 'default' ? themeId : 'default';
     setLiveRoomBackgroundTheme(normalized);
     if (onUpdateRoomBackground) {
@@ -1304,7 +1310,6 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
     if (!isModerator) return;
     const nextLocked = !liveIsLocked;
     setLiveIsLocked(nextLocked);
-    sounds.playMicToggle(!nextLocked);
 
     if (onUpdateRoomLock) {
       onUpdateRoomLock(nextLocked);
@@ -1458,7 +1463,6 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
           <button
             type="button"
             onClick={() => {
-              sounds.playMessageReceived();
               onOpenOnlineUsers();
             }}
             className="h-8 px-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-[10.5px] font-black flex items-center gap-1 active:scale-95 shrink-0"
@@ -1789,12 +1793,143 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
         </div>
       )}
 
-      {/* Sequential 1-by-1 5-Second Centered Gray Join System Notice (Zero sound / Zero push) */}
+      {/* Sequential 1-by-1 Clickable Join System Notice (Quick actions: DM / Friend Request / Profile) */}
       {activeJoinNotice && !muteJoinNotices && (
-        <div className="flex justify-center py-1 px-3 shrink-0 pointer-events-none select-none z-10 animate-in fade-in">
-          <div className="px-3 py-0.5 rounded-full bg-slate-200/85 backdrop-blur-sm border border-slate-300/80 text-slate-700 text-[11px] font-bold shadow-2xs truncate max-w-[90vw]">
+        <div className="relative flex flex-col items-center py-1 px-3 shrink-0 z-20 animate-in fade-in">
+          <button
+            type="button"
+            onClick={() => {
+              const nextOpen = !isJoinActionMenuOpen;
+              setIsJoinActionMenuOpen(nextOpen);
+              if (nextOpen && joinNoticeTimerRef.current) {
+                clearTimeout(joinNoticeTimerRef.current);
+                joinNoticeTimerRef.current = null;
+              } else if (!nextOpen) {
+                joinNoticeTimerRef.current = setTimeout(() => {
+                  advanceJoinQueue();
+                }, 4000);
+              }
+            }}
+            className="pointer-events-auto cursor-pointer px-3 py-1 rounded-full bg-slate-200/90 hover:bg-indigo-100/95 backdrop-blur-sm border border-slate-300/80 hover:border-indigo-300 text-slate-800 text-[11px] font-bold shadow-xs truncate max-w-[90vw] transition"
+            title="اضغط للتفاعل مع العضو"
+          >
             ✨ {activeJoinNotice.name} انضم للغرفة
-          </div>
+          </button>
+
+          {isJoinActionMenuOpen && (
+            <div
+              dir="rtl"
+              className="mt-1.5 w-full max-w-xs p-2 rounded-2xl bg-white/95 backdrop-blur-md border border-indigo-200 shadow-xl flex flex-col gap-1.5 text-right z-30"
+            >
+              <div className="flex items-center justify-between gap-2 pb-1 border-b border-slate-100">
+                <span className="text-[11px] font-black text-slate-900 truncate">
+                  {activeJoinNotice.name}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => advanceJoinQueue()}
+                  className="p-0.5 rounded-full text-slate-400 hover:text-slate-700 cursor-pointer"
+                  aria-label="إغلاق"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const targetPeer: User = {
+                      id: activeJoinNotice.userId,
+                      name: activeJoinNotice.name,
+                      username: activeJoinNotice.name.replace(/\s+/g, '_').toLowerCase(),
+                      avatar: activeJoinNotice.avatar || '',
+                      bio: 'عضو في شات مصر',
+                      country: 'مصر',
+                      countryFlag: '🇪🇬',
+                      role: 'member',
+                      coins: 0,
+                      earningsEgp: 0,
+                      earningsUsd: 0,
+                      vipBadge: '',
+                      frameStyle: 'border-amber-400',
+                      profileWallpaper: '',
+                      fontPreference: 'cairo',
+                      isOnline: true,
+                      status: 'online',
+                      joinedAt: new Date().toISOString(),
+                      gender: 'male',
+                      level: 1,
+                      likesReceived: 0,
+                      giftsReceivedCount: 0,
+                      badges: []
+                    };
+                    advanceJoinQueue();
+                    onOpenPrivateChatWith?.(targetPeer);
+                  }}
+                  className="flex-1 py-1.5 px-1.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[10.5px] font-black text-center cursor-pointer"
+                >
+                  💬 رسالة خاصة
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const targetId = activeJoinNotice.userId;
+                    const targetName = activeJoinNotice.name;
+                    await sendFriendRequest(currentUser, targetId);
+                    realtimeSocket.sendFriendRequest({
+                      id: `req_${Date.now()}`,
+                      senderId: currentUser.id,
+                      senderName: currentUser.name,
+                      senderAvatar: currentUser.avatar,
+                      receiverId: targetId,
+                      createdAt: Date.now(),
+                      status: 'pending'
+                    });
+                    toast.success(`تم إرسال طلب صداقة إلى ${targetName} 🤝`);
+                    advanceJoinQueue();
+                  }}
+                  className="flex-1 py-1.5 px-1.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-700 text-[10.5px] font-black text-center cursor-pointer"
+                >
+                  🤝 طلب صداقة
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const targetPeer: User = {
+                      id: activeJoinNotice.userId,
+                      name: activeJoinNotice.name,
+                      username: activeJoinNotice.name.replace(/\s+/g, '_').toLowerCase(),
+                      avatar: activeJoinNotice.avatar || '',
+                      bio: 'عضو في شات مصر',
+                      country: 'مصر',
+                      countryFlag: '🇪🇬',
+                      role: 'member',
+                      coins: 0,
+                      earningsEgp: 0,
+                      earningsUsd: 0,
+                      vipBadge: '',
+                      frameStyle: 'border-amber-400',
+                      profileWallpaper: '',
+                      fontPreference: 'cairo',
+                      isOnline: true,
+                      status: 'online',
+                      joinedAt: new Date().toISOString(),
+                      gender: 'male',
+                      level: 1,
+                      likesReceived: 0,
+                      giftsReceivedCount: 0,
+                      badges: []
+                    };
+                    advanceJoinQueue();
+                    onOpenUserProfile(targetPeer);
+                  }}
+                  className="flex-1 py-1.5 px-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 text-[10.5px] font-black text-center cursor-pointer"
+                >
+                  👤 الملف الشخصي
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 

@@ -51,13 +51,11 @@ export const FriendsList: React.FC<FriendsListProps> = ({
       }, 4000);
       return;
     }
-    sounds.playMessageSent();
     setConfirmRemoveId(null);
     await removeFriendInDB(currentUser.id, fId);
   };
 
   const handleStartChat = (friend: Friend) => {
-    sounds.playMessageSent();
     onStartPrivateChat(friend);
   };
 

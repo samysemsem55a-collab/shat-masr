@@ -22,7 +22,8 @@ import {
   where,
   arrayUnion,
   arrayRemove,
-  deleteField
+  deleteField,
+  runTransaction
 } from 'firebase/firestore';
 import {
   getStorage,
@@ -188,6 +189,29 @@ if (typeof window !== 'undefined' && db) {
     }
   });
 }
+
+export async function getFreshAuthToken(forceRefresh: boolean = false): Promise<string | null> {
+  try {
+    if (auth?.currentUser) {
+      return await auth.currentUser.getIdToken(forceRefresh);
+    }
+  } catch (err) {
+    console.warn('Auth token refresh notice:', err);
+  }
+  return null;
+}
+
+export async function recoverFirebaseNetwork(): Promise<void> {
+  await getFreshAuthToken(true).catch(() => null);
+  if (db) {
+    try {
+      await enableNetwork(db);
+    } catch {}
+  }
+}
+
+realtimeSocket.setTokenProvider(getFreshAuthToken);
+realtimeSocket.setNetworkRecoveryHandler(recoverFirebaseNetwork);
 
 // Validate connection per SKILL instructions
 export async function testConnection() {
@@ -434,6 +458,19 @@ export function subscribeToGlobalPresence(
     onGlobalChange(list);
   };
 
+  // Pre-hydrate cached presence so temporary API/WS disconnects NEVER reset member count to 1
+  try {
+    const cachedRaw = localStorage.getItem(globalKey);
+    if (cachedRaw) {
+      const parsed = JSON.parse(cachedRaw);
+      if (Array.isArray(parsed)) {
+        parsed.forEach((u: User) => {
+          if (u && u.id) liveUsersMap.set(u.id, { ...u, isOnline: true });
+        });
+      }
+    }
+  } catch {}
+
   // Add initial self
   if (user && user.id) {
     liveUsersMap.set(user.id, { ...user, isOnline: true });
@@ -442,6 +479,7 @@ export function subscribeToGlobalPresence(
 
   // 1. Firestore Heartbeat & onSnapshot listener on collection('online_users')
   let unsubFirestore: (() => void) | null = null;
+  let unsubReconnect: (() => void) | null = null;
   let heartbeatTimer: any = null;
 
   if (db && user && user.id) {
@@ -487,12 +525,7 @@ export function subscribeToGlobalPresence(
         avatar: user.avatar || '',
       };
 
-      // Write presence immediately
-      setDoc(userOnlineDoc, onlinePayload, { merge: true }).catch(() => {});
-      setDoc(userPresenceDoc, presencePayload, { merge: true }).catch(() => {});
-
-      // Keep heartbeat alive strictly every 30 seconds
-      heartbeatTimer = setInterval(() => {
+      const sendPresenceHeartbeat = () => {
         const nowTs = Date.now();
         setDoc(userOnlineDoc, {
           ...onlinePayload,
@@ -506,7 +539,14 @@ export function subscribeToGlobalPresence(
           username: user.name || user.username || 'عضو',
           avatar: user.avatar || '',
         }, { merge: true }).catch(() => {});
-      }, 30000);
+      };
+
+      // Write presence immediately
+      sendPresenceHeartbeat();
+
+      // Send heartbeat every 10 seconds (30s inactivity timeout)
+      heartbeatTimer = setInterval(sendPresenceHeartbeat, 10000);
+      unsubReconnect = realtimeSocket.subscribeToReconnectSuccess(sendPresenceHeartbeat);
 
       // Listen to all online users in Firestore in real time (treat lastSeen > 60s as offline)
       const onlineCol = collection(db, 'online_users');
@@ -525,8 +565,11 @@ export function subscribeToGlobalPresence(
             : data.updatedAt?.toMillis
             ? data.updatedAt.toMillis()
             : now;
-          // Timeout: treat users whose lastSeen is older than 60s as Offline
-          if (now - lastSeen <= 65000) {
+          // Timeout: treat users whose heartbeat/lastSeen is older than 32s as Offline ONLY when connected
+          const isApiConnected =
+            realtimeSocket.getConnectionState() === 'connected' &&
+            (typeof navigator === 'undefined' || navigator.onLine !== false);
+          if (now - lastSeen <= 32000 || !isApiConnected) {
             currentFsIds.add(docSnap.id);
             firestoreTrackedIds.add(docSnap.id);
             liveUsersMap.set(docSnap.id, {
@@ -565,15 +608,20 @@ export function subscribeToGlobalPresence(
           }
         });
 
-        // Remove any previously Firestore-tracked doc that left online_users
-        Array.from(firestoreTrackedIds).forEach((trackedId) => {
-          if (!currentFsIds.has(trackedId)) {
-            firestoreTrackedIds.delete(trackedId);
-            if (trackedId !== user.id) {
-              liveUsersMap.delete(trackedId);
+        // Remove previously tracked docs ONLY when connected (never wipe cached count on API disconnect)
+        const canPrune =
+          realtimeSocket.getConnectionState() === 'connected' &&
+          (typeof navigator === 'undefined' || navigator.onLine !== false);
+        if (canPrune) {
+          Array.from(firestoreTrackedIds).forEach((trackedId) => {
+            if (!currentFsIds.has(trackedId)) {
+              firestoreTrackedIds.delete(trackedId);
+              if (trackedId !== user.id) {
+                liveUsersMap.delete(trackedId);
+              }
             }
-          }
-        });
+          });
+        }
 
         emitPresence();
       }, (err) => {
@@ -651,6 +699,7 @@ export function subscribeToGlobalPresence(
 
   return () => {
     if (heartbeatTimer) clearInterval(heartbeatTimer);
+    if (unsubReconnect) unsubReconnect();
     if (unsubFirestore) unsubFirestore();
     if (unsubSocket) unsubSocket();
     if (rtdbCleanup) rtdbCleanup();
@@ -2927,10 +2976,17 @@ export async function signInWithGoogle(
   } catch (error: any) {
     console.error('Error signing in with Google:', error);
     let msg = 'تعذر تسجيل الدخول بحساب Google.';
-    if (error?.code === 'auth/popup-closed-by-user') {
+    if (error?.code === 'auth/popup-closed-by-user' || error?.code === 'auth/cancelled-popup-request') {
       msg = 'تم إغلاق نافذة تسجيل الدخول قبل إتمام العملية.';
     } else if (error?.code === 'auth/popup-blocked') {
       msg = 'قام المتصفح بحظر النافذة المنبثقة. يرجى السماح بالنوافذ المنبثقة لهذا الموقع.';
+    } else if (error?.code === 'auth/unauthorized-domain') {
+      const host = typeof window !== 'undefined' ? window.location.hostname : '';
+      msg = `نطاق الموقع الحالي (${host}) غير مصرح به في إعدادات Firebase Authentication.`;
+    } else if (error?.code === 'auth/operation-not-allowed') {
+      msg = 'تسجيل الدخول بحساب Google غير مفعل حالياً في إعدادات Firebase.';
+    } else if (error?.code === 'auth/network-request-failed') {
+      msg = 'تعذر الاتصال بخوادم Google. يرجى التحقق من اتصال الإنترنت والمحاولة مرة أخرى.';
     } else if (error?.message) {
       msg = error.message;
     }
@@ -4413,11 +4469,12 @@ export interface RemoteVersionConfig {
   app_version?: string;
   version?: string;
   force_update?: boolean;
+  notifications_enabled?: boolean;
   message?: string;
 }
 
 export function subscribeToRemoteAppVersion(
-  onVersion: (cfg: { latestVersion: string; forceUpdate: boolean; message: string }) => void
+  onVersion: (cfg: { latestVersion: string; forceUpdate: boolean; notificationsEnabled: boolean; message: string }) => void
 ): () => void {
   if (!db) return () => {};
   let unsubConfig: (() => void) | null = null;
@@ -4431,6 +4488,7 @@ export function subscribeToRemoteAppVersion(
           onVersion({
             latestVersion,
             forceUpdate: Boolean(data.force_update),
+            notificationsEnabled: data.notifications_enabled !== false,
             message: data.message || 'يوجد تحديث جديد - اضغط للتحديث'
           });
         }
@@ -4441,6 +4499,19 @@ export function subscribeToRemoteAppVersion(
   return () => {
     if (unsubConfig) unsubConfig();
   };
+}
+
+export async function setRemoteUpdateNotificationsEnabled(enabled: boolean): Promise<void> {
+  if (!db) return;
+  try {
+    await setDoc(
+      doc(db, 'config', 'app_version'),
+      { notifications_enabled: enabled, updatedAt: Date.now() },
+      { merge: true }
+    );
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, 'config/app_version');
+  }
 }
 
 // 29. STORIES BAR (24-HOUR TTL)
@@ -4466,6 +4537,27 @@ export function subscribeToActiveStories(onUpdate: (stories: StoryItem[]) => voi
   onUpdate(readLocal());
 
   let unsubFs: (() => void) | null = null;
+  let unsubReconnect: (() => void) | null = null;
+
+  const refreshFromServer = async () => {
+    if (!db) return;
+    try {
+      const q = query(collection(db, 'stories'), orderBy('createdAt', 'desc'), limit(40));
+      const snap = await getDocs(q);
+      const items: StoryItem[] = snap.docs.map((d) => ({
+        id: d.id,
+        ...(d.data() as any)
+      }));
+      const valid = filterValid(items);
+      if (valid.length > 0 || realtimeSocket.getConnectionState() === 'connected') {
+        try {
+          localStorage.setItem(LOCAL_STORIES_KEY, JSON.stringify(valid));
+        } catch {}
+        onUpdate(valid);
+      }
+    } catch {}
+  };
+
   if (db) {
     try {
       const q = query(collection(db, 'stories'), orderBy('createdAt', 'desc'), limit(40));
@@ -4477,13 +4569,26 @@ export function subscribeToActiveStories(onUpdate: (stories: StoryItem[]) => voi
             ...(d.data() as any)
           }));
           const valid = filterValid(items);
+          const cached = readLocal();
+          // Preserve cached multi-user stories if disconnected or snapshot temporarily collapsed
+          const isApiConnected = realtimeSocket.getConnectionState() === 'connected';
+          if (!isApiConnected && cached.length > valid.length) {
+            onUpdate(cached);
+            return;
+          }
           try {
             localStorage.setItem(LOCAL_STORIES_KEY, JSON.stringify(valid));
           } catch {}
           onUpdate(valid);
         },
-        () => {}
+        () => {
+          const cached = readLocal();
+          if (cached.length > 0) onUpdate(cached);
+        }
       );
+      unsubReconnect = realtimeSocket.subscribeToReconnectSuccess(() => {
+        refreshFromServer();
+      });
     } catch {}
   }
 
@@ -4496,6 +4601,7 @@ export function subscribeToActiveStories(onUpdate: (stories: StoryItem[]) => voi
 
   return () => {
     if (unsubFs) unsubFs();
+    if (unsubReconnect) unsubReconnect();
     liveChatBus?.removeEventListener('message', handleBus);
   };
 }
@@ -4519,6 +4625,9 @@ export async function createStory(
     bgGradient: payload.bgGradient || 'from-indigo-600 via-purple-600 to-fuchsia-600',
     createdAt: now,
     expiresAt: now + 24 * 60 * 60 * 1000,
+    likedBy: [],
+    likesCount: 0,
+    viewsCount: 0,
     viewers: {}
   };
 
@@ -4544,28 +4653,129 @@ export async function markStoryViewed(storyId: string, viewer: User): Promise<vo
   if (!storyId || !viewer?.id) return;
   const viewerEntry = {
     id: viewer.id,
-    name: viewer.name,
+    userId: viewer.id,
+    name: viewer.name || 'عضو شات مصر',
     avatar: viewer.avatar || '',
     viewedAt: Date.now()
   };
+
+  let shouldSkipRemote = false;
+  try {
+    const raw = localStorage.getItem(LOCAL_STORIES_KEY);
+    if (raw) {
+      const list: StoryItem[] = JSON.parse(raw);
+      const updated = list.map((s) => {
+        if (s.id !== storyId) return s;
+        if (s.userId === viewer.id) {
+          shouldSkipRemote = true;
+          return s;
+        }
+        const prevViewers = s.viewers || {};
+        if (prevViewers[viewer.id]) {
+          shouldSkipRemote = true;
+          return s;
+        }
+        const nextViewers = { ...prevViewers, [viewer.id]: viewerEntry };
+        return {
+          ...s,
+          viewers: nextViewers,
+          viewsCount: Math.max((s.viewsCount || 0) + 1, Object.keys(nextViewers).length)
+        };
+      });
+      localStorage.setItem(LOCAL_STORIES_KEY, JSON.stringify(updated));
+    }
+  } catch {}
+
+  if (shouldSkipRemote) return;
+
+  if (db) {
+    try {
+      const storyRef = doc(db, 'stories', storyId);
+      await runTransaction(db, async (tx) => {
+        const snap = await tx.get(storyRef);
+        if (!snap.exists()) return;
+        const data = snap.data() as any;
+        if (data.userId === viewer.id) return;
+        const currentViewers = (data.viewers && typeof data.viewers === 'object' ? data.viewers : {}) as Record<string, any>;
+        if (currentViewers[viewer.id]) return;
+        const nextCount = Math.max(Number(data.viewsCount) || 0, Object.keys(currentViewers).length) + 1;
+        tx.update(storyRef, {
+          [`viewers.${viewer.id}`]: viewerEntry,
+          viewsCount: nextCount
+        });
+      });
+    } catch {}
+  }
+}
+
+export async function toggleStoryLike(storyId: string, user: User): Promise<void> {
+  if (!storyId || !user?.id) return;
+  let currentlyLiked = false;
 
   try {
     const raw = localStorage.getItem(LOCAL_STORIES_KEY);
     if (raw) {
       const list: StoryItem[] = JSON.parse(raw);
-      const updated = list.map((s) =>
-        s.id === storyId ? { ...s, viewers: { ...(s.viewers || {}), [viewer.id]: viewerEntry } } : s
-      );
+      const updated = list.map((s) => {
+        if (s.id !== storyId) return s;
+        const likedSet = new Set(s.likedBy || []);
+        currentlyLiked = likedSet.has(user.id);
+        if (currentlyLiked) {
+          likedSet.delete(user.id);
+        } else {
+          likedSet.add(user.id);
+        }
+        const likedBy = Array.from(likedSet);
+        return { ...s, likedBy, likesCount: likedBy.length };
+      });
       localStorage.setItem(LOCAL_STORIES_KEY, JSON.stringify(updated));
+      liveChatBus?.postMessage({ type: 'STORIES_CHANGED' });
     }
   } catch {}
 
   if (db) {
     try {
-      await updateDoc(doc(db, 'stories', storyId), {
-        [`viewers.${viewer.id}`]: viewerEntry
+      const storyRef = doc(db, 'stories', storyId);
+      await runTransaction(db, async (tx) => {
+        const snap = await tx.get(storyRef);
+        if (!snap.exists()) return;
+        const data = snap.data() as any;
+        const prevLiked: string[] = Array.isArray(data.likedBy) ? data.likedBy : [];
+        const hasLiked = prevLiked.includes(user.id);
+        const nextLiked = hasLiked
+          ? prevLiked.filter((id) => id !== user.id)
+          : [...prevLiked, user.id];
+        tx.update(storyRef, {
+          likedBy: nextLiked,
+          likesCount: nextLiked.length
+        });
       });
     } catch {}
+  }
+}
+
+export async function deleteStory(storyId: string): Promise<void> {
+  if (!storyId) return;
+  try {
+    const raw = localStorage.getItem(LOCAL_STORIES_KEY);
+    if (raw) {
+      const list: StoryItem[] = JSON.parse(raw);
+      localStorage.setItem(LOCAL_STORIES_KEY, JSON.stringify(list.filter((s) => s.id !== storyId)));
+    }
+  } catch {}
+  liveChatBus?.postMessage({ type: 'STORIES_CHANGED' });
+
+  if (db) {
+    try {
+      // Remove any nested viewer records first if present, then delete story document (clears viewsCount & viewers map)
+      const viewersSnap = await getDocs(collection(db, 'stories', storyId, 'viewers')).catch(() => null);
+      if (viewersSnap && !viewersSnap.empty) {
+        await Promise.all(viewersSnap.docs.map((d) => deleteDoc(d.ref).catch(() => {})));
+      }
+      await deleteDoc(doc(db, 'stories', storyId));
+    } catch (err) {
+      handleFirestoreError(err, OperationType.DELETE, `stories/${storyId}`);
+    }
   }
 }
 
@@ -5107,8 +5317,13 @@ export function subscribeToForumPosts(
               likedUsers: data.likedUsers && typeof data.likedUsers === 'object' ? data.likedUsers : {},
               likesCount: Number(data.likesCount) || (Array.isArray(data.likedBy) ? data.likedBy.length : 0),
               commentsCount: Number(data.commentsCount) || 0,
-              viewsCount: Number(data.viewsCount) || 0,
+              viewsCount: Math.max(
+                Number(data.viewsCount) || 0,
+                data.viewers && typeof data.viewers === 'object' ? Object.keys(data.viewers).length : 0,
+                Array.isArray(data.viewedBy) ? data.viewedBy.length : 0
+              ),
               viewedBy: Array.isArray(data.viewedBy) ? data.viewedBy : [],
+              viewers: data.viewers && typeof data.viewers === 'object' ? data.viewers : {},
               mentions: Array.isArray(data.mentions) ? data.mentions : [],
               createdAt: typeof data.createdAt === 'number' ? data.createdAt : Date.now()
             };
@@ -5148,34 +5363,70 @@ export function subscribeToForumPosts(
   };
 }
 
-export async function recordForumPostView(postId: string, viewerId: string): Promise<void> {
+export async function recordForumPostView(postId: string, viewer: User | string): Promise<void> {
+  const viewerId = typeof viewer === 'string' ? viewer : viewer?.id;
   if (!postId || !viewerId) return;
-  const sessionViewKey = `shatmasr_viewed_post_${postId}_${viewerId}`;
-  try {
-    if (sessionStorage.getItem(sessionViewKey) === '1') return;
-    sessionStorage.setItem(sessionViewKey, '1');
-  } catch {}
 
+  const viewerName = typeof viewer === 'string' ? 'عضو شات مصر' : (viewer.name || 'عضو شات مصر');
+  const viewerAvatar = typeof viewer === 'string' ? '' : (viewer.avatar || '');
+  const viewerEntry = {
+    id: viewerId,
+    userId: viewerId,
+    name: viewerName,
+    avatar: viewerAvatar,
+    viewedAt: Date.now()
+  };
+
+  let alreadyCountedOrOwner = false;
   try {
     const raw = localStorage.getItem(LOCAL_FORUM_KEY);
     if (raw) {
       const list: ForumPost[] = JSON.parse(raw);
       const updated = list.map((p) => {
         if (p.id !== postId) return p;
-        const viewed = new Set(p.viewedBy || []);
-        if (viewed.has(viewerId)) return p;
-        viewed.add(viewerId);
-        return { ...p, viewedBy: Array.from(viewed), viewsCount: Math.max((p.viewsCount || 0) + 1, viewed.size) };
+        if (p.authorId === viewerId) {
+          alreadyCountedOrOwner = true;
+          return p;
+        }
+        const prevViewers = p.viewers || {};
+        const viewedSet = new Set(p.viewedBy || []);
+        if (prevViewers[viewerId] || viewedSet.has(viewerId)) {
+          alreadyCountedOrOwner = true;
+          return p;
+        }
+        viewedSet.add(viewerId);
+        const nextViewers = { ...prevViewers, [viewerId]: viewerEntry };
+        return {
+          ...p,
+          viewedBy: Array.from(viewedSet),
+          viewers: nextViewers,
+          viewsCount: Math.max((p.viewsCount || 0) + 1, Object.keys(nextViewers).length, viewedSet.size)
+        };
       });
       localStorage.setItem(LOCAL_FORUM_KEY, JSON.stringify(updated));
     }
   } catch {}
 
+  if (alreadyCountedOrOwner) return;
+
   if (db) {
     try {
-      await updateDoc(doc(db, 'forum_posts', postId), {
-        viewedBy: arrayUnion(viewerId),
-        viewsCount: increment(1)
+      const postRef = doc(db, 'forum_posts', postId);
+      await runTransaction(db, async (tx) => {
+        const snap = await tx.get(postRef);
+        if (!snap.exists()) return;
+        const data = snap.data() as any;
+        if (data.authorId === viewerId) return;
+        const existingViewers = (data.viewers && typeof data.viewers === 'object' ? data.viewers : {}) as Record<string, any>;
+        const existingViewedBy: string[] = Array.isArray(data.viewedBy) ? data.viewedBy : [];
+        if (existingViewers[viewerId] || existingViewedBy.includes(viewerId)) return;
+        const nextCount =
+          Math.max(Number(data.viewsCount) || 0, Object.keys(existingViewers).length, existingViewedBy.length) + 1;
+        tx.update(postRef, {
+          [`viewers.${viewerId}`]: viewerEntry,
+          viewedBy: arrayUnion(viewerId),
+          viewsCount: nextCount
+        });
       });
     } catch {}
   }
@@ -5200,8 +5451,9 @@ export async function createForumPost(user: User, text: string, imageUrl?: strin
     likedBy: [],
     likesCount: 0,
     commentsCount: 0,
-    viewsCount: 1,
-    viewedBy: [user.id],
+    viewsCount: 0,
+    viewedBy: [],
+    viewers: {},
     mentions: mentionMatches,
     createdAt: Date.now()
   };
@@ -5416,6 +5668,10 @@ export async function deleteForumPost(postId: string): Promise<void> {
   liveChatBus?.postMessage({ type: 'FORUM_POSTS_CHANGED' });
   if (db) {
     try {
+      const commentsSnap = await getDocs(collection(db, 'forum_posts', postId, 'comments')).catch(() => null);
+      if (commentsSnap && !commentsSnap.empty) {
+        await Promise.all(commentsSnap.docs.map((d) => deleteDoc(d.ref).catch(() => {})));
+      }
       await deleteDoc(doc(db, 'forum_posts', postId));
     } catch (err) {
       handleFirestoreError(err, OperationType.DELETE, `forum_posts/${postId}`);

@@ -25,6 +25,7 @@ import { DailyMissionsModal } from './components/DailyMissionsModal';
 import { PrivateRoomPromptModal } from './components/PrivateRoomPromptModal';
 import { PhoneAuthModal } from './components/PhoneAuthModal';
 import { WelcomeAuthModal } from './components/WelcomeAuthModal';
+import { WelcomeScreen } from './components/WelcomeScreen';
 import { CallModal } from './components/CallModal';
 import { LeaderboardModal } from './components/LeaderboardModal';
 import { ConsentRequestModal } from './components/ConsentRequestModal';
@@ -34,7 +35,7 @@ import {
   subscribeToIncomingConsentRequests,
 } from './services/consentService';
 
-import { User, Room, Message, GiftItem, VipTier, SpeakerSeat, FriendRequest, DailyMission, UnreadSenderSummary } from './types/chat';
+import { User, Room, Message, GiftItem, VipTier, SpeakerSeat, FriendRequest, DailyMission, UnreadSenderSummary, ForumPost } from './types/chat';
 import { INITIAL_ROOMS, getOrCreateUser, isUserAdminOrOwner, hasCompletedMandatoryProfile } from './data/seedData';
 import { sounds } from './utils/soundEffects';
 import { preloadAppAssets } from './utils/assetCache';
@@ -59,6 +60,7 @@ import {
   awardBadgeToUser,
   sendRoomJoinRequest,
   logOutUser,
+  sendFriendRequest,
   acceptFriendRequestInDB,
   declineFriendRequestInDB,
   checkAndMarkFirstPublicRoomEntry,
@@ -173,7 +175,6 @@ export default function App() {
   }, [isDarkMode]);
 
   const toggleDarkMode = useCallback(() => {
-    sounds.playMessageSent();
     setIsDarkMode((prev) => {
       const next = !prev;
       toast.success(next ? 'تم تفعيل الوضع الليلي المريح للعين 🌙' : 'تم التبديل إلى الوضع النهاري الفاتح ☀️');
@@ -322,7 +323,20 @@ export default function App() {
   // Real-time Presence
   const [roomActiveUsers, setRoomActiveUsers] = useState<User[]>([]);
   const [roomActiveCount, setRoomActiveCount] = useState<number>(1);
-  const [globalOnlineUsers, setGlobalOnlineUsers] = useState<User[]>([currentUser]);
+  const [globalOnlineUsers, setGlobalOnlineUsers] = useState<User[]>(() => {
+    const map = new Map<string, User>();
+    map.set(currentUser.id, currentUser);
+    try {
+      const saved = localStorage.getItem('arab_chat_global_presence');
+      if (saved) {
+        const parsed: Record<string, User> = JSON.parse(saved);
+        Object.values(parsed || {}).forEach((u) => {
+          if (u && u.id) map.set(u.id, u);
+        });
+      }
+    } catch {}
+    return Array.from(map.values());
+  });
 
   // Friend Requests State
   const [pendingFriendRequests, setPendingFriendRequests] = useState<FriendRequest[]>([]);
@@ -330,6 +344,7 @@ export default function App() {
 
   // Real-time Top Floating Banners (Global Join, DM Notice, Friend Request, App Update)
   const [globalJoinBanner, setGlobalJoinBanner] = useState<{ id: string; name: string; avatar?: string } | null>(null);
+  const [isGlobalJoinMenuOpen, setIsGlobalJoinMenuOpen] = useState(false);
   const globalJoinTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [dmTopBanner, setDmTopBanner] = useState<{
@@ -346,8 +361,10 @@ export default function App() {
   const seenFriendBannerIdsRef = useRef<Set<string>>(new Set());
 
   const [appUpdateNotice, setAppUpdateNotice] = useState<AppUpdateNotice | null>(null);
-  const [remoteVersionInfo, setRemoteVersionInfo] = useState<{ version: string; forceUpdate: boolean; message?: string } | null>(null);
+  const [remoteVersionInfo, setRemoteVersionInfo] = useState<{ version: string; forceUpdate: boolean; notificationsEnabled: boolean; message?: string } | null>(null);
   const [isRemoteBannerDismissed, setIsRemoteBannerDismissed] = useState(false);
+  const [privateChatDraft, setPrivateChatDraft] = useState<string | null>(null);
+  const [openSupportRequested, setOpenSupportRequested] = useState(false);
 
   // Modals State
   const [isAdminOpen, setIsAdminOpen] = useState(false);
@@ -366,10 +383,8 @@ export default function App() {
   const [incomingConsentRequest, setIncomingConsentRequest] = useState<ConsentRequestPayload | null>(null);
   const [isPhoneAuthOpen, setIsPhoneAuthOpen] = useState(false);
   const isProfileReady = hasCompletedMandatoryProfile(currentUser);
-  const [isWelcomeAuthOpen, setIsWelcomeAuthOpen] = useState<boolean>(() => !hasCompletedMandatoryProfile(currentUser));
-  const [authModalMode, setAuthModalMode] = useState<'onboarding' | 'exclusive_auth'>(() =>
-    hasCompletedMandatoryProfile(currentUser) ? 'exclusive_auth' : 'onboarding'
-  );
+  const [isWelcomeAuthOpen, setIsWelcomeAuthOpen] = useState<boolean>(false);
+  const [authModalMode, setAuthModalMode] = useState<'onboarding' | 'exclusive_auth'>('exclusive_auth');
 
   // Global Persistent FM Radio & Music Player Playing Indicator (decoupled from tick/buffer churn)
   const [isRadioPlaying, setIsRadioPlaying] = useState<boolean>(() => globalRadioPlayer.getSnapshot().isPlaying);
@@ -387,12 +402,6 @@ export default function App() {
     });
     return unsub;
   }, []);
-
-  useEffect(() => {
-    if (!isWelcomeAuthOpen) {
-      globalRadioPlayer.tryAutoPlayFM();
-    }
-  }, [isWelcomeAuthOpen]);
 
   // Fullscreen Celebratory Gift Overlay
   const [activeFullscreenGift, setActiveFullscreenGift] = useState<{
@@ -516,6 +525,9 @@ export default function App() {
   const globalOnlineUsersRef = useRef<User[]>(globalOnlineUsers);
   globalOnlineUsersRef.current = globalOnlineUsers;
 
+  const activeRoomRef = useRef<Room | null>(activeRoom);
+  activeRoomRef.current = activeRoom;
+
   // Persist User Changes & Sync to Firebase only after mandatory onboarding completes
   useEffect(() => {
     if (hasCompletedMandatoryProfile(currentUser)) {
@@ -539,9 +551,15 @@ export default function App() {
   useEffect(() => {
     const unsubRemoteVersion = subscribeToRemoteAppVersion((cfg) => {
       if (cfg && isNewerVersion(cfg.latestVersion, CLIENT_APP_VERSION)) {
+        let alreadySeen = false;
+        try {
+          alreadySeen = localStorage.getItem(`seen_update_for_version_${cfg.latestVersion}`) === 'true';
+        } catch {}
+        setIsRemoteBannerDismissed(alreadySeen);
         setRemoteVersionInfo({
           version: cfg.latestVersion,
           forceUpdate: Boolean(cfg.forceUpdate),
+          notificationsEnabled: cfg.notificationsEnabled !== false,
           message: cfg.message,
         });
       } else {
@@ -638,8 +656,14 @@ export default function App() {
     realtimeSocket.connect(activeUser);
 
     // Listen to global presence updates (real connected users via WebSocket)
+    // Preserve last known users if disconnected or momentarily degraded to [self]
     const unsubGlobal = realtimeSocket.subscribeToGlobalPresence((liveUsers) => {
-      if (liveUsers && liveUsers.length > 0) {
+      if (!liveUsers || liveUsers.length === 0) return;
+      const isConnected = realtimeSocket.getConnectionState() === 'connected';
+      setGlobalOnlineUsers(prev => {
+        if (!isConnected && liveUsers.length <= 1 && prev.length > 1) {
+          return prev;
+        }
         const self = currentUserRef.current;
         const map = new Map<string, User>();
         map.set(self.id, self);
@@ -647,20 +671,66 @@ export default function App() {
           if (u && u.id) map.set(u.id, u);
         });
         const nextList = Array.from(map.values());
-        setGlobalOnlineUsers(prev => (areUserListsEqual(prev, nextList) ? prev : nextList));
-      }
+        return areUserListsEqual(prev, nextList) ? prev : nextList;
+      });
     });
 
     // Also listen to Firestore global presence (multi-session across browser instances)
     const unsubFirestorePresence = subscribeToGlobalPresence(activeUser, (liveUsers) => {
       if (liveUsers && liveUsers.length > 0) {
         setGlobalOnlineUsers(prev => {
+          const isConnected = realtimeSocket.getConnectionState() === 'connected';
+          if (!isConnected && liveUsers.length <= 1 && prev.length > 1) {
+            return prev;
+          }
           const map = new Map<string, User>();
           prev.forEach(u => map.set(u.id, u));
           liveUsers.forEach(u => map.set(u.id, u));
           const nextList = Array.from(map.values());
           return areUserListsEqual(prev, nextList) ? prev : nextList;
         });
+      }
+    });
+
+    // Automatically refresh presence and active room messages on reconnect
+    const unsubReconnect = realtimeSocket.subscribeToReconnectSuccess(() => {
+      const me = currentUserRef.current;
+      realtimeSocket.registerUser(me);
+      realtimeSocket.apiFetchWithRefresh('/api/presence')
+        .then(r => (r.ok ? r.json() : null))
+        .then(data => {
+          if (Array.isArray(data?.users) && data.users.length > 0) {
+            setGlobalOnlineUsers(prev => {
+              const map = new Map<string, User>();
+              prev.forEach(u => map.set(u.id, u));
+              data.users.forEach((u: User) => {
+                if (u && u.id) map.set(u.id, u);
+              });
+              const nextList = Array.from(map.values());
+              return areUserListsEqual(prev, nextList) ? prev : nextList;
+            });
+          }
+        })
+        .catch(() => {});
+
+      const currentRoom = activeRoomRef.current;
+      if (currentRoom) {
+        realtimeSocket.joinRoom(currentRoom.id, me);
+        realtimeSocket.apiFetchWithRefresh(`/api/rooms/${encodeURIComponent(currentRoom.id)}/messages`)
+          .then(r => (r.ok ? r.json() : null))
+          .then(data => {
+            if (Array.isArray(data?.messages) && data.messages.length > 0) {
+              setActiveRoomMessages(prev => {
+                const map = new Map<string, Message>();
+                prev.forEach(m => map.set(m.id, m));
+                data.messages.forEach((m: Message) => {
+                  if (m && m.id) map.set(m.id, m);
+                });
+                return Array.from(map.values()).sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+              });
+            }
+          })
+          .catch(() => {});
       }
     });
 
@@ -712,8 +782,13 @@ export default function App() {
     // Do NOT trigger join notifications upon app login — only inside active rooms
     const unsubGlobalJoin = realtimeSocket.subscribeToGlobalUserJoined(() => {});
 
-    // Real-time App Update Notice Banner
+    // Real-time App Update Notice Banner (once per version)
     const unsubAppUpdate = subscribeToAppUpdateNotices((notice) => {
+      try {
+        if (localStorage.getItem(`seen_update_for_version_${notice.version}`) === 'true') {
+          return;
+        }
+      } catch {}
       setAppUpdateNotice(notice);
     });
 
@@ -833,6 +908,7 @@ export default function App() {
     return () => {
       unsubGlobal();
       unsubFirestorePresence();
+      unsubReconnect();
       unsubAdmin();
       unsubFriend();
       unsubGlobalJoin();
@@ -1738,7 +1814,6 @@ export default function App() {
       (room.moderators || []).includes(me.id);
 
     if (room.isLocked && !canManageRoom) {
-      sounds.playMicToggle(false);
       toast.error('🔒 هذه الغرفة مقفلة حالياً', {
         description: `قام مديرو "${room.title}" بقفل الغرفة مؤقتاً، ولا يمكن دخول أعضاء جدد الآن.`,
       });
@@ -1776,7 +1851,6 @@ export default function App() {
       avatar: newAvatarUrl
     };
     setCurrentUser(updated);
-    sounds.playCoinsReward();
     realtimeSocket.updateAvatar(me.id, newAvatarUrl);
     propagateUserIdentityAcrossApp(updated).catch(() => {});
     toast.success('تم تحديث صورتك الشخصية بنجاح 📸');
@@ -1959,6 +2033,24 @@ export default function App() {
     syncUserProfileToFirebase(updated);
     toast.success(`مبروك! تم استلام +${coins} كوينز من ${label} 🎉`);
   }, []);
+  const handleShareForumPostToPrivateChat = useCallback((post: ForumPost) => {
+    const excerpt = (post.text || '').trim().split('\n')[0].slice(0, 80) || 'منشور في منتدى شات مصر';
+    const postLink = `${window.location.origin}/?post=${encodeURIComponent(post.id)}#forum-post-${encodeURIComponent(post.id)}`;
+    const draft = `📌 مشاركة منشور من "${post.authorName}":\n${excerpt}\n\n🔗 رابط المنشور: ${postLink}`;
+    closeAllModals();
+    setPrivateChatDraft(draft);
+    setTargetChatUser(null);
+    setIsInsidePrivateChat(false);
+    setIsPrivateChatDrawerOpen(true);
+    toast.info('اختر الصديق أو العضو لإرسال المنشور له في الخاص 📩');
+  }, [closeAllModals]);
+
+  const openSupportFromHeader = useCallback(() => {
+    closeAllModals();
+    setOpenSupportRequested(true);
+    setCurrentTab('profile');
+  }, [closeAllModals]);
+
   const handleBottomTabChange = useCallback((tab: NavTab) => {
     closeAllModals();
     setIsInsidePrivateChat(false);
@@ -1970,10 +2062,6 @@ export default function App() {
     setCurrentTab(tab);
     if (tab === 'home') {
       window.scrollTo({ top: 0, behavior: 'smooth' });
-    } else if (tab === 'rooms') {
-      requestAnimationFrame(() => {
-        document.getElementById('home-rooms-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      });
     }
   }, [closeAllModals]);
 
@@ -1998,8 +2086,8 @@ export default function App() {
     localStorage.removeItem('arab_chat_has_entered');
     const nextUser = getOrCreateUser();
     setCurrentUser(nextUser);
-    setAuthModalMode('onboarding');
-    setIsWelcomeAuthOpen(true);
+    setAuthModalMode('exclusive_auth');
+    setIsWelcomeAuthOpen(false);
   };
 
   // Hardware Back Button & Mobile History Handling (Requirement 6)
@@ -2050,7 +2138,7 @@ export default function App() {
       }
 
       // 3. Return to 'home' tab
-      if (currentTab !== 'home' && currentTab !== 'rooms') {
+      if (currentTab !== 'home') {
         setCurrentTab('home');
         return;
       }
@@ -2067,7 +2155,6 @@ export default function App() {
 
   // Friend Request Accept / Decline
   const handleAcceptFriendRequest = async (req: FriendRequest) => {
-    sounds.playCoinsReward();
     setPendingFriendRequests(prev => prev.filter(r => r.id !== req.id));
     setFriendReqBanner(curr => (curr?.id === req.id ? null : curr));
     await acceptFriendRequestInDB(
@@ -2094,7 +2181,6 @@ export default function App() {
 
   // Switch active user account (for multi-device / multi-tab testing)
   const handleSwitchUser = (newUser: User) => {
-    sounds.playCoinsReward();
     let sid = newUser.sessionId || currentUser.sessionId;
     try {
       if (!sid) {
@@ -2136,10 +2222,10 @@ export default function App() {
     [isDarkMode]
   );
 
-  // Mandatory Registration Gate: prevent seeing chat or online users until Name + Age + Gender (or Google Login) is completed
+  // Initial Full-Screen Arabic RTL Welcome Screen until user taps "دخول فوري بدون تسجيل" or logs in
   if (!isProfileReady) {
     return (
-      <div className={`min-h-screen original-app-bg text-slate-900 dark:text-slate-100 transition-colors duration-300 ${fontClass}`}>
+      <div className={`min-h-screen text-slate-900 dark:text-slate-100 transition-colors duration-300 ${fontClass}`}>
         <Toaster
           position="top-center"
           dir="rtl"
@@ -2150,16 +2236,12 @@ export default function App() {
           style={{ zIndex: 300 }}
           toastOptions={toasterOptions}
         />
-        <WelcomeAuthModal
-          isOpen={true}
-          allowClose={false}
-          onClose={() => {}}
+        <WelcomeScreen
           currentUser={currentUser}
-          onUserAuthenticated={(u) => {
+          onEnterApp={(u) => {
             localStorage.setItem('shat_masr_has_entered', 'true');
             handleSwitchUser(u);
             setIsWelcomeAuthOpen(false);
-            globalRadioPlayer.tryAutoPlayFM();
             requestPushNotificationPermission().catch(() => {});
           }}
         />
@@ -2215,15 +2297,20 @@ export default function App() {
         className="fixed top-3 left-1/2 -translate-x-1/2 z-[300] w-[calc(100%-1.5rem)] max-w-md flex flex-col gap-2 pointer-events-none"
       >
         <AnimatePresence initial={false}>
-          {/* Silent Firestore App Version Update Banner (non-blocking unless forceUpdate) */}
-          {remoteVersionInfo && !remoteVersionInfo.forceUpdate && !isRemoteBannerDismissed && (
+          {/* Silent Firestore App Version Update Banner (non-blocking unless forceUpdate; once per version) */}
+          {remoteVersionInfo && remoteVersionInfo.notificationsEnabled && !remoteVersionInfo.forceUpdate && !isRemoteBannerDismissed && (
             <motion.div
               key={`remote-ver-${remoteVersionInfo.version}`}
               initial={{ opacity: 0, y: -12, scale: 0.97 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: -10, scale: 0.97 }}
               transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
-              onClick={() => window.location.reload()}
+              onClick={() => {
+                try {
+                  localStorage.setItem(`seen_update_for_version_${remoteVersionInfo.version}`, 'true');
+                } catch {}
+                window.location.reload();
+              }}
               className="pointer-events-auto cursor-pointer flex items-center justify-between gap-2.5 px-3.5 py-2.5 rounded-2xl bg-gradient-to-l from-emerald-600 to-teal-600 text-white shadow-2xl border border-white/25"
             >
               <div className="flex items-center gap-2 min-w-0">
@@ -2234,6 +2321,9 @@ export default function App() {
                 type="button"
                 onClick={(e) => {
                   e.stopPropagation();
+                  try {
+                    localStorage.setItem(`seen_update_for_version_${remoteVersionInfo.version}`, 'true');
+                  } catch {}
                   setIsRemoteBannerDismissed(true);
                 }}
                 aria-label="إغلاق"
@@ -2243,7 +2333,7 @@ export default function App() {
               </button>
             </motion.div>
           )}
-          {/* App Update Push Banner */}
+          {/* App Update Push Banner (once per version) */}
           {appUpdateNotice && (
             <motion.div
               key={`update-${appUpdateNotice.timestamp || appUpdateNotice.version}`}
@@ -2260,7 +2350,12 @@ export default function App() {
               <div className="flex items-center gap-1.5 shrink-0">
                 <button
                   type="button"
-                  onClick={() => window.location.reload()}
+                  onClick={() => {
+                    try {
+                      localStorage.setItem(`seen_update_for_version_${appUpdateNotice.version}`, 'true');
+                    } catch {}
+                    window.location.reload();
+                  }}
                   className="px-2.5 py-1 rounded-xl bg-white text-indigo-700 hover:bg-amber-50 text-[11px] font-black flex items-center gap-1 shadow-sm active:scale-95 transition cursor-pointer"
                 >
                   <RefreshCw className="w-3 h-3" />
@@ -2268,7 +2363,12 @@ export default function App() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => setAppUpdateNotice(null)}
+                  onClick={() => {
+                    try {
+                      localStorage.setItem(`seen_update_for_version_${appUpdateNotice.version}`, 'true');
+                    } catch {}
+                    setAppUpdateNotice(null);
+                  }}
                   aria-label="إغلاق"
                   className="p-1 rounded-full hover:bg-white/20 text-white/90 cursor-pointer"
                 >
@@ -2278,7 +2378,7 @@ export default function App() {
             </motion.div>
           )}
 
-          {/* Global User Join Banner (Auto-hides in 5s with smooth fade-in/out) */}
+          {/* Global User Join Banner (Clickable with Private Chat / Add Friend / Profile Actions) */}
           {globalJoinBanner && (
             <motion.div
               key={`join-${globalJoinBanner.id}`}
@@ -2286,22 +2386,131 @@ export default function App() {
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: -10, scale: 0.97 }}
               transition={{ duration: 0.26, ease: [0.22, 1, 0.36, 1] }}
-              className="pointer-events-auto flex items-center justify-between gap-2 px-3.5 py-2 rounded-2xl bg-white/95 backdrop-blur-md border border-emerald-200 shadow-lg text-slate-900"
+              onClick={() => setIsGlobalJoinMenuOpen((prev) => !prev)}
+              className="pointer-events-auto cursor-pointer flex flex-col gap-1.5 px-3.5 py-2 rounded-2xl bg-white/95 backdrop-blur-md border border-emerald-200 shadow-lg text-slate-900"
             >
-              <div className="flex items-center gap-2 min-w-0">
-                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping shrink-0" />
-                <span className="text-xs font-black text-emerald-800 truncate">
-                  انضم {globalJoinBanner.name} إلى شات مصر
-                </span>
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping shrink-0" />
+                  <span className="text-xs font-black text-emerald-800 truncate">
+                    انضم {globalJoinBanner.name} إلى شات مصر
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setIsGlobalJoinMenuOpen(false);
+                    setGlobalJoinBanner(null);
+                  }}
+                  aria-label="إغلاق"
+                  className="p-1 rounded-full text-slate-400 hover:text-slate-700 cursor-pointer"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
               </div>
-              <button
-                type="button"
-                onClick={() => setGlobalJoinBanner(null)}
-                aria-label="إغلاق"
-                className="p-1 rounded-full text-slate-400 hover:text-slate-700 cursor-pointer"
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
+              {isGlobalJoinMenuOpen && (
+                <div
+                  onClick={(e) => e.stopPropagation()}
+                  className="flex items-center justify-between gap-1.5 pt-1 border-t border-emerald-100"
+                >
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const found = globalOnlineUsersRef.current.find((u) => u.id === globalJoinBanner.id);
+                      const peer: User = found || {
+                        id: globalJoinBanner.id,
+                        name: globalJoinBanner.name,
+                        username: globalJoinBanner.name.toLowerCase().replace(/\s+/g, '_'),
+                        avatar: globalJoinBanner.avatar || '',
+                        bio: 'عضو في شات مصر',
+                        country: 'مصر',
+                        countryFlag: '🇪🇬',
+                        role: 'member',
+                        coins: 100,
+                        earningsEgp: 0,
+                        earningsUsd: 0,
+                        vipBadge: '',
+                        frameStyle: 'border-slate-300',
+                        profileWallpaper: '',
+                        fontPreference: 'cairo',
+                        isOnline: true,
+                        status: 'online',
+                        joinedAt: new Date().toISOString(),
+                        gender: 'male',
+                        level: 1,
+                        likesReceived: 0,
+                        giftsReceivedCount: 0,
+                        badges: []
+                      };
+                      setIsGlobalJoinMenuOpen(false);
+                      setGlobalJoinBanner(null);
+                      handleOpenPrivateChatWith(peer);
+                    }}
+                    className="flex-1 py-1.5 px-2 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[11px] font-black text-center cursor-pointer"
+                  >
+                    💬 رسالة خاصة
+                  </button>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      await sendFriendRequest(currentUserRef.current, globalJoinBanner.id);
+                      realtimeSocket.sendFriendRequest({
+                        id: `req_${Date.now()}`,
+                        senderId: currentUserRef.current.id,
+                        senderName: currentUserRef.current.name,
+                        senderAvatar: currentUserRef.current.avatar,
+                        receiverId: globalJoinBanner.id,
+                        createdAt: Date.now(),
+                        status: 'pending'
+                      });
+                      toast.success(`تم إرسال طلب صداقة إلى ${globalJoinBanner.name} 🤝`);
+                      setIsGlobalJoinMenuOpen(false);
+                      setGlobalJoinBanner(null);
+                    }}
+                    className="flex-1 py-1.5 px-2 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-700 text-[11px] font-black text-center cursor-pointer"
+                  >
+                    🤝 طلب صداقة
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const found = globalOnlineUsersRef.current.find((u) => u.id === globalJoinBanner.id);
+                      const peer: User = found || {
+                        id: globalJoinBanner.id,
+                        name: globalJoinBanner.name,
+                        username: globalJoinBanner.name.toLowerCase().replace(/\s+/g, '_'),
+                        avatar: globalJoinBanner.avatar || '',
+                        bio: 'عضو في شات مصر',
+                        country: 'مصر',
+                        countryFlag: '🇪🇬',
+                        role: 'member',
+                        coins: 100,
+                        earningsEgp: 0,
+                        earningsUsd: 0,
+                        vipBadge: '',
+                        frameStyle: 'border-slate-300',
+                        profileWallpaper: '',
+                        fontPreference: 'cairo',
+                        isOnline: true,
+                        status: 'online',
+                        joinedAt: new Date().toISOString(),
+                        gender: 'male',
+                        level: 1,
+                        likesReceived: 0,
+                        giftsReceivedCount: 0,
+                        badges: []
+                      };
+                      setIsGlobalJoinMenuOpen(false);
+                      setGlobalJoinBanner(null);
+                      setSelectedProfileUser(peer);
+                    }}
+                    className="flex-1 py-1.5 px-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 text-[11px] font-black text-center cursor-pointer"
+                  >
+                    👤 الملف الشخصي
+                  </button>
+                </div>
+              )}
             </motion.div>
           )}
 
@@ -2421,7 +2630,6 @@ export default function App() {
           onlineUsersCount={globalOnlineUsers.length}
           onOpenRadio={openRadio}
           isRadioPlaying={isRadioPlaying}
-          onAvatarChanged={handleAvatarChanged}
           onLogout={handleLogout}
           unreadMessagesBySender={unreadMessagesBySender}
           totalUnreadMessagesCount={totalUnreadMessagesCount}
@@ -2430,6 +2638,7 @@ export default function App() {
           onOpenMessagesTab={openMessagesDrawer}
           isDarkMode={isDarkMode}
           onToggleDarkMode={toggleDarkMode}
+          onOpenSupport={openSupportFromHeader}
         />
       )}
 
@@ -2462,7 +2671,7 @@ export default function App() {
       {/* 2. Main View Routing: Home Page (RoomsView) remains persistently mounted & frozen to prevent re-mounts/reloads */}
       <main className={activeRoom ? "w-full h-screen overflow-hidden" : "max-w-7xl mx-auto min-h-[calc(100vh-56px)]"}>
         {/* Frozen Home Page Container (always mounted; hidden via CSS when inside a room or on another tab) */}
-        <div className={!activeRoom && (currentTab === 'home' || currentTab === 'rooms') ? '' : 'hidden'}>
+        <div className={!activeRoom && currentTab === 'home' ? '' : 'hidden'}>
           <RoomsView
             rooms={rooms}
             currentUser={currentUser}
@@ -2478,6 +2687,7 @@ export default function App() {
             cumulativeVisitorsCount={cumulativeVisitorsCount}
             onOpenOnlineUsers={openOnlineUsers}
             onClaimSharedRewardCoins={handleClaimSharedRewardCoins}
+            onShareForumPost={handleShareForumPostToPrivateChat}
           />
         </div>
 
@@ -2537,6 +2747,8 @@ export default function App() {
                   unreadMessagesBySender={unreadMessagesBySender}
                   onMarkSenderRead={clearUnreadForSender}
                   onClearAllUnreadMessages={clearAllUnreadMessages}
+                  prefilledDraft={privateChatDraft}
+                  onClearPrefilledDraft={() => setPrivateChatDraft(null)}
                 />
               )}
 
@@ -2562,6 +2774,8 @@ export default function App() {
                   onLogout={handleLogout}
                   isDarkMode={isDarkMode}
                   onToggleDarkMode={toggleDarkMode}
+                  openToSupport={openSupportRequested}
+                  onConsumeSupportScroll={() => setOpenSupportRequested(false)}
                 />
               )}
             </>
@@ -2693,6 +2907,8 @@ export default function App() {
               unreadMessagesBySender={unreadMessagesBySender}
               onMarkSenderRead={clearUnreadForSender}
               onClearAllUnreadMessages={clearAllUnreadMessages}
+              prefilledDraft={privateChatDraft}
+              onClearPrefilledDraft={() => setPrivateChatDraft(null)}
             />
           </div>
         </div>
@@ -2816,7 +3032,6 @@ export default function App() {
           localStorage.setItem('shat_masr_has_entered', 'true');
           handleSwitchUser(u);
           setIsWelcomeAuthOpen(false);
-          globalRadioPlayer.tryAutoPlayFM();
           requestPushNotificationPermission().catch(() => {});
         }}
       />

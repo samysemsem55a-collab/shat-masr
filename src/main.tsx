@@ -2,6 +2,7 @@ import {createRoot} from 'react-dom/client';
 import App from './App.tsx';
 import './index.css';
 import { registerSW } from 'virtual:pwa-register';
+import { ErrorBoundary } from './components/ErrorBoundary.tsx';
 
 // Register PWA Service Worker silently in production without ever forcing a page reload
 if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
@@ -25,4 +26,8 @@ if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
   }
 }
 
-createRoot(document.getElementById('root')!).render(<App />);
+createRoot(document.getElementById('root')!).render(
+  <ErrorBoundary>
+    <App />
+  </ErrorBoundary>
+);

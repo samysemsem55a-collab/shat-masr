@@ -12,7 +12,6 @@ export const PWAInstallButton: React.FC<PWAInstallButtonProps> = ({ variant = 'c
   const [showModal, setShowModal] = useState(false);
 
   const handleInstallClick = async () => {
-    sounds.playCoinsReward();
     if (isInstallable) {
       const res = await install();
       if (!res) {

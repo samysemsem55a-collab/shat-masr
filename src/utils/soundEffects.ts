@@ -1,6 +1,24 @@
+const MUTE_SEND_SOUND_KEY = 'shat_masr_mute_send_sound';
+
 // Web Audio API Synthesizer for rich interactive audio effects
 class SoundController {
   private ctx: AudioContext | null = null;
+
+  isSendSoundMuted(): boolean {
+    try {
+      return typeof localStorage !== 'undefined' && localStorage.getItem(MUTE_SEND_SOUND_KEY) === 'true';
+    } catch {
+      return false;
+    }
+  }
+
+  setSendSoundMuted(muted: boolean) {
+    try {
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem(MUTE_SEND_SOUND_KEY, muted ? 'true' : 'false');
+      }
+    } catch {}
+  }
 
   private getContext(): AudioContext {
     if (!this.ctx) {
@@ -15,6 +33,7 @@ class SoundController {
 
   // Jingle for sending a message
   playMessageSent() {
+    if (this.isSendSoundMuted()) return;
     try {
       const ctx = this.getContext();
       const osc = ctx.createOscillator();

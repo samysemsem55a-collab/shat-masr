@@ -49,7 +49,6 @@ export const ChatWallpapersModal: React.FC<ChatWallpapersModalProps> = ({
   ]);
 
   const handleApplyWallpaper = (wallpaper: ChatWallpaper) => {
-    sounds.playMessageSent();
     const updatedUser: User = {
       ...currentUser,
       chatWallpaper: wallpaper.id
@@ -75,7 +74,6 @@ export const ChatWallpapersModal: React.FC<ChatWallpapersModalProps> = ({
     setNotice(null);
 
     setPurchasingId(wallpaper.id);
-    sounds.playCoinsReward();
 
     const newCoins = isOwner ? currentUser.coins : Math.max(0, currentUser.coins - wallpaper.priceCoins);
     const updatedUnlocked = Array.from(new Set([...(currentUser.unlockedWallpapers || []), wallpaper.id]));

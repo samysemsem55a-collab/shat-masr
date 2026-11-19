@@ -26,7 +26,10 @@ import {
   ShieldCheck,
   Wifi,
   VolumeX,
-  Sparkles
+  Sparkles,
+  LifeBuoy,
+  Send,
+  ExternalLink
 } from 'lucide-react';
 import { User } from '../types/chat';
 import { isUserAdminOrOwner } from '../data/seedData';
@@ -42,7 +45,8 @@ import { PWAInstallButton } from './PWAInstallButton';
 import {
   saveUserThemeSettings,
   updateNotificationPreferences,
-  updateUserActivityStatus
+  updateUserActivityStatus,
+  submitUserReport
 } from '../services/firebase';
 import { cropBannerToDataUrl } from '../utils/imageCompression';
 import { maskEmail, maskPhone } from '../utils/maskData';
@@ -101,6 +105,8 @@ interface ProfileViewProps {
   onLogout?: () => void;
   isDarkMode?: boolean;
   onToggleDarkMode?: () => void;
+  openToSupport?: boolean;
+  onConsumeSupportScroll?: () => void;
 }
 
 const ANIME_AVATARS = [
@@ -159,9 +165,15 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   onLogout,
   isDarkMode,
   onToggleDarkMode,
+  openToSupport = false,
+  onConsumeSupportScroll,
 }) => {
   const effectiveDarkMode = isDarkMode ?? (typeof document !== 'undefined' && document.documentElement.classList.contains('dark'));
-  const [activeTab, setActiveTab] = useState<'info' | 'appearance' | 'security'>('info');
+  const [activeTab, setActiveTab] = useState<'info' | 'appearance' | 'security'>(openToSupport ? 'security' : 'info');
+  const [muteSendSound, setMuteSendSound] = useState<boolean>(() => sounds.isSendSoundMuted());
+  const [supportReason, setSupportReason] = useState<string>('مشكلة تقنية في التطبيق');
+  const [supportMessage, setSupportMessage] = useState<string>('');
+  const [isSendingSupport, setIsSendingSupport] = useState<boolean>(false);
   const [name, setName] = useState(currentUser.name);
   const [bio, setBio] = useState(currentUser.bio || '');
   const [country, setCountry] = useState(currentUser.country || 'مصر');
@@ -238,12 +250,23 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
     }
   }, [currentUser.status]);
 
+  useEffect(() => {
+    if (openToSupport) {
+      setActiveTab('security');
+      requestAnimationFrame(() => {
+        setTimeout(() => {
+          document.getElementById('support-contact-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          onConsumeSupportScroll?.();
+        }, 120);
+      });
+    }
+  }, [openToSupport, onConsumeSupportScroll]);
+
   const currentStatusMeta =
     ACTIVITY_STATUS_OPTIONS.find(opt => opt.value === activityStatus) || ACTIVITY_STATUS_OPTIONS[0];
 
   const handleStatusChange = async (nextStatus: User['status']) => {
     setActivityStatus(nextStatus);
-    sounds.playMessageSent();
     onUpdateUser({ status: nextStatus });
     await updateUserActivityStatus(currentUser.id, nextStatus);
     const meta = ACTIVITY_STATUS_OPTIONS.find(opt => opt.value === nextStatus) || ACTIVITY_STATUS_OPTIONS[0];
@@ -331,7 +354,6 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
           setAvatarUrl(newUrl);
           onUpdateUser({ avatar: newUrl });
           setShowAvatarModal(false);
-          sounds.playMessageSent();
           toast.success('تم تحديث صورتك الشخصية بنجاح 📸');
         }
       };
@@ -343,7 +365,6 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
     setAvatarUrl(url);
     onUpdateUser({ avatar: url });
     setShowAvatarModal(false);
-    sounds.playMessageSent();
     toast.success('تم اختيار صورة الأفتار بنجاح ✨');
   };
 
@@ -385,7 +406,6 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
       );
       setProfileBanner(croppedDataUrl);
       onUpdateUser({ profileBanner: croppedDataUrl });
-      sounds.playMessageSent();
       toast.success('تم قص وتطبيق بانر البروفايل المخصص بنجاح 🖼️');
       setBannerCropModal({
         open: false,
@@ -408,7 +428,6 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
       toast.error(guard.reason || 'هذا الاسم غير متاح حالياً');
       return;
     }
-    sounds.playMessageSent();
     setDataSaverEnabled(dataSaverMode);
     updateNotificationPreferences(currentUser.id, { directMessages: notifyDMs, gifts: notifyGifts });
     updateUserActivityStatus(currentUser.id, activityStatus);
@@ -1207,6 +1226,122 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                     <span className="w-4 h-4 rounded-full bg-white shadow-md"></span>
                   </button>
                 </div>
+
+                {/* Mute Message Send Sound Toggle */}
+                <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-200/70">
+                  <div className="text-right flex items-start gap-2">
+                    <VolumeX className="w-4 h-4 text-rose-500 mt-0.5 shrink-0" />
+                    <div>
+                      <span className="text-xs font-bold text-slate-800 block">كتم صوت إرسال الرسائل 🔇</span>
+                      <span className="text-[10px] text-slate-500">إيقاف نغمة النقر عند إرسال رسائلك في الغرف أو الخاص</span>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const next = !muteSendSound;
+                      setMuteSendSound(next);
+                      sounds.setSendSoundMuted(next);
+                      toast.info(next ? 'تم كتم صوت إرسال الرسائل 🔇' : 'تم تفعيل صوت إرسال الرسائل 🔔');
+                    }}
+                    className={`w-11 h-6 rounded-full transition-colors flex items-center p-1 cursor-pointer shrink-0 ${
+                      muteSendSound ? 'bg-rose-600 justify-end' : 'bg-slate-300 justify-start'
+                    }`}
+                  >
+                    <span className="w-4 h-4 rounded-full bg-white shadow-md"></span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Support & Contact Card */}
+            <div id="support-contact-card" className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 space-y-3 text-right">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-indigo-100 text-indigo-600 flex items-center justify-center shrink-0">
+                  <LifeBuoy className="w-4 h-4" />
+                </div>
+                <div>
+                  <h4 className="text-xs font-black text-slate-900">الدعم والتواصل 🛠️</h4>
+                  <p className="text-[10px] text-slate-500">تواصل معنا فوراً أو أرسل أي مشكلة تقنية تواجهك</p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-2">
+                <a
+                  href="https://wa.me/201000000000"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="py-2 px-2 rounded-xl bg-[#E6F4EA] hover:bg-[#d5ebd9] border border-[#C8E6D2] text-[#1A6B3C] text-[11px] font-black flex items-center justify-center gap-1 transition"
+                >
+                  <span>واتساب</span>
+                  <ExternalLink className="w-3 h-3" />
+                </a>
+                <a
+                  href="https://t.me/shatmasr_support"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="py-2 px-2 rounded-xl bg-sky-50 hover:bg-sky-100 border border-sky-200 text-sky-700 text-[11px] font-black flex items-center justify-center gap-1 transition"
+                >
+                  <span>تيليجرام</span>
+                  <ExternalLink className="w-3 h-3" />
+                </a>
+                <a
+                  href="mailto:support@shatmasr.com?subject=دعم فني - شات مصر"
+                  className="py-2 px-2 rounded-xl bg-[#F0EBFF] hover:bg-[#e5dcff] border border-[#DDD0FF] text-[#4C2A9E] text-[11px] font-black flex items-center justify-center gap-1 transition"
+                >
+                  <span>إيميل</span>
+                  <ExternalLink className="w-3 h-3" />
+                </a>
+              </div>
+
+              <div className="pt-2 border-t border-slate-200/80 space-y-2">
+                <p className="text-[11px] font-black text-slate-800">ابعت مشكلتك مباشرة للإدارة:</p>
+                <select
+                  value={supportReason}
+                  onChange={(e) => setSupportReason(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl bg-white border border-slate-200 text-xs font-bold text-slate-800 focus:outline-none focus:border-indigo-400"
+                >
+                  <option value="مشكلة تقنية في التطبيق">مشكلة تقنية في التطبيق</option>
+                  <option value="مشكلة في الاتصال أو الصوت">مشكلة في الاتصال أو الصوت</option>
+                  <option value="استفسار عن الشحن أو VIP">استفسار عن الشحن أو VIP</option>
+                  <option value="بلاغ أو شكوى عامة">بلاغ أو شكوى عامة</option>
+                </select>
+                <textarea
+                  value={supportMessage}
+                  onChange={(e) => setSupportMessage(e.target.value)}
+                  rows={2}
+                  placeholder="اكتب تفاصيل المشكلة وسنقوم بالرد عليك وحلها فوراً..."
+                  className="w-full px-3 py-2 rounded-xl bg-white border border-slate-200 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:border-indigo-400 resize-none"
+                />
+                <button
+                  type="button"
+                  disabled={isSendingSupport || !supportMessage.trim()}
+                  onClick={async () => {
+                    if (!supportMessage.trim() || isSendingSupport) return;
+                    setIsSendingSupport(true);
+                    try {
+                      await submitUserReport({
+                        reporterId: currentUser.id,
+                        reporterName: currentUser.name,
+                        reportedUserId: 'platform_support',
+                        reportedUserName: 'الدعم الفني لشات مصر',
+                        reason: supportReason,
+                        details: supportMessage.trim(),
+                        timestamp: Date.now(),
+                      });
+                      setSupportMessage('');
+                      toast.success('تم إرسال رسالتك إلى فريق الدعم الفني بنجاح ✅');
+                    } catch {
+                      toast.error('تعذر إرسال الرسالة حالياً، يرجى المحاولة مرة أخرى');
+                    } finally {
+                      setIsSendingSupport(false);
+                    }
+                  }}
+                  className="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-black flex items-center justify-center gap-1.5 cursor-pointer transition"
+                >
+                  <Send className="w-3.5 h-3.5" />
+                  <span>{isSendingSupport ? 'جاري الإرسال...' : 'إرسال المشكلة للدعم'}</span>
+                </button>
               </div>
             </div>
 

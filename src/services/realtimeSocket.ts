@@ -58,6 +58,7 @@ class RealtimeSocketManager {
   private latestRoomLocks: Record<string, boolean> = {};
   private statusListeners: Set<(connected: boolean) => void> = new Set();
   private connectionStateListeners: Set<(state: 'connected' | 'reconnecting' | 'disconnected') => void> = new Set();
+  private reconnectSuccessListeners: Set<() => void> = new Set();
   private cumulativeVisitorsListeners: Set<(count: number) => void> = new Set();
   private adminReportListeners: Set<(report: any) => void> = new Set();
   private callSignalListeners: Set<(signal: any) => void> = new Set();
@@ -74,7 +75,63 @@ class RealtimeSocketManager {
   private isConnectedState = false;
   private connectionState: 'connected' | 'reconnecting' | 'disconnected' = 'disconnected';
   private reconnectAttempts = 0;
+  private consecutiveFailures = 0;
+  private wasDisconnected = false;
+  private heartbeatTimer: any = null;
+  private tokenProvider: ((forceRefresh?: boolean) => Promise<string | null>) | null = null;
+  private networkRecoveryHandler: (() => Promise<void>) | null = null;
+  private visibilityBound = false;
   private latestCumulativeVisitorsCount = 15480;
+
+  setTokenProvider(provider: (forceRefresh?: boolean) => Promise<string | null>) {
+    this.tokenProvider = provider;
+  }
+
+  setNetworkRecoveryHandler(handler: () => Promise<void>) {
+    this.networkRecoveryHandler = handler;
+  }
+
+  async getValidToken(forceRefresh: boolean = false): Promise<string | null> {
+    if (!this.tokenProvider) return null;
+    try {
+      return await Promise.race([
+        this.tokenProvider(forceRefresh),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), 2000)),
+      ]);
+    } catch {
+      return null;
+    }
+  }
+
+  async refreshTokenIfNeeded(forceRefresh: boolean = true): Promise<string | null> {
+    const token = await this.getValidToken(forceRefresh);
+    if (token && this.socket && this.socket.readyState === WebSocket.OPEN) {
+      this.send('TOKEN_REFRESH', { token, userId: this.currentUser?.id });
+    }
+    return token;
+  }
+
+  async apiFetchWithRefresh(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
+    const buildHeaders = (token: string | null) => {
+      const headers = new Headers(init.headers || {});
+      if (token && !headers.has('Authorization')) {
+        headers.set('Authorization', `Bearer ${token}`);
+      }
+      return headers;
+    };
+
+    const initialToken = await this.getValidToken(false);
+    let response = await fetch(input, { ...init, headers: buildHeaders(initialToken) });
+    if (response.status === 401) {
+      const freshToken = await this.getValidToken(true);
+      if (freshToken) {
+        const retryHeaders = new Headers(init.headers || {});
+        retryHeaders.set('Authorization', `Bearer ${freshToken}`);
+        response = await fetch(input, { ...init, headers: retryHeaders });
+      }
+    }
+    return response;
+  }
 
   isConnected(): boolean {
     return this.isConnectedState && this.socket !== null && this.socket.readyState === WebSocket.OPEN;
@@ -102,6 +159,13 @@ class RealtimeSocketManager {
     };
   }
 
+  subscribeToReconnectSuccess(callback: () => void): () => void {
+    this.reconnectSuccessListeners.add(callback);
+    return () => {
+      this.reconnectSuccessListeners.delete(callback);
+    };
+  }
+
   private notifyStatusListeners(status: boolean) {
     this.connectionState = status ? 'connected' : (this.reconnectAttempts > 0 ? 'reconnecting' : 'disconnected');
     this.connectionStateListeners.forEach((cb) => {
@@ -118,10 +182,48 @@ class RealtimeSocketManager {
     });
   }
 
-  connect(user?: User) {
+  private startHeartbeat() {
+    this.stopHeartbeat();
+    this.heartbeatTimer = setInterval(() => {
+      if (this.socket && this.socket.readyState === WebSocket.OPEN) {
+        this.send('HEARTBEAT', { userId: this.currentUser?.id, timestamp: Date.now() });
+        this.send('PING', { timestamp: Date.now() });
+      }
+    }, 10000);
+  }
+
+  private stopHeartbeat() {
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
+  }
+
+  private bindVisibilityReconnect() {
+    if (this.visibilityBound || typeof document === 'undefined') return;
+    this.visibilityBound = true;
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') {
+        if (this.socket && this.socket.readyState === WebSocket.OPEN) {
+          this.send('HEARTBEAT', { userId: this.currentUser?.id, timestamp: Date.now() });
+        } else if (this.currentUser) {
+          this.connect(this.currentUser);
+        }
+      }
+    });
+    window.addEventListener('online', () => {
+      if (this.currentUser && (!this.socket || this.socket.readyState !== WebSocket.OPEN)) {
+        this.connect(this.currentUser);
+      }
+    });
+  }
+
+  async connect(user?: User) {
     const prevUser = this.currentUser;
     if (user) this.currentUser = user;
     if (typeof window === 'undefined') return;
+    this.bindVisibilityReconnect();
+
     if (this.socket && this.socket.readyState === WebSocket.OPEN) {
       if (
         user &&
@@ -139,8 +241,13 @@ class RealtimeSocketManager {
     if (this.socket && this.socket.readyState === WebSocket.CONNECTING) {
       return;
     }
+    if (this.isConnecting) return;
 
     this.isConnecting = true;
+
+    // Refresh Firebase ID token automatically before every connection attempt
+    const freshToken = await this.getValidToken(this.consecutiveFailures > 0);
+
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const host = window.location.host;
     const wsUrl = `${protocol}//${host}/ws`;
@@ -152,10 +259,18 @@ class RealtimeSocketManager {
 
       this.socket.onopen = () => {
         console.log('[RealtimeSocket] Connected to real-time server 🚀');
+        const reconnected = this.wasDisconnected;
         this.isConnecting = false;
         this.isConnectedState = true;
         this.reconnectAttempts = 0;
+        this.consecutiveFailures = 0;
+        this.wasDisconnected = false;
         this.notifyStatusListeners(true);
+        this.startHeartbeat();
+
+        if (freshToken) {
+          this.send('TOKEN_REFRESH', { token: freshToken, userId: this.currentUser?.id });
+        }
 
         // Register user
         if (this.currentUser) {
@@ -165,6 +280,14 @@ class RealtimeSocketManager {
         // Rejoin room if was in one
         if (this.currentRoomId && this.currentUser) {
           this.send('JOIN_ROOM', { roomId: this.currentRoomId, user: this.currentUser });
+        }
+
+        if (reconnected) {
+          this.reconnectSuccessListeners.forEach((cb) => {
+            try {
+              cb();
+            } catch {}
+          });
         }
       };
 
@@ -181,14 +304,21 @@ class RealtimeSocketManager {
         this.socket = null;
         this.isConnecting = false;
         this.isConnectedState = false;
+        this.wasDisconnected = true;
+        this.stopHeartbeat();
         this.reconnectAttempts += 1;
-        // Exponential backoff: 1s -> 2s -> 4s -> 8s -> 16s -> capped at 30s
-        const backoffMs = Math.min(30000, 1000 * Math.pow(2, Math.min(5, this.reconnectAttempts - 1)));
+        this.consecutiveFailures += 1;
         this.notifyStatusListeners(false);
+
+        if (this.consecutiveFailures >= 3 && this.networkRecoveryHandler) {
+          this.networkRecoveryHandler().catch(() => {});
+        }
+
+        // Fixed 5-second Auto-Reconnect timer (never stays stuck offline)
         clearTimeout(this.reconnectTimer);
         this.reconnectTimer = setTimeout(() => {
           this.connect();
-        }, backoffMs);
+        }, 5000);
       };
 
       this.socket.onerror = (err) => {
@@ -200,7 +330,13 @@ class RealtimeSocketManager {
       console.warn('[RealtimeSocket] Failed to create socket:', e);
       this.isConnecting = false;
       this.isConnectedState = false;
+      this.wasDisconnected = true;
+      this.consecutiveFailures += 1;
       this.notifyStatusListeners(false);
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = setTimeout(() => {
+        this.connect();
+      }, 5000);
     }
   }
 
@@ -217,6 +353,17 @@ class RealtimeSocketManager {
     const { type } = action;
 
     switch (type) {
+      case 'PONG':
+      case 'HEARTBEAT_ACK':
+      case 'TOKEN_REFRESH_ACK': {
+        this.consecutiveFailures = 0;
+        break;
+      }
+
+      case 'AUTH_EXPIRED': {
+        this.refreshTokenIfNeeded(true).catch(() => {});
+        break;
+      }
       case 'ROOM_HISTORY': {
         const { roomId, messages } = action;
         const listeners = this.historyListeners.get(roomId);

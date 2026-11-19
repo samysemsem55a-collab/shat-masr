@@ -7,14 +7,14 @@ import {
   Radio,
   MessageCircle,
   UserPlus,
-  Camera,
   ShieldCheck,
   LogOut,
   MoreVertical,
   ShoppingBag,
   Trophy,
   Moon,
-  Sun
+  Sun,
+  LifeBuoy
 } from 'lucide-react';
 import { User, UnreadSenderSummary } from '../types/chat';
 import { isUserAdminOrOwner } from '../data/seedData';
@@ -24,7 +24,7 @@ import { PWAInstallButton } from './PWAInstallButton';
 import { toast } from 'sonner';
 import { VerifiedBadge } from '../utils/verifiedBadge';
 import { realtimeSocket } from '../services/realtimeSocket';
-import appBrandIcon from '../assets/images/shat_masr_icon_1794650535035.jpg';
+import appBrandIcon from '../assets/images/shat_masr_official_icon.png';
 
 interface HeaderProps {
   currentUser: User;
@@ -49,6 +49,7 @@ interface HeaderProps {
   onOpenMessagesTab?: () => void;
   isDarkMode?: boolean;
   onToggleDarkMode?: () => void;
+  onOpenSupport?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = React.memo(({
@@ -64,7 +65,6 @@ export const Header: React.FC<HeaderProps> = React.memo(({
   onlineUsersCount,
   onOpenRadio,
   isRadioPlaying,
-  onAvatarChanged,
   onOpenAdmin,
   onLogout,
   unreadMessagesBySender = [],
@@ -73,10 +73,10 @@ export const Header: React.FC<HeaderProps> = React.memo(({
   onClearAllUnreadMessages,
   onOpenMessagesTab,
   isDarkMode = false,
-  onToggleDarkMode
+  onToggleDarkMode,
+  onOpenSupport
 }) => {
   const [isMoreMenuOpen, setIsMoreMenuOpen] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const moreMenuRef = useRef<HTMLDivElement>(null);
   const [isBrowserOnline, setIsBrowserOnline] = useState<boolean>(() =>
     typeof navigator !== 'undefined' ? navigator.onLine !== false : true
@@ -137,31 +137,9 @@ export const Header: React.FC<HeaderProps> = React.memo(({
     } catch {}
   };
 
-  const handleAvatarFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file && onAvatarChanged) {
-      const reader = new FileReader();
-      reader.onload = () => {
-        if (typeof reader.result === 'string') {
-          onAvatarChanged(reader.result);
-        }
-      };
-      reader.readAsDataURL(file);
-    }
-  };
-
   return (
     <header dir="rtl" className="sticky top-0 z-[50] bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-slate-200/90 dark:border-slate-800 px-2 sm:px-5 py-2 pt-[calc(env(safe-area-inset-top,0px)+0.5rem)] shadow-sm transition-colors duration-300">
       <div className="max-w-7xl mx-auto flex items-center justify-between gap-1.5 sm:gap-2">
-        
-        {/* Hidden File Input for Direct Avatar Upload */}
-        <input 
-          type="file" 
-          ref={fileInputRef} 
-          accept="image/*" 
-          className="hidden" 
-          onChange={handleAvatarFileChange} 
-        />
 
         {/* Primary Header Row: Profile + Desktop Brand/Pills + Symmetrical Icon Toolbar */}
         <div className="flex items-center justify-between gap-1.5 sm:gap-2 min-w-0 w-full flex-1">
@@ -171,7 +149,7 @@ export const Header: React.FC<HeaderProps> = React.memo(({
             
             {/* Integrated User Profile Card */}
             <div className="flex items-center gap-1.5 sm:gap-2 p-1 pl-2 sm:pl-2.5 rounded-2xl bg-slate-50 hover:bg-slate-100/80 border border-slate-200 transition min-w-0 max-w-full sm:max-w-[240px] md:max-w-none shrink">
-              {/* Avatar Wrapper with Self-Contained Status Dot & Quick Camera Trigger */}
+              {/* Avatar Wrapper with Status Dot (Camera upload lives exclusively in ProfileView) */}
               <div className="relative shrink-0">
                 <AvatarWithFrame
                   user={currentUser}
@@ -180,14 +158,6 @@ export const Header: React.FC<HeaderProps> = React.memo(({
                   onClick={onOpenProfile}
                   title={`عرض الملف الشخصي: ${currentUser.name}`}
                 />
-                <button
-                  type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  title="تغيير الصورة الشخصية مباشرة"
-                  className="absolute -bottom-0.5 -left-1 w-[18px] h-[18px] bg-indigo-600 hover:bg-indigo-500 text-white rounded-full flex items-center justify-center shadow-xs border-[1.5px] border-white transition-transform active:scale-90 cursor-pointer z-20"
-                >
-                  <Camera className="w-2.5 h-2.5" />
-                </button>
               </div>
 
               {/* Username right beside avatar, and unified live availability status underneath */}
@@ -258,7 +228,7 @@ export const Header: React.FC<HeaderProps> = React.memo(({
               <img
                 src={appBrandIcon}
                 alt="شات مصر"
-                className="w-6 h-6 rounded-lg object-cover shadow-sm shrink-0 border border-indigo-200"
+                className="w-7 h-7 object-contain shrink-0"
               />
               <span className="text-xs sm:text-sm font-black text-slate-900 whitespace-nowrap">
                 شات مصر
@@ -528,6 +498,17 @@ export const Header: React.FC<HeaderProps> = React.memo(({
                     <Share2 className="w-3.5 h-3.5 text-indigo-600" />
                     <span>مشاركة الرابط</span>
                   </button>
+
+                  {onOpenSupport && (
+                    <button
+                      type="button"
+                      onClick={onOpenSupport}
+                      className="w-full px-3 py-2 rounded-xl hover:bg-emerald-50 text-emerald-700 text-xs font-bold flex items-center gap-2 transition"
+                    >
+                      <LifeBuoy className="w-3.5 h-3.5 text-emerald-600" />
+                      <span>الدعم والتواصل</span>
+                    </button>
+                  )}
 
                   {onToggleDarkMode && (
                     <button
