@@ -1,6 +1,7 @@
 import React from 'react';
 import { User } from '../types/chat';
 import { getRankDisplayMeta, hasPrivilegedRank } from '../utils/userRanks';
+import { isUserTrulyOnline } from '../utils/presenceStatus';
 
 interface AvatarWithFrameProps {
   user?: Partial<User> | null;
@@ -90,15 +91,13 @@ export const AvatarWithFrame: React.FC<AvatarWithFrameProps> = ({
         </div>
       )}
 
-      {showOnlineDot && (
+      {showOnlineDot && isUserTrulyOnline(user) && (
         <span
           className={`absolute bottom-0 right-0 rounded-full border-white shadow-xs z-10 ${dims.dot} ${
             user?.status === 'busy'
               ? 'bg-amber-500'
               : user?.status === 'dnd'
               ? 'bg-rose-500'
-              : user?.status === 'offline'
-              ? 'bg-slate-400'
               : 'bg-emerald-500'
           }`}
         />

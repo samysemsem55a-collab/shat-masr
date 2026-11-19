@@ -27,6 +27,8 @@ export interface User {
   fontPreference: 'cairo' | 'tajawal' | 'amiri';
   isOnline: boolean;
   status: 'online' | 'busy' | 'dnd' | 'away' | 'in_mic' | 'offline';
+  lastSeen?: number;
+  currentRoom?: string | null;
   joinedAt: string;
   gender: 'male' | 'female';
   age?: number;

@@ -80,10 +80,13 @@ import {
   loadUserThemeSettings,
   updatePresenceCurrentRoom,
   markUserPresenceOffline,
+  subscribeToAllRoomsOnlineCounts,
+  subscribeToRegisteredUsersCount,
   createDailyBackupSnapshot,
   grantUserXp,
   AppUpdateNotice
 } from './services/firebase';
+import { isUserTrulyOnline } from './utils/presenceStatus';
 
 function isNewerVersion(remote: string, local: string): boolean {
   const rParts = remote.split('.').map((n) => parseInt(n, 10) || 0);
@@ -337,6 +340,24 @@ export default function App() {
     } catch {}
     return Array.from(map.values());
   });
+  const [registeredUsersCount, setRegisteredUsersCount] = useState<number>(() => {
+    try {
+      const saved = Number(localStorage.getItem('shat_masr_registered_users_count') || '0');
+      return saved > 0 ? saved : 1;
+    } catch {
+      return 1;
+    }
+  });
+  const [allRegisteredUsers, setAllRegisteredUsers] = useState<User[]>([]);
+
+  const trulyOnlineUsers = useMemo(() => {
+    const now = Date.now();
+    return globalOnlineUsers.filter((u) => {
+      if (!u || !u.id) return false;
+      if (u.id === currentUser.id) return currentUser.status !== 'offline';
+      return isUserTrulyOnline(u, now);
+    });
+  }, [globalOnlineUsers, currentUser.id, currentUser.status]);
 
   // Friend Requests State
   const [pendingFriendRequests, setPendingFriendRequests] = useState<FriendRequest[]>([]);
@@ -905,9 +926,35 @@ export default function App() {
       });
     });
 
+    // Real-time total registered members counter (users collection) + cached against transient drops
+    const unsubRegisteredUsers = subscribeToRegisteredUsersCount((count, users) => {
+      setRegisteredUsersCount((prev) => (count >= 1 && prev !== count ? count : prev));
+      if (users && users.length > 0) {
+        setAllRegisteredUsers(users);
+      }
+    });
+
+    // Real-time per-room online users counts across ALL rooms (from presence/{uid}.currentRoom)
+    const unsubRoomOnlineCounts = subscribeToAllRoomsOnlineCounts(activeUser.id, (countsMap) => {
+      setRooms((prev) => {
+        let changed = false;
+        const next = prev.map((r) => {
+          const nextCount = Math.max(0, Number(countsMap[r.id]) || 0);
+          if (r.activeUsers !== nextCount) {
+            changed = true;
+            return { ...r, activeUsers: nextCount };
+          }
+          return r;
+        });
+        return changed ? next : prev;
+      });
+    });
+
     return () => {
       unsubGlobal();
       unsubFirestorePresence();
+      unsubRegisteredUsers();
+      unsubRoomOnlineCounts();
       unsubReconnect();
       unsubAdmin();
       unsubFriend();
@@ -1335,7 +1382,7 @@ export default function App() {
     // Join room on real-time server
     realtimeSocket.joinRoom(activeRoom.id, currentUser);
 
-    // Subscribe to server-side room presence (real live users)
+    // Subscribe to server-side + Firestore room presence (real live users inside THIS room only)
     const unsubPresence = realtimeSocket.subscribeToPresence(activeRoom.id, (count, occupants) => {
       setRoomActiveCount(prev => (prev === count ? prev : count));
       setRoomActiveUsers(prev => (areUserListsEqual(prev, occupants) ? prev : occupants));
@@ -1345,6 +1392,29 @@ export default function App() {
           if (r.id === activeRoom.id && r.activeUsers !== count) {
             changed = true;
             return { ...r, activeUsers: count };
+          }
+          return r;
+        });
+        return changed ? next : prev;
+      });
+    });
+
+    const unsubRoomFirestorePresence = subscribeToRoomPresence(activeRoom.id, currentUser, (fsCount, fsOccupants) => {
+      setRoomActiveUsers((prev) => {
+        const map = new Map<string, User>();
+        fsOccupants.forEach((u) => {
+          if (u && u.id) map.set(u.id, u);
+        });
+        const merged = Array.from(map.values());
+        return areUserListsEqual(prev, merged) ? prev : merged;
+      });
+      setRoomActiveCount((prev) => (prev === fsCount ? prev : fsCount));
+      setRooms((prev) => {
+        let changed = false;
+        const next = prev.map((r) => {
+          if (r.id === activeRoom.id && r.activeUsers !== fsCount) {
+            changed = true;
+            return { ...r, activeUsers: fsCount };
           }
           return r;
         });
@@ -1524,6 +1594,7 @@ export default function App() {
       welcomedPublicRoomKeysRef.current.delete(sessionKey);
       realtimeSocket.leaveRoom(activeRoom.id, currentUser.id);
       unsubPresence();
+      unsubRoomFirestorePresence();
       unsubMessages();
       unsubReactions();
       unsubRead();
@@ -2627,7 +2698,7 @@ export default function App() {
           onOpenLeaderboard={openLeaderboard}
           onOpenAdmin={openAdmin}
           pendingFriendRequestsCount={pendingFriendRequests.length}
-          onlineUsersCount={globalOnlineUsers.length}
+          onlineUsersCount={Math.max(1, trulyOnlineUsers.length)}
           onOpenRadio={openRadio}
           isRadioPlaying={isRadioPlaying}
           onLogout={handleLogout}
@@ -2675,7 +2746,7 @@ export default function App() {
           <RoomsView
             rooms={rooms}
             currentUser={currentUser}
-            onlineUsers={globalOnlineUsers}
+            onlineUsers={trulyOnlineUsers}
             onSelectRoom={handleSelectRoom}
             onOpenPrivateChatWith={handleOpenPrivateChatWith}
             onOpenUserProfile={(u) => setSelectedProfileUser(u)}
@@ -2683,7 +2754,8 @@ export default function App() {
             onOpenVip={openVip}
             onOpenLeaderboard={openLeaderboard}
             onOpenMissions={openMissions}
-            totalActiveUsersCount={globalOnlineUsers.length}
+            totalActiveUsersCount={trulyOnlineUsers.length}
+            registeredUsersCount={Math.max(registeredUsersCount, trulyOnlineUsers.length)}
             cumulativeVisitorsCount={cumulativeVisitorsCount}
             onOpenOnlineUsers={openOnlineUsers}
             onClaimSharedRewardCoins={handleClaimSharedRewardCoins}
@@ -2734,7 +2806,8 @@ export default function App() {
                     setTargetChatUser(null);
                     setIsInsidePrivateChat(false);
                   }}
-                  globalOnlineUsers={globalOnlineUsers}
+                  globalOnlineUsers={trulyOnlineUsers}
+                  allRegisteredUsers={allRegisteredUsers}
                   onChatActiveChange={setIsInsidePrivateChat}
                   onOpenUserProfile={(u) => setSelectedProfileUser(u)}
                   onUpdateUser={(updated) => {
@@ -2858,7 +2931,8 @@ export default function App() {
         currentUser={currentUser}
         roomTitle={activeRoom?.title}
         roomUsers={roomActiveUsers}
-        allActiveUsers={globalOnlineUsers}
+        allActiveUsers={trulyOnlineUsers}
+        allRegisteredUsers={allRegisteredUsers}
         onSelectUserForProfile={(user) => {
           setIsOnlineUsersOpen(false);
           setSelectedProfileUser(user);
@@ -2888,7 +2962,8 @@ export default function App() {
                 setTargetChatUser(null);
                 setIsInsidePrivateChat(false);
               }}
-              globalOnlineUsers={globalOnlineUsers}
+              globalOnlineUsers={trulyOnlineUsers}
+              allRegisteredUsers={allRegisteredUsers}
               onChatActiveChange={setIsInsidePrivateChat}
               onOpenUserProfile={(u) => {
                 setIsPrivateChatDrawerOpen(false);
@@ -2918,6 +2993,8 @@ export default function App() {
       <UserProfileModal
         user={selectedProfileUser}
         currentUser={currentUser}
+        onlineUsers={trulyOnlineUsers}
+        allRegisteredUsers={allRegisteredUsers}
         onClose={() => setSelectedProfileUser(null)}
         onOpenPrivateChatWith={handleOpenPrivateChatWith}
         onSendGiftToUser={handleSendGiftToUser}
