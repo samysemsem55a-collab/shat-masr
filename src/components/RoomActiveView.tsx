@@ -1640,17 +1640,17 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
         </div>
       )}
 
-      {/* 4.1. Top Message Type Filter Bar (Modern Light Theme) */}
-      <div className="bg-white/90 backdrop-blur-md border-b border-slate-200/80 px-2.5 py-1.5 flex items-center justify-between gap-1 overflow-x-auto scrollbar-none shrink-0 z-10 shadow-xs">
-        <div className="flex items-center gap-1 text-[10px] sm:text-xs text-slate-500 font-bold shrink-0">
+      {/* 4.1. Top Message Type Filter Bar (Compact, Non-Overlapping, Wrapping) */}
+      <div className="bg-white/95 backdrop-blur-md border-b border-slate-200/80 px-2.5 py-1.5 flex flex-wrap items-center justify-center sm:justify-between gap-[6px] overflow-visible shrink-0 z-10 shadow-xs">
+        <div className="hidden sm:flex items-center gap-1 text-[11px] text-slate-500 font-bold shrink-0">
           <Filter className="w-3.5 h-3.5 text-amber-500" />
-          <span className="hidden xs:inline">تصفية العرض:</span>
+          <span>تصفية العرض:</span>
         </div>
-        <div className="flex items-center gap-1 sm:gap-1.5 overflow-x-auto scrollbar-none">
+        <div className="flex flex-wrap items-center justify-center gap-[6px] w-full sm:w-auto">
           <button
             type="button"
             onClick={() => setMessageFilter('all')}
-            className={`px-2.5 py-1 rounded-xl text-[10.5px] sm:text-[11.5px] font-black transition-all active:scale-95 whitespace-nowrap cursor-pointer ${
+            className={`px-[9px] py-[4px] rounded-[16px] text-[11.5px] leading-tight font-black transition-all active:scale-95 whitespace-nowrap shrink-0 cursor-pointer ${
               messageFilter === 'all'
                 ? 'bg-gradient-to-r from-amber-500 to-amber-600 text-white shadow-sm'
                 : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
@@ -1661,7 +1661,7 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
           <button
             type="button"
             onClick={() => setMessageFilter('messages')}
-            className={`px-2.5 py-1 rounded-xl text-[10.5px] sm:text-[11.5px] font-black transition-all active:scale-95 whitespace-nowrap cursor-pointer ${
+            className={`px-[9px] py-[4px] rounded-[16px] text-[11.5px] leading-tight font-black transition-all active:scale-95 whitespace-nowrap shrink-0 cursor-pointer ${
               messageFilter === 'messages'
                 ? 'bg-gradient-to-r from-amber-500 to-amber-600 text-white shadow-sm'
                 : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
@@ -1672,7 +1672,7 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
           <button
             type="button"
             onClick={() => setMessageFilter('images')}
-            className={`px-2.5 py-1 rounded-xl text-[10.5px] sm:text-[11.5px] font-black transition-all active:scale-95 whitespace-nowrap cursor-pointer ${
+            className={`px-[9px] py-[4px] rounded-[16px] text-[11.5px] leading-tight font-black transition-all active:scale-95 whitespace-nowrap shrink-0 cursor-pointer ${
               messageFilter === 'images'
                 ? 'bg-gradient-to-r from-amber-500 to-amber-600 text-white shadow-sm'
                 : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
@@ -1683,13 +1683,13 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
           <button
             type="button"
             onClick={() => setMessageFilter('gifts')}
-            className={`px-2.5 py-1 rounded-xl text-[10.5px] sm:text-[11.5px] font-black transition-all active:scale-95 whitespace-nowrap cursor-pointer ${
+            className={`px-[9px] py-[4px] rounded-[16px] text-[11.5px] leading-tight font-black transition-all active:scale-95 whitespace-nowrap shrink-0 cursor-pointer ${
               messageFilter === 'gifts'
                 ? 'bg-gradient-to-r from-amber-500 to-amber-600 text-white shadow-sm'
                 : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
             }`}
           >
-            الهدايا فقط 🎁
+            الهدايا 🎁
           </button>
         </div>
       </div>
@@ -2417,8 +2417,8 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
                     })}
                   </div>
 
-                  {/* Quick Actions (Timestamp, Read Status, Reply, Pin for Moderators) */}
-                  <div className="flex items-center gap-1.5 text-[10px] opacity-90 sm:opacity-0 sm:group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+                  {/* Quick Actions (Timestamp, Read Status, Reply, Translate, Pin) */}
+                  <div className="flex items-center gap-1.5 text-[10px] opacity-90 sm:opacity-85 sm:group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
                     <span className={`font-bold tabular-nums ${
                       isDarkRoomBg
                         ? 'text-slate-100 chat-text-outline-dark'

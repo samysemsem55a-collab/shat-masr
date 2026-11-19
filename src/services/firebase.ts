@@ -315,16 +315,22 @@ export function subscribeToRoomPresence(
         (snap) => {
           const now = Date.now();
           const activeDocIds = new Set<string>();
-          const isApiConnected =
-            realtimeSocket.getConnectionState() === 'connected' &&
-            (typeof navigator === 'undefined' || navigator.onLine !== false);
+          const isBrowserOnline =
+            typeof navigator === 'undefined' || navigator.onLine !== false;
           snap.docs.forEach((docSnap) => {
             const data = docSnap.data();
+            if (data.status === 'offline' || data.isOnline === false) {
+              roomLastSeenMap.delete(docSnap.id);
+              mergedMap.delete(docSnap.id);
+              return;
+            }
             const lastSeen =
-              resolveTimestampMs(data.lastSeen ?? data.updatedAt) ?? now;
-            if (now - lastSeen <= PRESENCE_OFFLINE_TIMEOUT_MS || !isApiConnected) {
+              resolveTimestampMs(data.lastSeenMs ?? data.lastSeen ?? data.updatedAt) || 0;
+            const isFresh = lastSeen > 0 && now - lastSeen <= PRESENCE_OFFLINE_TIMEOUT_MS;
+            if (isFresh || !isBrowserOnline) {
+              const effectiveSeen = lastSeen || now;
               activeDocIds.add(docSnap.id);
-              roomLastSeenMap.set(docSnap.id, lastSeen);
+              roomLastSeenMap.set(docSnap.id, effectiveSeen);
               mergedMap.set(docSnap.id, {
                 id: docSnap.id,
                 name: data.name || 'عضو',
@@ -335,7 +341,7 @@ export function subscribeToRoomPresence(
                 badges: Array.isArray(data.badges) ? data.badges : [],
                 status: data.status || 'online',
                 isOnline: true,
-                lastSeen,
+                lastSeen: effectiveSeen,
                 isBanned: !!data.isBanned,
                 isMuted: !!data.isMuted,
               } as User);
@@ -344,7 +350,7 @@ export function subscribeToRoomPresence(
               mergedMap.delete(docSnap.id);
             }
           });
-          if (isApiConnected && !snap.metadata.fromCache) {
+          if (isBrowserOnline && !snap.metadata.fromCache) {
             Array.from(mergedMap.keys()).forEach((id) => {
               if (id !== user.id && !activeDocIds.has(id)) {
                 roomLastSeenMap.delete(id);
@@ -360,10 +366,9 @@ export function subscribeToRoomPresence(
       );
 
       fsSweep = setInterval(() => {
-        const isApiConnected =
-          realtimeSocket.getConnectionState() === 'connected' &&
-          (typeof navigator === 'undefined' || navigator.onLine !== false);
-        if (!isApiConnected) return;
+        const isBrowserOnline =
+          typeof navigator === 'undefined' || navigator.onLine !== false;
+        if (!isBrowserOnline) return;
         const now = Date.now();
         let changed = false;
         roomLastSeenMap.forEach((ts, id) => {
@@ -477,10 +482,16 @@ export function subscribeToGlobalPresence(
 
   // Helper to emit merged live presence only when visible user list/fields actually change
   const emitPresence = () => {
+    const nowTs = Date.now();
     if (user && user.id && !liveUsersMap.has(user.id)) {
-      liveUsersMap.set(user.id, { ...user, isOnline: true });
+      liveUsersMap.set(user.id, { ...user, isOnline: true, lastSeen: nowTs });
     }
-    const list = Array.from(liveUsersMap.values());
+    const list = Array.from(liveUsersMap.values()).filter((u) => {
+      if (!u || !u.id) return false;
+      if (u.id === user?.id) return u.status !== 'offline';
+      const seen = resolveTimestampMs((u as any).lastSeenMs ?? u.lastSeen);
+      return u.isOnline === true && u.status !== 'offline' && typeof seen === 'number' && nowTs - seen <= PRESENCE_OFFLINE_TIMEOUT_MS;
+    });
     const sig = list
       .map(
         (u) =>
@@ -496,14 +507,18 @@ export function subscribeToGlobalPresence(
     onGlobalChange(list);
   };
 
-  // Pre-hydrate cached presence so temporary API/WS disconnects NEVER reset member count to 1
+  // Pre-hydrate ONLY fresh (<= 30s) cached presence so stale past users are NEVER counted as online
   try {
     const cachedRaw = localStorage.getItem(globalKey);
     if (cachedRaw) {
       const parsed = JSON.parse(cachedRaw);
+      const now = Date.now();
       if (Array.isArray(parsed)) {
         parsed.forEach((u: User) => {
-          if (u && u.id) liveUsersMap.set(u.id, { ...u, isOnline: true });
+          const seen = resolveTimestampMs((u as any)?.lastSeenMs ?? u?.lastSeen);
+          if (u && u.id && u.isOnline === true && u.status !== 'offline' && typeof seen === 'number' && now - seen <= PRESENCE_OFFLINE_TIMEOUT_MS) {
+            liveUsersMap.set(u.id, { ...u, isOnline: true, lastSeen: seen });
+          }
         });
       }
     }
@@ -511,7 +526,7 @@ export function subscribeToGlobalPresence(
 
   // Add initial self
   if (user && user.id) {
-    liveUsersMap.set(user.id, { ...user, isOnline: true });
+    liveUsersMap.set(user.id, { ...user, isOnline: true, lastSeen: Date.now() });
     emitPresence();
   }
 
@@ -521,6 +536,7 @@ export function subscribeToGlobalPresence(
   let heartbeatTimer: any = null;
   let sweepTimer: any = null;
   let visibilityHandler: (() => void) | null = null;
+  const rtdbTrackedIds = new Set<string>();
 
   if (db && user && user.id) {
     try {
@@ -562,6 +578,7 @@ export function subscribeToGlobalPresence(
           return;
         }
         const nowTs = Date.now();
+        liveUsersMap.set(user.id, { ...liveUsersMap.get(user.id), ...user, isOnline: true, lastSeen: nowTs });
         setDoc(userOnlineDoc, {
           ...onlinePayload,
           lastSeen: nowTs,
@@ -581,6 +598,15 @@ export function subscribeToGlobalPresence(
           lastSeenMs: nowTs,
           updatedAt: nowTs
         }, { merge: true }).catch(() => {});
+        if (rtdb) {
+          try {
+            update(ref(rtdb, `global_presence/${user.id}`), {
+              isOnline: true,
+              status: user.status || 'online',
+              lastSeen: nowTs
+            }).catch(() => {});
+          } catch {}
+        }
       };
 
       // Write presence immediately
@@ -599,26 +625,26 @@ export function subscribeToGlobalPresence(
         document.addEventListener('visibilitychange', visibilityHandler);
       }
 
-      // Listen to all online users in Firestore in real time (treat lastSeen > 30s as offline when connected)
+      // Listen to all online users in Firestore in real time (strict 30s freshness + isOnline === true)
       const onlineCol = collection(db, 'online_users');
       unsubFirestore = onSnapshot(onlineCol, (snap) => {
         const now = Date.now();
         const currentFsIds = new Set<string>();
-        const isApiConnected =
-          realtimeSocket.getConnectionState() === 'connected' &&
-          (typeof navigator === 'undefined' || navigator.onLine !== false);
+        const isBrowserOnline =
+          typeof navigator === 'undefined' || navigator.onLine !== false;
 
         snap.docs.forEach((docSnap) => {
           const data = docSnap.data();
-          if (data.status === 'offline' || data.isOnline === false) {
+          if (data.status === 'offline' || data.isOnline !== true) {
             firestoreTrackedIds.delete(docSnap.id);
             if (docSnap.id !== user.id) liveUsersMap.delete(docSnap.id);
             return;
           }
           const lastSeen =
-            resolveTimestampMs(data.lastSeen ?? data.updatedAt) ?? now;
-          // Timeout: treat users whose heartbeat/lastSeen is older than 30s as Offline ONLY when connected
-          if (now - lastSeen <= PRESENCE_OFFLINE_TIMEOUT_MS || !isApiConnected) {
+            resolveTimestampMs(data.lastSeenMs ?? data.lastSeen ?? data.updatedAt) || 0;
+          const isFresh = lastSeen > 0 && now - lastSeen <= PRESENCE_OFFLINE_TIMEOUT_MS;
+
+          if (isFresh || (!isBrowserOnline && lastSeen > 0)) {
             currentFsIds.add(docSnap.id);
             firestoreTrackedIds.add(docSnap.id);
             liveUsersMap.set(docSnap.id, {
@@ -658,19 +684,19 @@ export function subscribeToGlobalPresence(
           }
         });
 
-        // Remove stale offline docs ONLY when connected & fresh from server (never wipe cached count on API disconnect)
-        if (isApiConnected && !snap.metadata.fromCache) {
+        // Remove stale offline docs when connected & fresh from server
+        if (isBrowserOnline && !snap.metadata.fromCache) {
           Array.from(firestoreTrackedIds).forEach((trackedId) => {
             if (!currentFsIds.has(trackedId)) {
               firestoreTrackedIds.delete(trackedId);
-              if (trackedId !== user.id) {
+              if (trackedId !== user.id && !rtdbTrackedIds.has(trackedId)) {
                 liveUsersMap.delete(trackedId);
               }
             }
           });
           Array.from(liveUsersMap.entries()).forEach(([uid, u]) => {
             if (uid !== user.id && !currentFsIds.has(uid)) {
-              const seenTs = resolveTimestampMs(u.lastSeen);
+              const seenTs = resolveTimestampMs((u as any).lastSeenMs ?? u.lastSeen);
               if (!seenTs || now - seenTs > PRESENCE_OFFLINE_TIMEOUT_MS) {
                 liveUsersMap.delete(uid);
               }
@@ -683,19 +709,19 @@ export function subscribeToGlobalPresence(
         console.warn('Firestore online_users onSnapshot notice:', err);
       });
 
-      // Sweep stale users whose heartbeat stopped for > 30s (only when connected)
+      // Sweep stale users whose heartbeat stopped for > 30s
       sweepTimer = setInterval(() => {
-        const isApiConnected =
-          realtimeSocket.getConnectionState() === 'connected' &&
-          (typeof navigator === 'undefined' || navigator.onLine !== false);
-        if (!isApiConnected) return;
+        const isBrowserOnline =
+          typeof navigator === 'undefined' || navigator.onLine !== false;
+        if (!isBrowserOnline) return;
         const now = Date.now();
         let changed = false;
         Array.from(liveUsersMap.entries()).forEach(([uid, u]) => {
           if (uid === user.id) return;
-          const seenTs = resolveTimestampMs(u.lastSeen);
-          if (typeof seenTs === 'number' && now - seenTs > PRESENCE_OFFLINE_TIMEOUT_MS) {
+          const seenTs = resolveTimestampMs((u as any).lastSeenMs ?? u.lastSeen);
+          if (typeof seenTs !== 'number' || now - seenTs > PRESENCE_OFFLINE_TIMEOUT_MS) {
             firestoreTrackedIds.delete(uid);
+            rtdbTrackedIds.delete(uid);
             liveUsersMap.delete(uid);
             changed = true;
           }
@@ -707,17 +733,23 @@ export function subscribeToGlobalPresence(
     }
   }
 
-  // 2. Realtime Socket listener
+  // 2. Realtime Socket listener (also timestamps live active users with fresh lastSeen)
   const unsubSocket = realtimeSocket.subscribeToGlobalPresence((liveUsers) => {
     if (liveUsers && liveUsers.length > 0) {
+      const nowTs = Date.now();
       liveUsers.forEach(u => {
-        if (u && u.id) liveUsersMap.set(u.id, { ...u, isOnline: true });
+        if (u && u.id && u.status !== 'offline') {
+          const seen = resolveTimestampMs((u as any).lastSeenMs ?? u.lastSeen) || nowTs;
+          if (nowTs - seen <= PRESENCE_OFFLINE_TIMEOUT_MS) {
+            liveUsersMap.set(u.id, { ...liveUsersMap.get(u.id), ...u, isOnline: true, lastSeen: seen });
+          }
+        }
       });
       emitPresence();
     }
   });
 
-  // 3. RTDB Presence fallback
+  // 3. RTDB Presence fallback (with onDisconnect cleanup + freshness check)
   let rtdbCleanup: (() => void) | null = null;
   if (rtdb && user.id) {
     try {
@@ -743,13 +775,30 @@ export function subscribeToGlobalPresence(
 
       const unsubAll = onValue(allGlobalRef, (snap) => {
         const val = snap.val();
+        const nowTs = Date.now();
+        const nextRtdbIds = new Set<string>();
         if (val) {
           const list = Object.values(val) as User[];
           list.forEach(u => {
-            if (u && u.id) liveUsersMap.set(u.id, { ...u, isOnline: true });
+            if (u && u.id && u.isOnline !== false && u.status !== 'offline') {
+              const seen = resolveTimestampMs((u as any).lastSeenMs ?? u.lastSeen) || 0;
+              if (seen > 0 && nowTs - seen <= PRESENCE_OFFLINE_TIMEOUT_MS) {
+                nextRtdbIds.add(u.id);
+                rtdbTrackedIds.add(u.id);
+                liveUsersMap.set(u.id, { ...liveUsersMap.get(u.id), ...u, isOnline: true, lastSeen: seen });
+              }
+            }
           });
-          emitPresence();
         }
+        Array.from(rtdbTrackedIds).forEach((trackedId) => {
+          if (!nextRtdbIds.has(trackedId)) {
+            rtdbTrackedIds.delete(trackedId);
+            if (trackedId !== user.id && !firestoreTrackedIds.has(trackedId)) {
+              liveUsersMap.delete(trackedId);
+            }
+          }
+        });
+        emitPresence();
       });
 
       rtdbCleanup = () => {
@@ -3430,6 +3479,7 @@ export async function sendDirectMessage(
     stickerLabel: message.stickerLabel,
     stickerAnimation: message.stickerAnimation,
     gift: message.gift,
+    replyTo: message.replyTo,
     expiresAt: now + DM_MESSAGE_TTL_MS,
     createdAt: now,
     timestamp: now,
@@ -4577,10 +4627,9 @@ export function subscribeToAllRoomsOnlineCounts(
   const unsub = onSnapshot(
     presenceCol,
     (snap) => {
-      const isApiConnected =
-        realtimeSocket.getConnectionState() === 'connected' &&
-        (typeof navigator === 'undefined' || navigator.onLine !== false);
-      if (!isApiConnected && snap.empty && Object.keys(lastCachedCounts).length > 0) {
+      const isBrowserOnline =
+        typeof navigator === 'undefined' || navigator.onLine !== false;
+      if (!isBrowserOnline && snap.empty && Object.keys(lastCachedCounts).length > 0) {
         return;
       }
 
@@ -4590,13 +4639,13 @@ export function subscribeToAllRoomsOnlineCounts(
         const data = docSnap.data();
         const roomId = typeof data.currentRoom === 'string' ? data.currentRoom.trim() : '';
         if (!data.online || !roomId) return;
-        const lastSeenMs = resolveTimestampMs(data.lastSeenMs ?? data.lastSeen) ?? now;
-        if (!isApiConnected || docSnap.id === currentUserId || now - lastSeenMs <= PRESENCE_OFFLINE_TIMEOUT_MS) {
-          latestPresenceEntries.set(docSnap.id, { currentRoom: roomId, lastSeenMs });
+        const lastSeenMs = resolveTimestampMs(data.lastSeenMs ?? data.lastSeen) || 0;
+        if (docSnap.id === currentUserId || (lastSeenMs > 0 && now - lastSeenMs <= PRESENCE_OFFLINE_TIMEOUT_MS) || !isBrowserOnline) {
+          latestPresenceEntries.set(docSnap.id, { currentRoom: roomId, lastSeenMs: lastSeenMs || now });
         }
       });
 
-      recomputeAndEmit(isApiConnected && !snap.metadata.fromCache);
+      recomputeAndEmit(isBrowserOnline && !snap.metadata.fromCache);
     },
     (err) => {
       console.warn('Firestore presence room counts notice:', err);
@@ -4604,10 +4653,9 @@ export function subscribeToAllRoomsOnlineCounts(
   );
 
   const sweepTimer = setInterval(() => {
-    const isApiConnected =
-      realtimeSocket.getConnectionState() === 'connected' &&
-      (typeof navigator === 'undefined' || navigator.onLine !== false);
-    if (!isApiConnected) return;
+    const isBrowserOnline =
+      typeof navigator === 'undefined' || navigator.onLine !== false;
+    if (!isBrowserOnline) return;
     recomputeAndEmit(true);
   }, 10000);
 

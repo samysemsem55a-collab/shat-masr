@@ -946,7 +946,7 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
           <div className="text-right min-w-0">
             <div className="flex items-center gap-1 text-[10px] font-black text-teal-800">
               <span className="truncate">إجمالي الأعضاء</span>
-              {socketState !== 'connected' && (
+              {typeof navigator !== 'undefined' && navigator.onLine === false && socketState !== 'connected' && (
                 <span className="px-1.5 py-0.2 rounded-full bg-amber-100 border border-amber-300 text-amber-800 text-[9px] font-bold shrink-0">
                   جاري التحديث...
                 </span>

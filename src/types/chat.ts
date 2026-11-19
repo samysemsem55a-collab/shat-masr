@@ -240,8 +240,10 @@ export interface Message {
   };
   replyTo?: {
     id: string;
+    messageId?: string;
     senderName: string;
     content: string;
+    text?: string;
     type?: string;
   };
   expiresAt?: number;

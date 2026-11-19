@@ -182,7 +182,7 @@ export const Header: React.FC<HeaderProps> = React.memo(({
                   <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${
                     !isEffectiveOnline
                       ? 'bg-rose-500'
-                      : socketState === 'reconnecting'
+                      : !isBrowserOnline && socketState === 'reconnecting'
                       ? 'bg-amber-500 animate-pulse'
                       : currentUser.status === 'busy'
                       ? 'bg-amber-500'
@@ -195,7 +195,7 @@ export const Header: React.FC<HeaderProps> = React.memo(({
                   <span className={`truncate ${
                     !isEffectiveOnline
                       ? 'text-rose-600'
-                      : socketState === 'reconnecting'
+                      : !isBrowserOnline && socketState === 'reconnecting'
                       ? 'text-amber-600'
                       : currentUser.status === 'busy'
                       ? 'text-amber-600'
@@ -207,7 +207,7 @@ export const Header: React.FC<HeaderProps> = React.memo(({
                   }`}>
                     {!isEffectiveOnline
                       ? 'غير متصل'
-                      : socketState === 'reconnecting'
+                      : !isBrowserOnline && socketState === 'reconnecting'
                       ? 'جاري إعادة الاتصال...'
                       : currentUser.status === 'busy'
                       ? 'مشغول'

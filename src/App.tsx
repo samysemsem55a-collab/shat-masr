@@ -114,6 +114,7 @@ function areUserListsEqual(a: User[], b: User[]): boolean {
       u1.status !== u2.status ||
       u1.role !== u2.role ||
       u1.vipBadge !== u2.vipBadge ||
+      Boolean(u1.isOnline) !== Boolean(u2.isOnline) ||
       Boolean(u1.isBanned) !== Boolean(u2.isBanned) ||
       Boolean(u1.isMuted) !== Boolean(u2.isMuted)
     ) {
@@ -327,19 +328,28 @@ export default function App() {
   const [roomActiveUsers, setRoomActiveUsers] = useState<User[]>([]);
   const [roomActiveCount, setRoomActiveCount] = useState<number>(1);
   const [globalOnlineUsers, setGlobalOnlineUsers] = useState<User[]>(() => {
+    const now = Date.now();
     const map = new Map<string, User>();
-    map.set(currentUser.id, currentUser);
+    map.set(currentUser.id, { ...currentUser, isOnline: currentUser.status !== 'offline', lastSeen: now });
     try {
       const saved = localStorage.getItem('arab_chat_global_presence');
       if (saved) {
-        const parsed: Record<string, User> = JSON.parse(saved);
-        Object.values(parsed || {}).forEach((u) => {
-          if (u && u.id) map.set(u.id, u);
+        const parsed = JSON.parse(saved);
+        const items: User[] = Array.isArray(parsed) ? parsed : Object.values(parsed || {});
+        items.forEach((u) => {
+          if (u && u.id && u.id !== currentUser.id && isUserTrulyOnline(u, now)) {
+            map.set(u.id, u);
+          }
         });
       }
     } catch {}
     return Array.from(map.values());
   });
+  const [presenceClock, setPresenceClock] = useState<number>(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setPresenceClock(Date.now()), 10000);
+    return () => clearInterval(id);
+  }, []);
   const [registeredUsersCount, setRegisteredUsersCount] = useState<number>(() => {
     try {
       const saved = Number(localStorage.getItem('shat_masr_registered_users_count') || '0');
@@ -351,13 +361,13 @@ export default function App() {
   const [allRegisteredUsers, setAllRegisteredUsers] = useState<User[]>([]);
 
   const trulyOnlineUsers = useMemo(() => {
-    const now = Date.now();
+    const now = Math.max(Date.now(), presenceClock);
     return globalOnlineUsers.filter((u) => {
       if (!u || !u.id) return false;
       if (u.id === currentUser.id) return currentUser.status !== 'offline';
       return isUserTrulyOnline(u, now);
     });
-  }, [globalOnlineUsers, currentUser.id, currentUser.status]);
+  }, [globalOnlineUsers, currentUser.id, currentUser.status, presenceClock]);
 
   // Friend Requests State
   const [pendingFriendRequests, setPendingFriendRequests] = useState<FriendRequest[]>([]);
@@ -677,40 +687,47 @@ export default function App() {
     realtimeSocket.connect(activeUser);
 
     // Listen to global presence updates (real connected users via WebSocket)
-    // Preserve last known users if disconnected or momentarily degraded to [self]
     const unsubGlobal = realtimeSocket.subscribeToGlobalPresence((liveUsers) => {
       if (!liveUsers || liveUsers.length === 0) return;
-      const isConnected = realtimeSocket.getConnectionState() === 'connected';
+      const nowTs = Date.now();
       setGlobalOnlineUsers(prev => {
-        if (!isConnected && liveUsers.length <= 1 && prev.length > 1) {
-          return prev;
-        }
         const self = currentUserRef.current;
         const map = new Map<string, User>();
-        map.set(self.id, self);
+        prev.forEach(u => {
+          if (u && u.id && (u.id === self.id || isUserTrulyOnline(u, nowTs))) {
+            map.set(u.id, u);
+          }
+        });
+        map.set(self.id, { ...self, isOnline: self.status !== 'offline', lastSeen: nowTs });
         liveUsers.forEach(u => {
-          if (u && u.id) map.set(u.id, u);
+          if (u && u.id && u.status !== 'offline') {
+            map.set(u.id, { ...map.get(u.id), ...u, isOnline: true, lastSeen: (u as any).lastSeen || nowTs });
+          }
         });
         const nextList = Array.from(map.values());
         return areUserListsEqual(prev, nextList) ? prev : nextList;
       });
     });
 
-    // Also listen to Firestore global presence (multi-session across browser instances)
+    // Listen to authoritative Firestore/RTDB global presence (replaces stale entries cleanly)
     const unsubFirestorePresence = subscribeToGlobalPresence(activeUser, (liveUsers) => {
-      if (liveUsers && liveUsers.length > 0) {
-        setGlobalOnlineUsers(prev => {
-          const isConnected = realtimeSocket.getConnectionState() === 'connected';
-          if (!isConnected && liveUsers.length <= 1 && prev.length > 1) {
-            return prev;
+      const nowTs = Date.now();
+      setGlobalOnlineUsers(prev => {
+        const isBrowserOnline = typeof navigator === 'undefined' || navigator.onLine !== false;
+        if (!isBrowserOnline && (!liveUsers || liveUsers.length <= 1) && prev.length > 1) {
+          return prev;
+        }
+        const self = currentUserRef.current;
+        const map = new Map<string, User>();
+        map.set(self.id, { ...self, isOnline: self.status !== 'offline', lastSeen: nowTs });
+        (liveUsers || []).forEach(u => {
+          if (u && u.id && (u.id === self.id || isUserTrulyOnline(u, nowTs))) {
+            map.set(u.id, u);
           }
-          const map = new Map<string, User>();
-          prev.forEach(u => map.set(u.id, u));
-          liveUsers.forEach(u => map.set(u.id, u));
-          const nextList = Array.from(map.values());
-          return areUserListsEqual(prev, nextList) ? prev : nextList;
         });
-      }
+        const nextList = Array.from(map.values());
+        return areUserListsEqual(prev, nextList) ? prev : nextList;
+      });
     });
 
     // Automatically refresh presence and active room messages on reconnect

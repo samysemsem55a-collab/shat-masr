@@ -338,7 +338,7 @@ export const StoriesBar: React.FC<StoriesBarProps> = ({
           <div className="flex items-center gap-1.5 min-w-0">
             <Sparkles className="w-3.5 h-3.5 text-amber-500 shrink-0" />
             <span className="text-xs font-black text-slate-900 truncate">قصص الأعضاء (24 ساعة)</span>
-            {socketState !== 'connected' && (
+            {typeof navigator !== 'undefined' && navigator.onLine === false && socketState !== 'connected' && (
               <span className="px-1.5 py-0.5 rounded-full bg-amber-50 border border-amber-200 text-amber-700 text-[9.5px] font-bold shrink-0 animate-pulse">
                 جاري التحديث...
               </span>

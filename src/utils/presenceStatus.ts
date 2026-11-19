@@ -24,14 +24,17 @@ export function resolveTimestampMs(value: any): number | undefined {
 export function isUserTrulyOnline(user?: Partial<User> | null, nowMs: number = Date.now()): boolean {
   if (!user) return false;
   if (user.status === 'offline') return false;
-  if (user.isOnline === false) return false;
+  if (user.isOnline !== true) return false;
 
   const lastSeen = resolveTimestampMs((user as any).lastSeenMs ?? user.lastSeen);
-  if (typeof lastSeen === 'number' && nowMs - lastSeen > PRESENCE_OFFLINE_TIMEOUT_MS) {
+  if (typeof lastSeen !== 'number' || lastSeen <= 0) {
+    return false;
+  }
+  if (nowMs - lastSeen > PRESENCE_OFFLINE_TIMEOUT_MS) {
     return false;
   }
 
-  return Boolean(user.isOnline);
+  return true;
 }
 
 export function formatLastSeenArabic(lastSeenInput?: any): string {
