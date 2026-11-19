@@ -294,7 +294,6 @@ export interface ForumPost {
   commentsCount: number;
   viewsCount?: number;
   viewedBy?: string[];
-  viewers?: Record<string, { id: string; userId?: string; name: string; avatar?: string; viewedAt: number }>;
   mentions?: string[];
   createdAt: number;
 }
@@ -312,10 +311,7 @@ export interface StoryItem {
   bgGradient?: string;
   createdAt: number;
   expiresAt: number;
-  likedBy?: string[];
-  likesCount?: number;
-  viewsCount?: number;
-  viewers?: Record<string, { id: string; userId?: string; name: string; avatar?: string; viewedAt: number }>;
+  viewers?: Record<string, { id: string; name: string; avatar?: string; viewedAt: number }>;
 }
 
 export interface BackupSnapshot {

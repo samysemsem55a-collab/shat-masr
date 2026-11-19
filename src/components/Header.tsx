@@ -24,7 +24,7 @@ import { PWAInstallButton } from './PWAInstallButton';
 import { toast } from 'sonner';
 import { VerifiedBadge } from '../utils/verifiedBadge';
 import { realtimeSocket } from '../services/realtimeSocket';
-import appBrandIcon from '../assets/images/shat_masr_official_icon.png';
+import appBrandIcon from '../assets/images/shat_masr_icon_1794650535035.jpg';
 
 interface HeaderProps {
   currentUser: User;
@@ -228,7 +228,7 @@ export const Header: React.FC<HeaderProps> = React.memo(({
               <img
                 src={appBrandIcon}
                 alt="شات مصر"
-                className="w-7 h-7 object-contain shrink-0"
+                className="w-6 h-6 rounded-lg object-cover shadow-sm shrink-0 border border-indigo-200"
               />
               <span className="text-xs sm:text-sm font-black text-slate-900 whitespace-nowrap">
                 شات مصر

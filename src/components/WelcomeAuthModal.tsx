@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { User } from '../types/chat';
 import { signInWithGoogle, syncUserProfileToFirebase } from '../services/firebase';
 import { User as UserIcon, ShieldCheck, X, Smartphone, CheckCircle2, Lock } from 'lucide-react';
-import appBrandIcon from '../assets/images/shat_masr_official_icon.png';
+import appBrandIcon from '../assets/images/shat_masr_icon_1794650535035.jpg';
 
 interface WelcomeAuthModalProps {
   isOpen: boolean;
@@ -170,11 +170,11 @@ export const WelcomeAuthModal: React.FC<WelcomeAuthModalProps> = ({
 
         {/* Branding Header */}
         <div className="text-center mb-5">
-          <div className="w-20 h-20 mx-auto mb-3 flex items-center justify-center">
+          <div className="w-16 h-16 mx-auto mb-3 rounded-2xl overflow-hidden shadow-md border-2 border-emerald-200 bg-slate-100 flex items-center justify-center">
             <img
               src={appBrandIcon}
               alt="أيقونة شات مصر"
-              className="w-full h-full object-contain drop-shadow-md"
+              className="w-full h-full object-cover"
               referrerPolicy="no-referrer"
             />
           </div>

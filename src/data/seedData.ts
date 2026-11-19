@@ -71,17 +71,17 @@ export function hasCompletedMandatoryProfile(user?: Partial<User> | null): boole
   if (isUserAdminOrOwner(user as User)) return true;
   if (user.email || user.isEmailVerified || user.isPhoneVerified) return true;
 
-  if (typeof window !== 'undefined') {
-    const hasEntered = Boolean(
-      localStorage.getItem('shat_masr_has_entered') || localStorage.getItem('arab_chat_has_entered')
-    );
-    if (hasEntered && Boolean(user.id)) return true;
-  }
-
   const trimmedName = (user.name || '').trim();
   const hasRealName = Boolean(trimmedName) && !trimmedName.startsWith('زائر_') && trimmedName !== 'ضيف عربي';
   const hasValidAge = typeof user.age === 'number' && !isNaN(user.age) && user.age >= 13 && user.age <= 99;
   const hasValidGender = user.gender === 'male' || user.gender === 'female';
+
+  if (typeof window !== 'undefined') {
+    const hasEntered = Boolean(
+      localStorage.getItem('shat_masr_has_entered') || localStorage.getItem('arab_chat_has_entered')
+    );
+    return hasEntered && hasRealName && hasValidAge && hasValidGender;
+  }
 
   return hasRealName && hasValidAge && hasValidGender;
 }

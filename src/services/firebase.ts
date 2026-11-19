@@ -22,8 +22,7 @@ import {
   where,
   arrayUnion,
   arrayRemove,
-  deleteField,
-  runTransaction
+  deleteField
 } from 'firebase/firestore';
 import {
   getStorage,
@@ -4625,9 +4624,6 @@ export async function createStory(
     bgGradient: payload.bgGradient || 'from-indigo-600 via-purple-600 to-fuchsia-600',
     createdAt: now,
     expiresAt: now + 24 * 60 * 60 * 1000,
-    likedBy: [],
-    likesCount: 0,
-    viewsCount: 0,
     viewers: {}
   };
 
@@ -4653,129 +4649,28 @@ export async function markStoryViewed(storyId: string, viewer: User): Promise<vo
   if (!storyId || !viewer?.id) return;
   const viewerEntry = {
     id: viewer.id,
-    userId: viewer.id,
-    name: viewer.name || 'عضو شات مصر',
+    name: viewer.name,
     avatar: viewer.avatar || '',
     viewedAt: Date.now()
   };
 
-  let shouldSkipRemote = false;
   try {
     const raw = localStorage.getItem(LOCAL_STORIES_KEY);
     if (raw) {
       const list: StoryItem[] = JSON.parse(raw);
-      const updated = list.map((s) => {
-        if (s.id !== storyId) return s;
-        if (s.userId === viewer.id) {
-          shouldSkipRemote = true;
-          return s;
-        }
-        const prevViewers = s.viewers || {};
-        if (prevViewers[viewer.id]) {
-          shouldSkipRemote = true;
-          return s;
-        }
-        const nextViewers = { ...prevViewers, [viewer.id]: viewerEntry };
-        return {
-          ...s,
-          viewers: nextViewers,
-          viewsCount: Math.max((s.viewsCount || 0) + 1, Object.keys(nextViewers).length)
-        };
-      });
+      const updated = list.map((s) =>
+        s.id === storyId ? { ...s, viewers: { ...(s.viewers || {}), [viewer.id]: viewerEntry } } : s
+      );
       localStorage.setItem(LOCAL_STORIES_KEY, JSON.stringify(updated));
     }
   } catch {}
 
-  if (shouldSkipRemote) return;
-
   if (db) {
     try {
-      const storyRef = doc(db, 'stories', storyId);
-      await runTransaction(db, async (tx) => {
-        const snap = await tx.get(storyRef);
-        if (!snap.exists()) return;
-        const data = snap.data() as any;
-        if (data.userId === viewer.id) return;
-        const currentViewers = (data.viewers && typeof data.viewers === 'object' ? data.viewers : {}) as Record<string, any>;
-        if (currentViewers[viewer.id]) return;
-        const nextCount = Math.max(Number(data.viewsCount) || 0, Object.keys(currentViewers).length) + 1;
-        tx.update(storyRef, {
-          [`viewers.${viewer.id}`]: viewerEntry,
-          viewsCount: nextCount
-        });
+      await updateDoc(doc(db, 'stories', storyId), {
+        [`viewers.${viewer.id}`]: viewerEntry
       });
     } catch {}
-  }
-}
-
-export async function toggleStoryLike(storyId: string, user: User): Promise<void> {
-  if (!storyId || !user?.id) return;
-  let currentlyLiked = false;
-
-  try {
-    const raw = localStorage.getItem(LOCAL_STORIES_KEY);
-    if (raw) {
-      const list: StoryItem[] = JSON.parse(raw);
-      const updated = list.map((s) => {
-        if (s.id !== storyId) return s;
-        const likedSet = new Set(s.likedBy || []);
-        currentlyLiked = likedSet.has(user.id);
-        if (currentlyLiked) {
-          likedSet.delete(user.id);
-        } else {
-          likedSet.add(user.id);
-        }
-        const likedBy = Array.from(likedSet);
-        return { ...s, likedBy, likesCount: likedBy.length };
-      });
-      localStorage.setItem(LOCAL_STORIES_KEY, JSON.stringify(updated));
-      liveChatBus?.postMessage({ type: 'STORIES_CHANGED' });
-    }
-  } catch {}
-
-  if (db) {
-    try {
-      const storyRef = doc(db, 'stories', storyId);
-      await runTransaction(db, async (tx) => {
-        const snap = await tx.get(storyRef);
-        if (!snap.exists()) return;
-        const data = snap.data() as any;
-        const prevLiked: string[] = Array.isArray(data.likedBy) ? data.likedBy : [];
-        const hasLiked = prevLiked.includes(user.id);
-        const nextLiked = hasLiked
-          ? prevLiked.filter((id) => id !== user.id)
-          : [...prevLiked, user.id];
-        tx.update(storyRef, {
-          likedBy: nextLiked,
-          likesCount: nextLiked.length
-        });
-      });
-    } catch {}
-  }
-}
-
-export async function deleteStory(storyId: string): Promise<void> {
-  if (!storyId) return;
-  try {
-    const raw = localStorage.getItem(LOCAL_STORIES_KEY);
-    if (raw) {
-      const list: StoryItem[] = JSON.parse(raw);
-      localStorage.setItem(LOCAL_STORIES_KEY, JSON.stringify(list.filter((s) => s.id !== storyId)));
-    }
-  } catch {}
-  liveChatBus?.postMessage({ type: 'STORIES_CHANGED' });
-
-  if (db) {
-    try {
-      // Remove any nested viewer records first if present, then delete story document (clears viewsCount & viewers map)
-      const viewersSnap = await getDocs(collection(db, 'stories', storyId, 'viewers')).catch(() => null);
-      if (viewersSnap && !viewersSnap.empty) {
-        await Promise.all(viewersSnap.docs.map((d) => deleteDoc(d.ref).catch(() => {})));
-      }
-      await deleteDoc(doc(db, 'stories', storyId));
-    } catch (err) {
-      handleFirestoreError(err, OperationType.DELETE, `stories/${storyId}`);
-    }
   }
 }
 
@@ -5317,13 +5212,8 @@ export function subscribeToForumPosts(
               likedUsers: data.likedUsers && typeof data.likedUsers === 'object' ? data.likedUsers : {},
               likesCount: Number(data.likesCount) || (Array.isArray(data.likedBy) ? data.likedBy.length : 0),
               commentsCount: Number(data.commentsCount) || 0,
-              viewsCount: Math.max(
-                Number(data.viewsCount) || 0,
-                data.viewers && typeof data.viewers === 'object' ? Object.keys(data.viewers).length : 0,
-                Array.isArray(data.viewedBy) ? data.viewedBy.length : 0
-              ),
+              viewsCount: Number(data.viewsCount) || 0,
               viewedBy: Array.isArray(data.viewedBy) ? data.viewedBy : [],
-              viewers: data.viewers && typeof data.viewers === 'object' ? data.viewers : {},
               mentions: Array.isArray(data.mentions) ? data.mentions : [],
               createdAt: typeof data.createdAt === 'number' ? data.createdAt : Date.now()
             };
@@ -5363,70 +5253,34 @@ export function subscribeToForumPosts(
   };
 }
 
-export async function recordForumPostView(postId: string, viewer: User | string): Promise<void> {
-  const viewerId = typeof viewer === 'string' ? viewer : viewer?.id;
+export async function recordForumPostView(postId: string, viewerId: string): Promise<void> {
   if (!postId || !viewerId) return;
+  const sessionViewKey = `shatmasr_viewed_post_${postId}_${viewerId}`;
+  try {
+    if (sessionStorage.getItem(sessionViewKey) === '1') return;
+    sessionStorage.setItem(sessionViewKey, '1');
+  } catch {}
 
-  const viewerName = typeof viewer === 'string' ? 'عضو شات مصر' : (viewer.name || 'عضو شات مصر');
-  const viewerAvatar = typeof viewer === 'string' ? '' : (viewer.avatar || '');
-  const viewerEntry = {
-    id: viewerId,
-    userId: viewerId,
-    name: viewerName,
-    avatar: viewerAvatar,
-    viewedAt: Date.now()
-  };
-
-  let alreadyCountedOrOwner = false;
   try {
     const raw = localStorage.getItem(LOCAL_FORUM_KEY);
     if (raw) {
       const list: ForumPost[] = JSON.parse(raw);
       const updated = list.map((p) => {
         if (p.id !== postId) return p;
-        if (p.authorId === viewerId) {
-          alreadyCountedOrOwner = true;
-          return p;
-        }
-        const prevViewers = p.viewers || {};
-        const viewedSet = new Set(p.viewedBy || []);
-        if (prevViewers[viewerId] || viewedSet.has(viewerId)) {
-          alreadyCountedOrOwner = true;
-          return p;
-        }
-        viewedSet.add(viewerId);
-        const nextViewers = { ...prevViewers, [viewerId]: viewerEntry };
-        return {
-          ...p,
-          viewedBy: Array.from(viewedSet),
-          viewers: nextViewers,
-          viewsCount: Math.max((p.viewsCount || 0) + 1, Object.keys(nextViewers).length, viewedSet.size)
-        };
+        const viewed = new Set(p.viewedBy || []);
+        if (viewed.has(viewerId)) return p;
+        viewed.add(viewerId);
+        return { ...p, viewedBy: Array.from(viewed), viewsCount: Math.max((p.viewsCount || 0) + 1, viewed.size) };
       });
       localStorage.setItem(LOCAL_FORUM_KEY, JSON.stringify(updated));
     }
   } catch {}
 
-  if (alreadyCountedOrOwner) return;
-
   if (db) {
     try {
-      const postRef = doc(db, 'forum_posts', postId);
-      await runTransaction(db, async (tx) => {
-        const snap = await tx.get(postRef);
-        if (!snap.exists()) return;
-        const data = snap.data() as any;
-        if (data.authorId === viewerId) return;
-        const existingViewers = (data.viewers && typeof data.viewers === 'object' ? data.viewers : {}) as Record<string, any>;
-        const existingViewedBy: string[] = Array.isArray(data.viewedBy) ? data.viewedBy : [];
-        if (existingViewers[viewerId] || existingViewedBy.includes(viewerId)) return;
-        const nextCount =
-          Math.max(Number(data.viewsCount) || 0, Object.keys(existingViewers).length, existingViewedBy.length) + 1;
-        tx.update(postRef, {
-          [`viewers.${viewerId}`]: viewerEntry,
-          viewedBy: arrayUnion(viewerId),
-          viewsCount: nextCount
-        });
+      await updateDoc(doc(db, 'forum_posts', postId), {
+        viewedBy: arrayUnion(viewerId),
+        viewsCount: increment(1)
       });
     } catch {}
   }
@@ -5451,9 +5305,8 @@ export async function createForumPost(user: User, text: string, imageUrl?: strin
     likedBy: [],
     likesCount: 0,
     commentsCount: 0,
-    viewsCount: 0,
-    viewedBy: [],
-    viewers: {},
+    viewsCount: 1,
+    viewedBy: [user.id],
     mentions: mentionMatches,
     createdAt: Date.now()
   };
@@ -5668,10 +5521,6 @@ export async function deleteForumPost(postId: string): Promise<void> {
   liveChatBus?.postMessage({ type: 'FORUM_POSTS_CHANGED' });
   if (db) {
     try {
-      const commentsSnap = await getDocs(collection(db, 'forum_posts', postId, 'comments')).catch(() => null);
-      if (commentsSnap && !commentsSnap.empty) {
-        await Promise.all(commentsSnap.docs.map((d) => deleteDoc(d.ref).catch(() => {})));
-      }
       await deleteDoc(doc(db, 'forum_posts', postId));
     } catch (err) {
       handleFirestoreError(err, OperationType.DELETE, `forum_posts/${postId}`);

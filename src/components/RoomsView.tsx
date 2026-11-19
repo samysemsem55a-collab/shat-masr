@@ -467,141 +467,6 @@ const ForumLikesModal: React.FC<{
   );
 };
 
-const ForumViewersModal: React.FC<{
-  post: ForumPost | null;
-  currentUser: User;
-  onlineUsers: User[];
-  onClose: () => void;
-  onOpenUserProfile?: (user: User) => void;
-}> = ({ post, currentUser, onlineUsers, onClose, onOpenUserProfile }) => {
-  if (!post || post.authorId !== currentUser.id) return null;
-
-  const rawViewers = post.viewers ? Object.values(post.viewers) : [];
-  const viewersMap = new Map<string, { id: string; userId?: string; name: string; avatar?: string; viewedAt: number }>();
-  rawViewers.forEach((v) => {
-    if (v?.id) viewersMap.set(v.id, v);
-  });
-  (post.viewedBy || []).forEach((uid) => {
-    if (!uid || uid === post.authorId || viewersMap.has(uid)) return;
-    const online = onlineUsers.find((u) => u.id === uid);
-    viewersMap.set(uid, {
-      id: uid,
-      userId: uid,
-      name: online?.name || 'عضو شات مصر',
-      avatar: online?.avatar || '',
-      viewedAt: post.createdAt || Date.now(),
-    });
-  });
-
-  const viewersList = Array.from(viewersMap.values()).sort(
-    (a, b) => (b.viewedAt || 0) - (a.viewedAt || 0)
-  );
-  const totalViews = Math.max(post.viewsCount || 0, viewersList.length, post.viewedBy?.length || 0);
-
-  return (
-    <div
-      dir="rtl"
-      onClick={onClose}
-      className="fixed inset-0 z-[200] flex items-end sm:items-center justify-center bg-slate-900/45 backdrop-blur-sm p-0 sm:p-4 animate-in fade-in"
-    >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        className="w-full sm:max-w-md bg-white border border-slate-200 rounded-t-3xl sm:rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[80vh] text-[#1E293B]"
-      >
-        <div className="p-4 bg-white border-b border-slate-200 flex items-center justify-between shrink-0">
-          <div className="flex items-center gap-2">
-            <div className="w-9 h-9 rounded-xl bg-indigo-50 border border-indigo-200 text-indigo-600 flex items-center justify-center">
-              <Eye className="w-4 h-4" />
-            </div>
-            <div>
-              <h3 className="text-sm font-black text-[#1E293B]">المشاهدون للمنشور</h3>
-              <p className="text-[11px] text-slate-500">شافه {totalViews} عضو</p>
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="إغلاق"
-            className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-600 flex items-center justify-center transition cursor-pointer"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-
-        <div className="p-4 overflow-y-auto flex-1 space-y-2 bg-[#F8FAFC]">
-          {viewersList.length === 0 ? (
-            <div className="text-center py-8 space-y-1.5">
-              <div className="text-2xl">👁️</div>
-              <p className="text-xs font-bold text-slate-600">لا توجد مشاهدات مسجلة حتى الآن</p>
-            </div>
-          ) : (
-            viewersList.map((viewer) => {
-              const matchedOnline = onlineUsers.find((u) => u.id === (viewer.userId || viewer.id));
-              const profileTarget: User = matchedOnline || {
-                id: viewer.userId || viewer.id,
-                name: viewer.name || 'عضو شات مصر',
-                username: (viewer.name || 'member').toLowerCase().replace(/\s+/g, '_'),
-                avatar: viewer.avatar || '',
-                bio: 'عضو في منتدى شات مصر',
-                country: 'مصر',
-                countryFlag: '🇪🇬',
-                role: 'member',
-                coins: 0,
-                earningsEgp: 0,
-                earningsUsd: 0,
-                vipBadge: '',
-                frameStyle: 'border-slate-300',
-                profileWallpaper: '',
-                fontPreference: 'cairo',
-                isOnline: Boolean(matchedOnline),
-                status: matchedOnline ? 'online' : 'offline',
-                joinedAt: '',
-                gender: 'male',
-                level: 1,
-                likesReceived: 0,
-                giftsReceivedCount: 0,
-              };
-
-              return (
-                <button
-                  key={viewer.id}
-                  type="button"
-                  onClick={() => {
-                    if (onOpenUserProfile) {
-                      onClose();
-                      onOpenUserProfile(profileTarget);
-                    }
-                  }}
-                  className="w-full flex items-center justify-between gap-2.5 bg-white hover:bg-indigo-50/70 rounded-2xl p-2.5 border border-slate-200 shadow-2xs text-right cursor-pointer transition"
-                >
-                  <div className="flex items-center gap-2.5 min-w-0">
-                    {viewer.avatar ? (
-                      <img
-                        src={viewer.avatar}
-                        alt={viewer.name}
-                        className="w-9 h-9 rounded-full object-cover border border-slate-200 shrink-0"
-                        referrerPolicy="no-referrer"
-                      />
-                    ) : (
-                      <span className="w-9 h-9 rounded-full bg-indigo-100 text-indigo-700 font-black text-xs flex items-center justify-center shrink-0">
-                        {(viewer.name || 'ع').charAt(0)}
-                      </span>
-                    )}
-                    <span className="text-xs font-black text-[#1E293B] truncate">{viewer.name}</span>
-                  </div>
-                  <span className="text-[10.5px] font-semibold text-slate-500 shrink-0">
-                    {formatRelativeArabicTime(viewer.viewedAt)}
-                  </span>
-                </button>
-              );
-            })
-          )}
-        </div>
-      </div>
-    </div>
-  );
-};
-
 function areForumPostsEqual(a: ForumPost[], b: ForumPost[]): boolean {
   if (a === b) return true;
   if (a.length !== b.length) return false;
@@ -614,8 +479,6 @@ function areForumPostsEqual(a: ForumPost[], b: ForumPost[]): boolean {
       p1.likesCount !== p2.likesCount ||
       p1.commentsCount !== p2.commentsCount ||
       (p1.viewsCount || 0) !== (p2.viewsCount || 0) ||
-      (p1.viewedBy || []).length !== (p2.viewedBy || []).length ||
-      Object.keys(p1.viewers || {}).length !== Object.keys(p2.viewers || {}).length ||
       (p1.likedBy || []).length !== (p2.likedBy || []).length ||
       Object.keys(p1.likedUsers || {}).length !== Object.keys(p2.likedUsers || {}).length ||
       p1.authorName !== p2.authorName ||
@@ -675,7 +538,6 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
   const [forumFilter, setForumFilter] = useState<'all' | 'trend' | 'male' | 'female' | 'online'>('all');
   const [commentsModalPostId, setCommentsModalPostId] = useState<string | null>(null);
   const [likesModalPostId, setLikesModalPostId] = useState<string | null>(null);
-  const [viewersModalPostId, setViewersModalPostId] = useState<string | null>(null);
   const [lightboxImageUrl, setLightboxImageUrl] = useState<string | null>(null);
   const [sharedMissions, setSharedMissions] = useState<SharedRoomMission[]>([]);
   const [showMobileMissions, setShowMobileMissions] = useState(false);
@@ -705,10 +567,6 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
   const activeLikesPost = useMemo(
     () => forumPosts.find((p) => p.id === likesModalPostId) || null,
     [forumPosts, likesModalPostId]
-  );
-  const activeViewersPost = useMemo(
-    () => forumPosts.find((p) => p.id === viewersModalPostId) || null,
-    [forumPosts, viewersModalPostId]
   );
 
   // Include غرفة مصر 1, غرفة مصر 2, and any active Live Audio rooms
@@ -765,45 +623,15 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
     }
   }, [highlightedPostId, forumPosts]);
 
-  // Record real unique views ONLY when a post actually enters the user's viewport (strictly once per viewer)
+  // Record views once per session for visible posts
   useEffect(() => {
     if (!currentUser?.id || forumPosts.length === 0) return;
-    if (typeof IntersectionObserver === 'undefined') {
-      forumPosts.forEach((post) => {
-        if (post.id && post.authorId !== currentUser.id) {
-          recordForumPostView(post.id, currentUser).catch(() => {});
-        }
-      });
-      return;
-    }
-
-    const observer = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((entry) => {
-          if (entry.isIntersecting) {
-            const postId = entry.target.getAttribute('data-post-id');
-            if (postId) {
-              recordForumPostView(postId, currentUser).catch(() => {});
-              observer.unobserve(entry.target);
-            }
-          }
-        });
-      },
-      { threshold: 0.4 }
-    );
-
-    forumPosts.forEach((post) => {
-      if (!post.id || post.authorId === currentUser.id) return;
-      const alreadyViewed = Boolean(
-        post.viewers?.[currentUser.id] || (post.viewedBy || []).includes(currentUser.id)
-      );
-      if (alreadyViewed) return;
-      const el = document.getElementById(`forum-post-${post.id}`);
-      if (el) observer.observe(el);
+    forumPosts.slice(0, 20).forEach((post) => {
+      if (post.id) {
+        recordForumPostView(post.id, currentUser.id).catch(() => {});
+      }
     });
-
-    return () => observer.disconnect();
-  }, [forumPosts, currentUser]);
+  }, [forumPosts, currentUser?.id]);
 
   // @username mention autocomplete match in composer
   const mentionSuggestions = useMemo(() => {
@@ -1454,7 +1282,6 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
                   <div
                     key={post.id}
                     id={`forum-post-${post.id}`}
-                    data-post-id={post.id}
                     className={`rounded-2xl p-2.5 sm:p-3 shadow-sm transition-all border ${
                       highlightedPostId === post.id
                         ? 'bg-indigo-50/70 border-indigo-400 ring-2 ring-indigo-300'
@@ -1513,30 +1340,7 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
                           <div className="flex items-center gap-2 text-[10px] text-slate-500 mt-0.5 flex-wrap">
                             <span>{formatRelativeArabicTime(post.createdAt)}</span>
                             <span>•</span>
-                            {(() => {
-                              const viewersCountVal = Math.max(
-                                post.viewsCount || 0,
-                                post.viewers ? Object.keys(post.viewers).length : 0,
-                                post.viewedBy?.length || 0
-                              );
-                              if (post.authorId === currentUser.id) {
-                                return (
-                                  <button
-                                    type="button"
-                                    onClick={() => setViewersModalPostId(post.id)}
-                                    className="font-bold text-indigo-700 hover:text-indigo-900 hover:underline inline-flex items-center gap-1 cursor-pointer"
-                                    title="عرض قائمة من شاهدوا المنشور"
-                                  >
-                                    <span>👁️ شافه {viewersCountVal}</span>
-                                  </button>
-                                );
-                              }
-                              return (
-                                <span className="font-bold text-slate-600 inline-flex items-center gap-1">
-                                  <span>👁️ {viewersCountVal}</span>
-                                </span>
-                              );
-                            })()}
+                            <span className="font-bold text-slate-600">👁️ شافه {Math.max(1, post.viewsCount || 1)} واحد</span>
                           </div>
                         </div>
                       </div>
@@ -1864,15 +1668,6 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
         currentUser={currentUser}
         onlineUsers={onlineUsers}
         onClose={() => setCommentsModalPostId(null)}
-        onOpenUserProfile={onOpenUserProfile}
-      />
-
-      {/* Owner-Only Forum Viewers Modal */}
-      <ForumViewersModal
-        post={activeViewersPost}
-        currentUser={currentUser}
-        onlineUsers={onlineUsers}
-        onClose={() => setViewersModalPostId(null)}
         onOpenUserProfile={onOpenUserProfile}
       />
 

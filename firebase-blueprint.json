@@ -134,9 +134,6 @@
         "likedBy": { "type": "array" },
         "likesCount": { "type": "number" },
         "commentsCount": { "type": "number" },
-        "viewsCount": { "type": "number" },
-        "viewedBy": { "type": "array" },
-        "viewers": { "type": "object" },
         "createdAt": { "type": "number" }
       },
       "required": ["id", "authorId", "authorName", "text"]
@@ -293,10 +290,7 @@
         "userAvatar": { "type": "string", "maxLength": 500 },
         "mediaUrl": { "type": "string", "maxLength": 2000 },
         "caption": { "type": "string", "maxLength": 300 },
-        "likedBy": { "type": "array" },
-        "likesCount": { "type": "number" },
-        "viewsCount": { "type": "number" },
-        "viewers": { "type": "object" },
+        "viewers": { "type": "array" },
         "createdAt": { "type": "number" },
         "expiresAt": { "type": "number" }
       },

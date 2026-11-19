@@ -25,7 +25,6 @@ import { DailyMissionsModal } from './components/DailyMissionsModal';
 import { PrivateRoomPromptModal } from './components/PrivateRoomPromptModal';
 import { PhoneAuthModal } from './components/PhoneAuthModal';
 import { WelcomeAuthModal } from './components/WelcomeAuthModal';
-import { WelcomeScreen } from './components/WelcomeScreen';
 import { CallModal } from './components/CallModal';
 import { LeaderboardModal } from './components/LeaderboardModal';
 import { ConsentRequestModal } from './components/ConsentRequestModal';
@@ -383,8 +382,10 @@ export default function App() {
   const [incomingConsentRequest, setIncomingConsentRequest] = useState<ConsentRequestPayload | null>(null);
   const [isPhoneAuthOpen, setIsPhoneAuthOpen] = useState(false);
   const isProfileReady = hasCompletedMandatoryProfile(currentUser);
-  const [isWelcomeAuthOpen, setIsWelcomeAuthOpen] = useState<boolean>(false);
-  const [authModalMode, setAuthModalMode] = useState<'onboarding' | 'exclusive_auth'>('exclusive_auth');
+  const [isWelcomeAuthOpen, setIsWelcomeAuthOpen] = useState<boolean>(() => !hasCompletedMandatoryProfile(currentUser));
+  const [authModalMode, setAuthModalMode] = useState<'onboarding' | 'exclusive_auth'>(() =>
+    hasCompletedMandatoryProfile(currentUser) ? 'exclusive_auth' : 'onboarding'
+  );
 
   // Global Persistent FM Radio & Music Player Playing Indicator (decoupled from tick/buffer churn)
   const [isRadioPlaying, setIsRadioPlaying] = useState<boolean>(() => globalRadioPlayer.getSnapshot().isPlaying);
@@ -2086,8 +2087,8 @@ export default function App() {
     localStorage.removeItem('arab_chat_has_entered');
     const nextUser = getOrCreateUser();
     setCurrentUser(nextUser);
-    setAuthModalMode('exclusive_auth');
-    setIsWelcomeAuthOpen(false);
+    setAuthModalMode('onboarding');
+    setIsWelcomeAuthOpen(true);
   };
 
   // Hardware Back Button & Mobile History Handling (Requirement 6)
@@ -2222,10 +2223,10 @@ export default function App() {
     [isDarkMode]
   );
 
-  // Initial Full-Screen Arabic RTL Welcome Screen until user taps "دخول فوري بدون تسجيل" or logs in
+  // Mandatory Registration Gate: prevent seeing chat or online users until Name + Age + Gender (or Google Login) is completed
   if (!isProfileReady) {
     return (
-      <div className={`min-h-screen text-slate-900 dark:text-slate-100 transition-colors duration-300 ${fontClass}`}>
+      <div className={`min-h-screen original-app-bg text-slate-900 dark:text-slate-100 transition-colors duration-300 ${fontClass}`}>
         <Toaster
           position="top-center"
           dir="rtl"
@@ -2236,9 +2237,12 @@ export default function App() {
           style={{ zIndex: 300 }}
           toastOptions={toasterOptions}
         />
-        <WelcomeScreen
+        <WelcomeAuthModal
+          isOpen={true}
+          allowClose={false}
+          onClose={() => {}}
           currentUser={currentUser}
-          onEnterApp={(u) => {
+          onUserAuthenticated={(u) => {
             localStorage.setItem('shat_masr_has_entered', 'true');
             handleSwitchUser(u);
             setIsWelcomeAuthOpen(false);
