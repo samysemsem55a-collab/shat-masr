@@ -12,7 +12,6 @@ import {
 import { User, Friend } from '../types/chat';
 import { subscribeToFriendsList, removeFriendInDB } from '../services/firebase';
 import { sounds } from '../utils/soundEffects';
-import { formatLastSeenArabic } from '../utils/presenceStatus';
 
 interface FriendsListProps {
   currentUser: User;
@@ -189,19 +188,18 @@ export const FriendsList: React.FC<FriendsListProps> = ({
                       {/* Online/Activity Status Indicator */}
                       {(() => {
                         const st = friend.isOnline ? (friend.status || 'online') : 'offline';
-                        const offlineLabel = formatLastSeenArabic((friend as any).lastSeen);
                         const statusMap: Record<string, { dot: string; text: string; label: string }> = {
-                          online: { dot: 'bg-emerald-500 animate-pulse', text: 'text-emerald-600', label: 'متصل الآن' },
+                          online: { dot: 'bg-emerald-500 animate-pulse', text: 'text-emerald-600', label: 'متاح الآن' },
                           busy: { dot: 'bg-amber-500', text: 'text-amber-600', label: 'مشغول' },
                           dnd: { dot: 'bg-rose-500', text: 'text-rose-600', label: 'لا تزعجني' },
                           in_mic: { dot: 'bg-purple-500 animate-pulse', text: 'text-purple-600', label: 'متواجد في مجلس صوتي' },
                           away: { dot: 'bg-amber-400', text: 'text-amber-600', label: 'بعيد' },
-                          offline: { dot: 'bg-slate-400', text: 'text-slate-500', label: offlineLabel }
+                          offline: { dot: 'bg-slate-400', text: 'text-slate-500', label: 'غير متصل' }
                         };
                         const meta = statusMap[st] || statusMap.offline;
                         return (
                           <span className="flex items-center gap-1 font-bold">
-                            {st !== 'offline' && <span className={`w-2 h-2 rounded-full ${meta.dot}`}></span>}
+                            <span className={`w-2 h-2 rounded-full ${meta.dot}`}></span>
                             <span className={meta.text}>{meta.label}</span>
                           </span>
                         );

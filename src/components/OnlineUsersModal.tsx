@@ -16,7 +16,6 @@ import { getRankDisplayMeta } from '../utils/userRanks';
 import { AvatarWithFrame } from './AvatarWithFrame';
 import { sounds } from '../utils/soundEffects';
 import { VerifiedBadge } from '../utils/verifiedBadge';
-import { formatLastSeenArabic, isUserTrulyOnline } from '../utils/presenceStatus';
 
 interface OnlineUsersModalProps {
   isOpen: boolean;
@@ -28,7 +27,6 @@ interface OnlineUsersModalProps {
   roomTitle?: string;
   roomUsers?: User[];
   allActiveUsers?: User[];
-  allRegisteredUsers?: User[];
 }
 
 export const OnlineUsersModal: React.FC<OnlineUsersModalProps> = ({
@@ -40,8 +38,7 @@ export const OnlineUsersModal: React.FC<OnlineUsersModalProps> = ({
   onOpenPrivateChatWith,
   roomTitle,
   roomUsers = [],
-  allActiveUsers = [],
-  allRegisteredUsers = []
+  allActiveUsers = []
 }) => {
   const [activeTab, setActiveTab] = useState<'room' | 'general'>(roomTitle ? 'room' : 'general');
   const [searchQuery, setSearchQuery] = useState('');
@@ -51,9 +48,6 @@ export const OnlineUsersModal: React.FC<OnlineUsersModalProps> = ({
   if (!isOpen) return null;
 
   // Use provided users, deduplicate by ID, and ensure at least currentUser is present
-  const onlineIdSet = new Set<string>(allActiveUsers.map((u) => u.id));
-  if (currentUser.status !== 'offline') onlineIdSet.add(currentUser.id);
-
   const rawList = activeTab === 'room' && roomTitle 
     ? (roomUsers.length > 0 ? roomUsers : [currentUser])
     : (allActiveUsers.length > 0 ? allActiveUsers : [currentUser]);
@@ -63,18 +57,7 @@ export const OnlineUsersModal: React.FC<OnlineUsersModalProps> = ({
   for (const u of rawList) {
     if (u && u.id && !seenIds.has(u.id)) {
       seenIds.add(u.id);
-      const isOnline = u.id === currentUser.id ? currentUser.status !== 'offline' : isUserTrulyOnline(u);
-      baseUsersList.push({ ...u, isOnline });
-    }
-  }
-  // When searching in general tab, also allow finding registered offline members with lastSeen
-  if (activeTab === 'general' && searchQuery.trim() && allRegisteredUsers.length > 0) {
-    for (const u of allRegisteredUsers) {
-      if (u && u.id && !seenIds.has(u.id)) {
-        seenIds.add(u.id);
-        const isOnline = onlineIdSet.has(u.id) && isUserTrulyOnline(u);
-        baseUsersList.push({ ...u, isOnline, status: isOnline ? u.status : 'offline' });
-      }
+      baseUsersList.push(u);
     }
   }
 
@@ -245,7 +228,7 @@ export const OnlineUsersModal: React.FC<OnlineUsersModalProps> = ({
                     #{idx + 1}
                   </span>
 
-                  <AvatarWithFrame user={user} size="xs" showOnlineDot={user.isOnline !== false && user.status !== 'offline'} />
+                  <AvatarWithFrame user={user} size="xs" showOnlineDot />
 
                   <div className="text-right min-w-0 flex-1">
                     <div className="flex items-center gap-1 min-w-0">
@@ -256,21 +239,15 @@ export const OnlineUsersModal: React.FC<OnlineUsersModalProps> = ({
                       <span className="text-[10px] shrink-0">{user.countryFlag || '🇪🇬'}</span>
                     </div>
                     <div className="flex items-center gap-1 text-[9px] text-slate-500 truncate">
-                      {user.isOnline !== false && user.status !== 'offline' ? (
-                        <span className="text-emerald-600 font-bold flex items-center gap-0.5 shrink-0">
-                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block" />
-                          <span>متصل الآن</span>
-                        </span>
-                      ) : (
-                        <span className="text-slate-500 font-semibold truncate">
-                          {formatLastSeenArabic(user.lastSeen)}
-                        </span>
-                      )}
-                      <span>•</span>
                       <span className="text-amber-600 font-bold flex items-center gap-0.5 shrink-0">
                         <Star className="w-2.5 h-2.5 fill-amber-400 text-amber-500" />
                         {user.ratingPoints || 0}
                       </span>
+                      {(user.gender || typeof user.age === 'number') && (
+                        <span className="text-[9px] text-slate-500 font-semibold shrink-0">
+                          • {user.gender === 'female' ? 'أنثى' : 'ذكر'}{typeof user.age === 'number' ? ` (${user.age})` : ''}
+                        </span>
+                      )}
                       {rankMeta.isPrivileged && (
                         <span className={`px-1 py-0.2 rounded border text-[8.5px] font-black truncate ${rankMeta.badgeClass}`}>
                           {rankMeta.label}

@@ -65,7 +65,6 @@ interface RoomsViewProps {
   onOpenMissions?: () => void;
   onClaimSharedRewardCoins?: (coins: number, label?: string) => void;
   totalActiveUsersCount?: number;
-  registeredUsersCount?: number;
   cumulativeVisitorsCount?: number;
   onOpenOnlineUsers?: () => void;
   onOpenUserProfile?: (user: User) => void;
@@ -662,7 +661,6 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
   onOpenMissions,
   onClaimSharedRewardCoins,
   totalActiveUsersCount = 1,
-  registeredUsersCount = 1,
   cumulativeVisitorsCount = 15480,
   onOpenOnlineUsers,
   onOpenUserProfile,
@@ -938,32 +936,27 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
     <div className="pb-24 pt-2 px-2.5 sm:px-4 max-w-6xl mx-auto space-y-2" dir="rtl">
       {/* 1. Compact Live Stats Strip */}
       <div className="grid grid-cols-2 gap-2">
-        {/* Total Registered Members + Live Online Indicator */}
+        {/* Online Users */}
         <div
           onClick={onOpenOnlineUsers}
           className="px-2.5 py-1.5 rounded-xl bg-gradient-to-br from-teal-100 via-emerald-100 to-cyan-100 border border-teal-300/90 text-teal-950 shadow-xs flex items-center justify-between cursor-pointer hover:brightness-[0.98] active:scale-[0.98] transition-all"
         >
           <div className="text-right min-w-0">
             <div className="flex items-center gap-1 text-[10px] font-black text-teal-800">
-              <span className="truncate">إجمالي الأعضاء</span>
-              {typeof navigator !== 'undefined' && navigator.onLine === false && socketState !== 'connected' && (
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-pulse shrink-0"></span>
+              <span className="truncate">المتصلون الآن</span>
+              {socketState !== 'connected' && (
                 <span className="px-1.5 py-0.2 rounded-full bg-amber-100 border border-amber-300 text-amber-800 text-[9px] font-bold shrink-0">
                   جاري التحديث...
                 </span>
               )}
             </div>
-            <div className="flex items-center gap-1.5 flex-wrap leading-tight">
-              <span className="text-sm font-black text-teal-950 tabular-nums">
-                {Math.max(registeredUsersCount, totalActiveUsersCount, 1).toLocaleString()} <span className="text-[9.5px] font-bold text-teal-800">عضو</span>
-              </span>
-              <span className="inline-flex items-center gap-1 text-[9.5px] font-bold text-emerald-800">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-pulse shrink-0"></span>
-                <span>{totalActiveUsersCount} متصل الآن</span>
-              </span>
+            <div className="text-sm font-black text-teal-950 tabular-nums leading-tight">
+              {totalActiveUsersCount} <span className="text-[9.5px] font-bold text-teal-800">عضو</span>
             </div>
           </div>
           <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center text-white shrink-0">
-            <Users strokeWidth={2} className="w-3.5 h-3.5 opacity-100 saturate-110 brightness-105" />
+            <Users className="w-3.5 h-3.5" />
           </div>
         </div>
 
@@ -995,7 +988,7 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
             onClick={onOpenWallet}
             className="flex-1 basis-0 min-w-0 h-[38px] rounded-[20px] px-1 bg-[#FFF1E0] text-[#9A4A00] border border-[#FFE0B8] text-[12.5px] font-semibold whitespace-nowrap overflow-hidden flex items-center justify-center gap-[5px] active:scale-95 transition-transform cursor-pointer"
           >
-            <span className="text-[15px] leading-none shrink-0 opacity-100 saturate-110 brightness-105" aria-hidden="true">🪙</span>
+            <span className="text-[15px] leading-none shrink-0" aria-hidden="true">🪙</span>
             <span className="truncate">شحن الكوينز</span>
           </button>
         )}
@@ -1007,7 +1000,7 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
             className="flex-1 basis-0 min-w-0 h-[38px] rounded-[20px] px-1 bg-[#F0EBFF] text-[#4C2A9E] border border-[#DDD0FF] text-[12.5px] font-semibold whitespace-nowrap overflow-hidden flex items-center justify-center gap-[5px] active:scale-95 transition-transform cursor-pointer"
             title="قائمة الكبار - التوب 10"
           >
-            <span className="text-[15px] leading-none shrink-0 opacity-100 saturate-110 brightness-105" aria-hidden="true">🏆</span>
+            <span className="text-[15px] leading-none shrink-0" aria-hidden="true">🏆</span>
             <span className="truncate">الكبار</span>
           </button>
         )}
@@ -1018,7 +1011,7 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
             onClick={onOpenVip}
             className="flex-1 basis-0 min-w-0 h-[38px] rounded-[20px] px-1 bg-[#FFF8D6] text-[#7A5A00] border border-[#F0E3A0] text-[12.5px] font-semibold whitespace-nowrap overflow-hidden flex items-center justify-center gap-[5px] active:scale-95 transition-transform cursor-pointer"
           >
-            <span className="text-[15px] leading-none shrink-0 opacity-100 saturate-110 brightness-105" aria-hidden="true">👑</span>
+            <span className="text-[15px] leading-none shrink-0" aria-hidden="true">👑</span>
             <span className="truncate">VIP</span>
           </button>
         )}
@@ -1029,7 +1022,7 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
             onClick={onOpenMissions}
             className="flex-1 basis-0 min-w-0 h-[38px] rounded-[20px] px-1 bg-[#E6F4EA] text-[#1A6B3C] border border-[#C8E6D2] text-[12.5px] font-semibold whitespace-nowrap overflow-hidden flex items-center justify-center gap-[5px] active:scale-95 transition-transform cursor-pointer"
           >
-            <span className="text-[15px] leading-none shrink-0 opacity-100 saturate-110 brightness-105" aria-hidden="true">✅</span>
+            <span className="text-[15px] leading-none shrink-0" aria-hidden="true">✅</span>
             <span className="truncate">مهامي</span>
           </button>
         )}
@@ -1049,21 +1042,21 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
           </h2>
         </div>
 
-        {/* Filter Row with Inline Room Missions — Fits cleanly on 360px+ without horizontal scroll */}
+        {/* Filter Row with Inline Daily Room Missions (single row, no separate line) */}
         <div
           dir="rtl"
-          className="w-full flex flex-wrap gap-[6px] justify-center overflow-visible mb-2"
+          className="flex flex-nowrap items-center gap-1.5 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden mb-2 pl-2"
         >
           {[
             { id: 'all', label: 'الكل' },
             { id: 'general', label: 'غرف عامة' },
-            { id: 'live_audio', label: 'صوتية مباشرة' },
+            { id: 'live_audio', label: 'صوتية مباشرة 🎙️' },
           ].map((pill) => (
             <button
               key={pill.id}
               type="button"
               onClick={() => setRoomCategoryFilter(pill.id as any)}
-              className={`text-[12px] px-[10px] py-[5px] rounded-[20px] shrink whitespace-nowrap font-bold flex items-center transition cursor-pointer ${
+              className={`h-8 px-3 text-[13px] font-black rounded-lg whitespace-nowrap shrink-0 flex items-center transition cursor-pointer ${
                 roomCategoryFilter === pill.id
                   ? 'bg-indigo-600 text-white shadow-2xs'
                   : 'bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200'
@@ -1076,10 +1069,10 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
           <button
             type="button"
             onClick={() => setShowMobileMissions(prev => !prev)}
-            className="lg:hidden text-[12px] px-[10px] py-[5px] rounded-[20px] shrink whitespace-nowrap font-bold bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-800 flex items-center gap-1 cursor-pointer"
+            className="lg:hidden h-8 px-3 text-[13px] font-black rounded-lg bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-800 whitespace-nowrap shrink-0 flex items-center gap-1 cursor-pointer"
           >
-            <Target className="w-3 h-3 text-amber-600 shrink-0" />
-            <span>مهام الغرف</span>
+            <Target className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+            <span>مهام الغرف اليومية</span>
           </button>
         </div>
 
@@ -1153,13 +1146,9 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
                     </div>
                   </div>
 
-                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-black/30 backdrop-blur-xs border border-white/20 text-[10px] font-black shrink-0 tabular-nums">
-                    <span
-                      className={`w-1.5 h-1.5 rounded-full ${
-                        (room.activeUsers || 0) > 0 ? 'bg-emerald-300 animate-pulse' : 'bg-slate-300/70'
-                      }`}
-                    ></span>
-                    <span>{Math.max(0, room.activeUsers || 0)} متصل</span>
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-black/30 backdrop-blur-xs border border-white/20 text-[10px] font-black shrink-0">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-300 animate-pulse"></span>
+                    <span>{Math.max(1, room.activeUsers || 1)} متصل</span>
                   </span>
                 </div>
 
@@ -1494,7 +1483,7 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
                             status: isPostAuthorOnline ? 'online' : 'offline'
                           }}
                           size="sm"
-                          showOnlineDot={isPostAuthorOnline}
+                          showOnlineDot
                           onClick={() => onOpenUserProfile?.(peerForDm)}
                           title="عرض الملف الشخصي"
                         />

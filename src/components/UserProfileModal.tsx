@@ -28,14 +28,11 @@ import { sendFriendRequest, submitUserRating, submitUserReport, recordProfileVis
 import { realtimeSocket } from '../services/realtimeSocket';
 import { sounds } from '../utils/soundEffects';
 import { VerifiedBadge } from '../utils/verifiedBadge';
-import { formatLastSeenArabic, isUserTrulyOnline } from '../utils/presenceStatus';
 import { toast } from 'sonner';
 
 interface UserProfileModalProps {
   user: User | null;
   currentUser: User;
-  onlineUsers?: User[];
-  allRegisteredUsers?: User[];
   onClose: () => void;
   onOpenPrivateChatWith: (user: User) => void;
   onSendGiftToUser: (user: User) => void;
@@ -45,8 +42,6 @@ interface UserProfileModalProps {
 export const UserProfileModal: React.FC<UserProfileModalProps> = ({
   user,
   currentUser,
-  onlineUsers = [],
-  allRegisteredUsers = [],
   onClose,
   onOpenPrivateChatWith,
   onSendGiftToUser,
@@ -131,26 +126,16 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
   const rankMeta = getRankDisplayMeta(user.role, user.vipBadge);
   const isPrivileged = hasPrivilegedRank(user.role);
   const bannerStyle = isPrivileged ? resolveBannerStyle(user.profileBanner) : undefined;
-  const liveOnlineRecord = onlineUsers.find((u) => u.id === user.id);
-  const regRecord = allRegisteredUsers.find((u) => u.id === user.id);
-  const isAvailable = isMe
-    ? currentUser.status !== 'offline'
-    : Boolean(liveOnlineRecord && isUserTrulyOnline(liveOnlineRecord)) || isUserTrulyOnline(user);
-  const effectiveStatus = isMe
-    ? currentUser.status
-    : isAvailable
-    ? (liveOnlineRecord?.status || user.status || 'online')
-    : 'offline';
-  const effectiveLastSeen = regRecord?.lastSeen ?? liveOnlineRecord?.lastSeen ?? user.lastSeen;
+  const isAvailable = user.status !== 'offline' && (user.isOnline !== false || Boolean(user.status));
   const statusLabel = !isAvailable
-    ? formatLastSeenArabic(effectiveLastSeen)
-    : effectiveStatus === 'busy'
+    ? 'غير متصل'
+    : user.status === 'busy'
     ? 'مشغول'
-    : effectiveStatus === 'dnd'
+    : user.status === 'dnd'
     ? 'لا تزعجني'
-    : effectiveStatus === 'in_mic'
+    : user.status === 'in_mic'
     ? 'في مجلس صوتي'
-    : 'متصل الآن';
+    : 'متاح الآن';
 
   const handleSendFriendReq = async () => {
     if (isMe || friendRequestSent) return;
@@ -260,7 +245,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
           
           {/* Avatar with Live Indicator & Direct Edit for Owner */}
           <div className="relative inline-block">
-            <AvatarWithFrame user={{ ...user, isOnline: isAvailable, status: effectiveStatus }} size="lg" showOnlineDot={isAvailable} />
+            <AvatarWithFrame user={user} size="lg" showOnlineDot />
 
             {/* If Current User, Show Quick Photo Change Button (Pencil Icon) */}
             {isMe && (
@@ -297,9 +282,8 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
             </div>
 
             <div className="flex items-center justify-center gap-2 text-xs text-slate-500 mt-1 flex-wrap">
-              <span className={isAvailable ? 'text-emerald-600 font-bold inline-flex items-center gap-1' : 'text-slate-500 font-semibold'}>
-                {isAvailable && <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse inline-block" />}
-                <span>{statusLabel}</span>
+              <span className={isAvailable ? 'text-emerald-600 font-bold' : 'text-slate-500'}>
+                ● {statusLabel}
               </span>
               <span>•</span>
               <span>{user.country || 'مصر'}</span>

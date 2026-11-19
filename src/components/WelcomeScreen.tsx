@@ -149,19 +149,15 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
           </p>
         </div>
 
-        {/* Middle Section: Horizontal Features Row */}
-        <div className="w-full flex flex-wrap items-center justify-center gap-2 sm:gap-3 my-5">
-          {['دردشة فورية', 'غرف صوتية', 'سريع وآمن'].map((feature, idx) => (
-            <React.Fragment key={feature}>
-              {idx > 0 && (
-                <span className="text-amber-300/60 font-black text-base select-none" aria-hidden="true">
-                  |
-                </span>
-              )}
-              <div className="px-3.5 py-2 rounded-2xl bg-black/35 backdrop-blur-xs border border-amber-300/30 text-sm sm:text-base font-black text-white tracking-wide drop-shadow-[0_2px_8px_rgba(0,0,0,0.85)]">
-                {feature}
-              </div>
-            </React.Fragment>
+        {/* Middle Section: 3 Stacked Feature Lines */}
+        <div className="w-full flex flex-col items-center justify-center gap-3 my-6">
+          {['دردشة فورية', 'غرف صوتية', 'سريع وآمن'].map((feature) => (
+            <div
+              key={feature}
+              className="px-6 py-2 rounded-2xl bg-black/30 backdrop-blur-xs border border-amber-300/25 text-lg sm:text-xl font-black text-white tracking-wide drop-shadow-[0_2px_8px_rgba(0,0,0,0.85)]"
+            >
+              {feature}
+            </div>
           ))}
         </div>
 

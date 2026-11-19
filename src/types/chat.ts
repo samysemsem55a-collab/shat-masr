@@ -27,8 +27,6 @@ export interface User {
   fontPreference: 'cairo' | 'tajawal' | 'amiri';
   isOnline: boolean;
   status: 'online' | 'busy' | 'dnd' | 'away' | 'in_mic' | 'offline';
-  lastSeen?: number;
-  currentRoom?: string | null;
   joinedAt: string;
   gender: 'male' | 'female';
   age?: number;
@@ -240,10 +238,8 @@ export interface Message {
   };
   replyTo?: {
     id: string;
-    messageId?: string;
     senderName: string;
     content: string;
-    text?: string;
     type?: string;
   };
   expiresAt?: number;

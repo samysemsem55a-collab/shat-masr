@@ -67,7 +67,6 @@ import { compressImageFileToBlob } from '../utils/imageCompression';
 import { offlineQueue } from '../services/offlineQueue';
 import { translateChatMessage } from '../utils/translateMessage';
 import { globalRadioPlayer } from '../services/radioPlayer';
-import { formatLastSeenArabic, isUserTrulyOnline } from '../utils/presenceStatus';
 import {
   ConsentRequestType,
   formatCooldownRemaining,
@@ -82,7 +81,6 @@ interface PrivateChatViewProps {
   targetUser?: User | null;
   onClearTargetUser?: () => void;
   globalOnlineUsers?: User[];
-  allRegisteredUsers?: User[];
   onUpdateUser?: (user: User) => void;
   onChatActiveChange?: (isActive: boolean) => void;
   onPromptRegister?: () => void;
@@ -114,7 +112,6 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
   targetUser,
   onClearTargetUser,
   globalOnlineUsers = [],
-  allRegisteredUsers = [],
   onOpenWallet,
   onUpdateUser,
   onChatActiveChange,
@@ -1115,9 +1112,7 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                 </div>
               ) : (
                 recentChats.map((chat) => {
-                  const livePeer = globalOnlineUsers.find(u => u.id === chat.peerId);
-                  const regPeer = allRegisteredUsers.find(u => u.id === chat.peerId);
-                  const peerOnline = Boolean(livePeer && isUserTrulyOnline(livePeer));
+                  const peerOnline = globalOnlineUsers.some(u => u.id === chat.peerId);
                   const dbUnread = chat.lastSenderId !== currentUser.id ? (Number(chat.unreadCount) || 0) : 0;
                   const unreadCount = Math.max(unreadBySender[chat.peerId] || 0, dbUnread);
                   return (
@@ -1149,12 +1144,11 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                       <div className="flex items-center gap-3 min-w-0">
                         <AvatarWithFrame
                           user={
-                            livePeer || regPeer || {
+                            globalOnlineUsers.find(u => u.id === chat.peerId) || {
                               id: chat.peerId,
                               name: chat.peerName || 'عضو شات مصر',
                               avatar: chat.peerAvatar || '',
                               role: (chat.peerRole as any) || 'member',
-                              isOnline: peerOnline,
                               status: peerOnline ? 'online' : 'offline',
                             }
                           }
@@ -1211,13 +1205,13 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
           {/* Tab 3: Online Users Available to Message */}
           {activeTab === 'online' && (
             <div className="space-y-2 flex-1 overflow-y-auto pb-4">
-              {globalOnlineUsers.filter(u => u.id !== currentUser.id && isUserTrulyOnline(u)).length === 0 ? (
+              {globalOnlineUsers.filter(u => u.id !== currentUser.id).length === 0 ? (
                 <div className="p-8 text-center rounded-2xl bg-white border border-slate-200 space-y-2 shadow-xs">
                   <p className="text-xs text-slate-600">لا يوجد متصلون آخرون في هذه اللحظة.</p>
                 </div>
               ) : (
                 globalOnlineUsers
-                  .filter(u => u.id !== currentUser.id && isUserTrulyOnline(u))
+                  .filter(u => u.id !== currentUser.id)
                   .map((user) => (
                     <div
                       key={user.id}
@@ -1290,39 +1284,30 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
 
           {/* 1. Simplified 3-Zone Header: Back+User | Audio Call | Actions Dropdown */}
           {(() => {
-            const liveOnlinePeer = globalOnlineUsers.find(u => u.id === activeContact.id);
-            const registeredPeer = allRegisteredUsers.find(u => u.id === activeContact.id);
-            const isPeerTrulyOnline = Boolean(liveOnlinePeer && isUserTrulyOnline(liveOnlinePeer));
-            const effectiveLastSeen = liveOnlinePeer?.lastSeen ?? registeredPeer?.lastSeen;
-            const resolvedPeerUser: User = liveOnlinePeer
-              ? { ...liveOnlinePeer, isOnline: isPeerTrulyOnline, lastSeen: effectiveLastSeen }
-              : registeredPeer
-              ? { ...registeredPeer, isOnline: false, status: 'offline', lastSeen: effectiveLastSeen }
-              : {
-                  id: activeContact.id,
-                  name: activeContact.name,
-                  username: activeContact.name.toLowerCase().replace(/\s+/g, '_'),
-                  avatar: activeContact.avatar,
-                  bio: 'عضو في شات مصر',
-                  country: 'مصر',
-                  countryFlag: activeContact.countryFlag || '🇪🇬',
-                  role: 'member',
-                  coins: 0,
-                  earningsEgp: 0,
-                  earningsUsd: 0,
-                  vipBadge: '',
-                  frameStyle: 'border-slate-300',
-                  profileWallpaper: '',
-                  fontPreference: 'cairo',
-                  isOnline: false,
-                  status: 'offline',
-                  lastSeen: effectiveLastSeen,
-                  joinedAt: '',
-                  gender: 'male',
-                  level: 1,
-                  likesReceived: 0,
-                  giftsReceivedCount: 0,
-                };
+            const resolvedPeerUser: User = globalOnlineUsers.find(u => u.id === activeContact.id) || {
+              id: activeContact.id,
+              name: activeContact.name,
+              username: activeContact.name.toLowerCase().replace(/\s+/g, '_'),
+              avatar: activeContact.avatar,
+              bio: 'عضو في شات مصر',
+              country: 'مصر',
+              countryFlag: activeContact.countryFlag || '🇪🇬',
+              role: 'member',
+              coins: 0,
+              earningsEgp: 0,
+              earningsUsd: 0,
+              vipBadge: '',
+              frameStyle: 'border-slate-300',
+              profileWallpaper: '',
+              fontPreference: 'cairo',
+              isOnline: activeContact.status === 'online',
+              status: activeContact.status,
+              joinedAt: '',
+              gender: 'male',
+              level: 1,
+              likesReceived: 0,
+              giftsReceivedCount: 0,
+            };
 
             return (
               <div className="relative z-20 w-full px-2.5 sm:px-3.5 py-2 pt-[calc(env(safe-area-inset-top,0px)+0.5rem)] sm:py-2.5 bg-white/95 backdrop-blur-md border-b border-amber-200/70 shadow-xs flex items-center justify-between gap-2 shrink-0">
@@ -1349,7 +1334,7 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                     <AvatarWithFrame
                       user={resolvedPeerUser}
                       size="sm"
-                      showOnlineDot={isPeerTrulyOnline}
+                      showOnlineDot
                     />
 
                     <div className="min-w-0 flex-1 text-right">
@@ -1367,15 +1352,13 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                             <span className="w-1 h-1 rounded-full bg-amber-500 animate-bounce" style={{ animationDelay: '300ms' }}></span>
                           </span>
                         </span>
-                      ) : isPeerTrulyOnline ? (
+                      ) : resolvedPeerUser.isOnline || activeContact.status === 'online' ? (
                         <span className="text-[9.5px] sm:text-[10px] text-emerald-600 font-bold flex items-center gap-1 truncate">
                           <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shrink-0"></span>
                           <span className="truncate">متصل الآن • خاص مشفر</span>
                         </span>
                       ) : (
-                        <span className="text-[9.5px] sm:text-[10px] text-slate-500 font-medium block truncate">
-                          {formatLastSeenArabic(effectiveLastSeen)} • خاص مشفر
-                        </span>
+                        <span className="text-[9.5px] sm:text-[10px] text-slate-500 font-medium block truncate">خاص مشفر • غير متصل</span>
                       )}
                     </div>
                   </button>
