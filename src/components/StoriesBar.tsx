@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   Plus,
   X,
@@ -9,12 +9,17 @@ import {
   ChevronRight,
   Send,
   Sparkles,
+  Heart,
+  Share2,
+  Trash2,
 } from 'lucide-react';
 import { StoryItem, User } from '../types/chat';
 import {
   subscribeToActiveStories,
   createStory,
   markStoryViewed,
+  toggleStoryLike,
+  deleteStory,
 } from '../services/firebase';
 import { compressImageFile } from '../utils/imageCompression';
 import { VerifiedBadge } from '../utils/verifiedBadge';
@@ -35,15 +40,45 @@ const STORY_GRADIENTS = [
   'from-slate-800 via-slate-900 to-indigo-950',
 ];
 
+function formatRelativeArabicTime(ts: number): string {
+  const diffSec = Math.max(1, Math.floor((Date.now() - ts) / 1000));
+  if (diffSec < 60) return 'الآن';
+  const diffMin = Math.floor(diffSec / 60);
+  if (diffMin === 1) return 'منذ دقيقة';
+  if (diffMin === 2) return 'منذ دقيقتين';
+  if (diffMin <= 10) return `منذ ${diffMin} دقائق`;
+  if (diffMin < 60) return `منذ ${diffMin} دقيقة`;
+  const diffHr = Math.floor(diffMin / 60);
+  if (diffHr === 1) return 'منذ ساعة';
+  if (diffHr === 2) return 'منذ ساعتين';
+  if (diffHr <= 10) return `منذ ${diffHr} ساعات`;
+  if (diffHr < 24) return `منذ ${diffHr} ساعة`;
+  const diffDay = Math.floor(diffHr / 24);
+  return diffDay === 1 ? 'منذ يوم' : `منذ ${diffDay} أيام`;
+}
+
+interface UserStoryGroup {
+  userId: string;
+  userName: string;
+  userAvatar: string;
+  userRole?: User['role'];
+  userVerified?: boolean;
+  latestCreatedAt: number;
+  stories: StoryItem[];
+}
+
 export const StoriesBar: React.FC<StoriesBarProps> = ({
   currentUser,
   onOpenUserProfile,
 }) => {
   const [stories, setStories] = useState<StoryItem[]>([]);
-  const [activeIndex, setActiveIndex] = useState<number | null>(null);
+  // Isolated single-user story viewer state (NEVER advances across different users)
+  const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
+  const [activeItemIndex, setActiveItemIndex] = useState<number>(0);
   const [progress, setProgress] = useState(0);
   const [isPaused, setIsPaused] = useState(false);
   const [showViewersModal, setShowViewersModal] = useState(false);
+  const [confirmDeleteStoryId, setConfirmDeleteStoryId] = useState<string | null>(null);
 
   // Story creator modal
   const [isCreatorOpen, setIsCreatorOpen] = useState(false);
@@ -76,10 +111,69 @@ export const StoriesBar: React.FC<StoriesBarProps> = ({
     };
   }, [currentUser.id]);
 
-  const activeStory =
-    activeIndex !== null && stories[activeIndex] ? stories[activeIndex] : null;
+  // Group stories strictly by userId so each person gets their own separate circle
+  const storyGroups = useMemo<UserStoryGroup[]>(() => {
+    const map = new Map<string, UserStoryGroup>();
+    for (const story of stories) {
+      if (!story?.userId) continue;
+      const existing = map.get(story.userId);
+      if (!existing) {
+        map.set(story.userId, {
+          userId: story.userId,
+          userName: story.userName,
+          userAvatar: story.userAvatar,
+          userRole: story.userRole,
+          userVerified: story.userVerified,
+          latestCreatedAt: story.createdAt || 0,
+          stories: [story],
+        });
+      } else {
+        existing.stories.push(story);
+        if ((story.createdAt || 0) > existing.latestCreatedAt) {
+          existing.latestCreatedAt = story.createdAt || 0;
+          existing.userName = story.userName;
+          existing.userAvatar = story.userAvatar;
+        }
+      }
+    }
 
-  // Mark story viewed when opened
+    const groups = Array.from(map.values()).map((g) => ({
+      ...g,
+      // Chronological within the SAME user's story sequence (part 1 -> part 2)
+      stories: [...g.stories].sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0)),
+    }));
+
+    return groups.sort((a, b) => {
+      if (a.userId === currentUser.id && b.userId !== currentUser.id) return -1;
+      if (b.userId === currentUser.id && a.userId !== currentUser.id) return 1;
+      return b.latestCreatedAt - a.latestCreatedAt;
+    });
+  }, [stories, currentUser.id]);
+
+  // Stories belonging strictly to the currently opened user ONLY
+  const selectedUserStories = useMemo<StoryItem[]>(() => {
+    if (!selectedUserId) return [];
+    return storyGroups.find((g) => g.userId === selectedUserId)?.stories || [];
+  }, [storyGroups, selectedUserId]);
+
+  const activeStory =
+    selectedUserId && selectedUserStories[activeItemIndex]
+      ? selectedUserStories[activeItemIndex]
+      : null;
+
+  // Close viewer automatically if the selected user has no remaining stories (e.g. after deletion)
+  useEffect(() => {
+    if (!selectedUserId) return;
+    if (selectedUserStories.length === 0) {
+      setSelectedUserId(null);
+      setActiveItemIndex(0);
+      setShowViewersModal(false);
+    } else if (activeItemIndex >= selectedUserStories.length) {
+      setActiveItemIndex(selectedUserStories.length - 1);
+    }
+  }, [selectedUserId, selectedUserStories.length, activeItemIndex]);
+
+  // Mark individual story viewed once per unique viewer
   useEffect(() => {
     if (!activeStory) return;
     if (activeStory.userId !== currentUser.id) {
@@ -87,9 +181,11 @@ export const StoriesBar: React.FC<StoriesBarProps> = ({
     }
   }, [activeStory?.id, activeStory?.userId, currentUser]);
 
-  // 6-second auto-advance timer
+  // 6-second auto-advance timer STRICTLY inside the same user's stories; closes when done
   useEffect(() => {
-    if (activeIndex === null || !activeStory || isPaused || showViewersModal) return;
+    if (!selectedUserId || !activeStory || isPaused || showViewersModal || confirmDeleteStoryId) {
+      return;
+    }
     setProgress(0);
     const start = Date.now();
     const duration = 6000;
@@ -99,15 +195,51 @@ export const StoriesBar: React.FC<StoriesBarProps> = ({
       setProgress(pct);
       if (pct >= 100) {
         window.clearInterval(interval);
-        setActiveIndex((prev) => {
-          if (prev === null) return null;
-          if (prev + 1 < stories.length) return prev + 1;
-          return null;
+        setActiveItemIndex((prev) => {
+          if (prev + 1 < selectedUserStories.length) {
+            return prev + 1;
+          }
+          // End of this user's stories: close viewer & return to Home (never spill into another user)
+          setSelectedUserId(null);
+          setShowViewersModal(false);
+          return 0;
         });
       }
     }, 60);
     return () => window.clearInterval(interval);
-  }, [activeIndex, activeStory?.id, isPaused, showViewersModal, stories.length]);
+  }, [
+    selectedUserId,
+    activeStory?.id,
+    isPaused,
+    showViewersModal,
+    confirmDeleteStoryId,
+    selectedUserStories.length,
+  ]);
+
+  const closeViewer = () => {
+    setSelectedUserId(null);
+    setActiveItemIndex(0);
+    setShowViewersModal(false);
+    setConfirmDeleteStoryId(null);
+  };
+
+  const goToNextStoryOfSameUser = () => {
+    if (activeItemIndex + 1 < selectedUserStories.length) {
+      setActiveItemIndex((prev) => prev + 1);
+      setShowViewersModal(false);
+    } else {
+      closeViewer();
+    }
+  };
+
+  const goToPrevStoryOfSameUser = () => {
+    if (activeItemIndex > 0) {
+      setActiveItemIndex((prev) => prev - 1);
+      setShowViewersModal(false);
+    } else {
+      setProgress(0);
+    }
+  };
 
   const handlePickImage = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -152,9 +284,52 @@ export const StoriesBar: React.FC<StoriesBarProps> = ({
     }
   };
 
+  const handleLikeActiveStory = async () => {
+    if (!activeStory) return;
+    try {
+      await toggleStoryLike(activeStory.id, currentUser);
+    } catch {}
+  };
+
+  const handleShareActiveStory = async () => {
+    if (!activeStory) return;
+    const shareText = `قصة ${activeStory.userName} على شات مصر: ${activeStory.caption || 'شاهد القصة الآن ✨'}`;
+    const shareUrl = typeof window !== 'undefined' ? window.location.origin : '';
+    if (typeof navigator !== 'undefined' && navigator.share) {
+      try {
+        await navigator.share({
+          title: `قصة ${activeStory.userName} - شات مصر`,
+          text: shareText,
+          url: shareUrl,
+        });
+        return;
+      } catch {}
+    }
+    try {
+      await navigator.clipboard.writeText(`${shareText}\n${shareUrl}`);
+      toast.success('تم نسخ القصة للمشاركة 🔗');
+    } catch {
+      toast.success('جاهز لمشاركة القصة 🔗');
+    }
+  };
+
+  const handleConfirmDeleteStory = async (storyId: string) => {
+    await deleteStory(storyId);
+    setConfirmDeleteStoryId(null);
+    toast.success('تم حذف القصة وسجل المشاهدات 🗑️');
+  };
+
+  const isStoryOwner = Boolean(activeStory && activeStory.userId === currentUser.id);
   const viewersList = activeStory?.viewers
     ? Object.values(activeStory.viewers).sort((a, b) => (b.viewedAt || 0) - (a.viewedAt || 0))
     : [];
+  const realViewsCount = activeStory
+    ? Math.max(activeStory.viewsCount || 0, viewersList.length)
+    : 0;
+  const isStoryLikedByMe = Boolean(activeStory?.likedBy?.includes(currentUser.id));
+  const realLikesCount = activeStory
+    ? Math.max(activeStory.likesCount || 0, activeStory.likedBy?.length || 0)
+    : 0;
 
   return (
     <div dir="rtl" className="mb-2">
@@ -163,95 +338,104 @@ export const StoriesBar: React.FC<StoriesBarProps> = ({
           <div className="flex items-center gap-1.5 min-w-0">
             <Sparkles className="w-3.5 h-3.5 text-amber-500 shrink-0" />
             <span className="text-xs font-black text-slate-900 truncate">قصص الأعضاء (24 ساعة)</span>
-            {socketState !== 'connected' && (
+            {typeof navigator !== 'undefined' && navigator.onLine === false && socketState !== 'connected' && (
               <span className="px-1.5 py-0.5 rounded-full bg-amber-50 border border-amber-200 text-amber-700 text-[9.5px] font-bold shrink-0 animate-pulse">
                 جاري التحديث...
               </span>
             )}
           </div>
           <span className="text-[10px] font-bold text-slate-500 shrink-0">
-            {stories.length > 0 ? `${stories.length} قصة نشطة` : 'شارك يومك الآن'}
+            {storyGroups.length > 0 ? `${storyGroups.length} عضو نشط` : 'شارك يومك الآن'}
           </span>
         </div>
 
-        <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-0.5">
-          {/* Add Story Trigger */}
+        <div className="flex items-center gap-2.5 overflow-x-auto no-scrollbar pb-0.5">
+          {/* Add Story Circular Button */}
           <button
             type="button"
             onClick={() => setIsCreatorOpen(true)}
-            className="flex flex-col items-center gap-0.5 shrink-0 w-14 group cursor-pointer"
+            className="flex flex-col items-center gap-1 shrink-0 w-14 group cursor-pointer"
           >
-            <div className="relative w-12 h-12 rounded-2xl p-[2px] bg-gradient-to-tr from-indigo-500 via-purple-500 to-amber-500 group-hover:scale-105 transition-transform">
-              <div className="w-full h-full rounded-[13px] overflow-hidden bg-slate-100 relative">
+            <div className="relative w-13 h-13 rounded-full p-[2px] bg-gradient-to-tr from-indigo-500 via-purple-500 to-amber-500 group-hover:scale-105 transition-transform">
+              <div className="w-full h-full rounded-full overflow-hidden bg-slate-100 relative border-2 border-white">
                 {currentUser.avatar ? (
                   <img
                     src={currentUser.avatar}
                     alt={currentUser.name}
-                    className="w-full h-full object-cover opacity-85"
+                    className="w-full h-full object-cover opacity-90"
                   />
                 ) : (
                   <div className="w-full h-full flex items-center justify-center text-base bg-indigo-50 text-indigo-700 font-black">
                     {currentUser.name.slice(0, 1)}
                   </div>
                 )}
-                <span className="absolute bottom-0.5 left-0.5 w-4 h-4 rounded-full bg-indigo-600 text-white flex items-center justify-center border border-white shadow">
-                  <Plus className="w-2.5 h-2.5" />
-                </span>
               </div>
+              <span className="absolute -bottom-0.5 -left-0.5 w-5 h-5 rounded-full bg-indigo-600 text-white flex items-center justify-center border-2 border-white shadow">
+                <Plus className="w-3 h-3" />
+              </span>
             </div>
             <span className="text-[10px] font-black text-slate-700 truncate w-full text-center">
               قصتك
             </span>
           </button>
 
-          {/* Active Stories */}
-          {stories.map((story, idx) => {
-            const hasViewed = Boolean(story.viewers && story.viewers[currentUser.id]);
+          {/* Individual Separated Circular User Story Circles */}
+          {storyGroups.map((group) => {
+            const allViewed = group.stories.every(
+              (s) => s.userId === currentUser.id || Boolean(s.viewers && s.viewers[currentUser.id])
+            );
+            const coverStory = group.stories[group.stories.length - 1];
+            const circlePhoto =
+              group.userAvatar ||
+              (coverStory?.mediaType === 'image' ? coverStory.imageUrl : '') ||
+              '';
+
             return (
               <button
-                key={story.id}
+                key={group.userId}
                 type="button"
                 onClick={() => {
                   setShowViewersModal(false);
-                  setActiveIndex(idx);
+                  setConfirmDeleteStoryId(null);
+                  setSelectedUserId(group.userId);
+                  setActiveItemIndex(0);
                 }}
-                className="flex flex-col items-center gap-0.5 shrink-0 w-14 group cursor-pointer"
+                className="flex flex-col items-center gap-1 shrink-0 w-14 group cursor-pointer"
               >
                 <div
-                  className={`w-12 h-12 rounded-2xl p-[2px] transition-transform group-hover:scale-105 ${
-                    hasViewed
+                  className={`relative w-13 h-13 rounded-full p-[2.5px] transition-transform group-hover:scale-105 ${
+                    allViewed
                       ? 'bg-slate-300'
                       : 'bg-gradient-to-tr from-amber-500 via-rose-500 to-indigo-600 shadow-sm'
                   }`}
                 >
-                  <div className="w-full h-full rounded-[13px] overflow-hidden bg-white p-[1.5px]">
-                    {story.mediaType === 'image' && story.imageUrl ? (
+                  <div className="w-full h-full rounded-full overflow-hidden bg-white p-[1.5px]">
+                    {circlePhoto ? (
                       <img
-                        src={story.imageUrl}
-                        alt={story.userName}
-                        className="w-full h-full object-cover rounded-[11px]"
-                      />
-                    ) : story.userAvatar ? (
-                      <img
-                        src={story.userAvatar}
-                        alt={story.userName}
-                        className="w-full h-full object-cover rounded-[11px]"
+                        src={circlePhoto}
+                        alt={group.userName}
+                        className="w-full h-full object-cover rounded-full"
                       />
                     ) : (
                       <div
-                        className={`w-full h-full rounded-[11px] bg-gradient-to-br ${
-                          story.bgGradient || STORY_GRADIENTS[0]
+                        className={`w-full h-full rounded-full bg-gradient-to-br ${
+                          coverStory?.bgGradient || STORY_GRADIENTS[0]
                         } text-white flex items-center justify-center text-sm font-black`}
                       >
-                        {story.userName.slice(0, 1)}
+                        {group.userName.slice(0, 1)}
                       </div>
                     )}
                   </div>
+                  {group.stories.length > 1 && (
+                    <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 rounded-full bg-indigo-600 text-white text-[9px] font-black flex items-center justify-center border border-white shadow-xs">
+                      {group.stories.length}
+                    </span>
+                  )}
                 </div>
                 <span className="text-[10px] font-bold text-slate-800 truncate w-full text-center inline-flex items-center justify-center gap-0.5">
-                  <span className="truncate">{story.userName}</span>
-                  {(story.userVerified || story.userRole === 'owner') && (
-                    <VerifiedBadge verified={story.userVerified} role={story.userRole} size="xs" />
+                  <span className="truncate">{group.userName}</span>
+                  {(group.userVerified || group.userRole === 'owner') && (
+                    <VerifiedBadge verified={group.userVerified} role={group.userRole} size="xs" />
                   )}
                 </span>
               </button>
@@ -289,7 +473,7 @@ export const StoriesBar: React.FC<StoriesBarProps> = ({
               <button
                 type="button"
                 onClick={() => setIsCreatorOpen(false)}
-                className="p-1.5 rounded-full bg-slate-100 text-slate-600 hover:text-slate-900"
+                className="p-1.5 rounded-full bg-slate-100 text-slate-600 hover:text-slate-900 cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -300,7 +484,7 @@ export const StoriesBar: React.FC<StoriesBarProps> = ({
               <button
                 type="button"
                 onClick={() => setCreatorType('text')}
-                className={`py-1.5 rounded-lg text-xs font-black flex items-center justify-center gap-1.5 transition ${
+                className={`py-1.5 rounded-lg text-xs font-black flex items-center justify-center gap-1.5 transition cursor-pointer ${
                   creatorType === 'text'
                     ? 'bg-indigo-600 text-white shadow-xs'
                     : 'text-slate-600 hover:text-slate-900'
@@ -315,7 +499,7 @@ export const StoriesBar: React.FC<StoriesBarProps> = ({
                   setCreatorType('image');
                   if (!imagePreview) fileInputRef.current?.click();
                 }}
-                className={`py-1.5 rounded-lg text-xs font-black flex items-center justify-center gap-1.5 transition ${
+                className={`py-1.5 rounded-lg text-xs font-black flex items-center justify-center gap-1.5 transition cursor-pointer ${
                   creatorType === 'image'
                     ? 'bg-indigo-600 text-white shadow-xs'
                     : 'text-slate-600 hover:text-slate-900'
@@ -341,7 +525,7 @@ export const StoriesBar: React.FC<StoriesBarProps> = ({
                 <button
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
-                  className="px-3 py-1.5 rounded-xl bg-indigo-50 border border-indigo-200 text-indigo-700 text-xs font-black"
+                  className="px-3 py-1.5 rounded-xl bg-indigo-50 border border-indigo-200 text-indigo-700 text-xs font-black cursor-pointer"
                 >
                   {imagePreview ? 'تغيير الصورة' : 'اختيار صورة من الجهاز'}
                 </button>
@@ -362,7 +546,7 @@ export const StoriesBar: React.FC<StoriesBarProps> = ({
                       key={grad}
                       type="button"
                       onClick={() => setSelectedGradient(grad)}
-                      className={`w-7 h-7 rounded-full bg-gradient-to-br ${grad} border-2 transition-transform ${
+                      className={`w-7 h-7 rounded-full bg-gradient-to-br ${grad} border-2 transition-transform cursor-pointer ${
                         selectedGradient === grad
                           ? 'border-indigo-600 scale-115 shadow'
                           : 'border-white'
@@ -385,7 +569,7 @@ export const StoriesBar: React.FC<StoriesBarProps> = ({
             <button
               type="submit"
               disabled={isSubmitting}
-              className="w-full py-2.5 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white text-xs font-black flex items-center justify-center gap-1.5 shadow-md active:scale-95 transition disabled:opacity-50"
+              className="w-full py-2.5 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white text-xs font-black flex items-center justify-center gap-1.5 shadow-md active:scale-95 transition disabled:opacity-50 cursor-pointer"
             >
               <Send className="w-3.5 h-3.5" />
               <span>{isSubmitting ? 'جاري النشر...' : 'نشر القصة الآن ✨'}</span>
@@ -394,8 +578,8 @@ export const StoriesBar: React.FC<StoriesBarProps> = ({
         </div>
       )}
 
-      {/* Full-Screen Story Viewer */}
-      {activeStory && activeIndex !== null && (
+      {/* Full-Screen Single-User Isolated Story Viewer */}
+      {activeStory && selectedUserId && (
         <div
           dir="rtl"
           className="fixed inset-0 z-[200] bg-slate-950/95 backdrop-blur-md flex items-center justify-center p-0 sm:p-4 animate-in fade-in"
@@ -412,10 +596,10 @@ export const StoriesBar: React.FC<StoriesBarProps> = ({
                 : 'from-slate-900 to-black'
             } text-white shadow-2xl`}
           >
-            {/* Top Progress + User Header */}
-            <div className="p-3 pt-4 bg-gradient-to-b from-black/70 to-transparent z-20 space-y-2.5">
+            {/* Top Progress Bars (Strictly ONE bar per story of THIS user ONLY) + User Header */}
+            <div className="p-3 pt-4 bg-gradient-to-b from-black/75 to-transparent z-20 space-y-2.5">
               <div className="flex items-center gap-1">
-                {stories.map((st, idx) => (
+                {selectedUserStories.map((st, idx) => (
                   <div
                     key={st.id}
                     className="h-1 flex-1 rounded-full bg-white/30 overflow-hidden"
@@ -424,9 +608,9 @@ export const StoriesBar: React.FC<StoriesBarProps> = ({
                       className="h-full bg-white transition-[width] duration-75"
                       style={{
                         width:
-                          idx < activeIndex
+                          idx < activeItemIndex
                             ? '100%'
-                            : idx === activeIndex
+                            : idx === activeItemIndex
                             ? `${progress}%`
                             : '0%',
                       }}
@@ -440,7 +624,7 @@ export const StoriesBar: React.FC<StoriesBarProps> = ({
                   type="button"
                   onClick={() => {
                     if (onOpenUserProfile) {
-                      setActiveIndex(null);
+                      closeViewer();
                       onOpenUserProfile({
                         id: activeStory.userId,
                         name: activeStory.userName,
@@ -468,22 +652,22 @@ export const StoriesBar: React.FC<StoriesBarProps> = ({
                       });
                     }
                   }}
-                  className="flex items-center gap-2 text-right cursor-pointer"
+                  className="flex items-center gap-2 text-right cursor-pointer min-w-0"
                 >
                   {activeStory.userAvatar ? (
                     <img
                       src={activeStory.userAvatar}
                       alt={activeStory.userName}
-                      className="w-9 h-9 rounded-full object-cover border-2 border-white/70"
+                      className="w-9 h-9 rounded-full object-cover border-2 border-white/75 shrink-0"
                     />
                   ) : (
-                    <div className="w-9 h-9 rounded-full bg-indigo-600 flex items-center justify-center font-black">
+                    <div className="w-9 h-9 rounded-full bg-indigo-600 flex items-center justify-center font-black shrink-0">
                       {activeStory.userName.slice(0, 1)}
                     </div>
                   )}
-                  <div>
+                  <div className="min-w-0">
                     <div className="flex items-center gap-1 text-xs font-black text-white">
-                      <span>{activeStory.userName}</span>
+                      <span className="truncate">{activeStory.userName}</span>
                       <VerifiedBadge
                         verified={activeStory.userVerified}
                         role={activeStory.userRole}
@@ -491,25 +675,65 @@ export const StoriesBar: React.FC<StoriesBarProps> = ({
                       />
                     </div>
                     <span className="text-[10px] text-white/75 block">
-                      {new Date(activeStory.createdAt).toLocaleTimeString('ar-EG', {
-                        hour: '2-digit',
-                        minute: '2-digit',
-                      })}
+                      {formatRelativeArabicTime(activeStory.createdAt)}
                     </span>
                   </div>
                 </button>
 
-                <button
-                  type="button"
-                  onClick={() => setActiveIndex(null)}
-                  className="p-2 rounded-full bg-black/40 hover:bg-black/60 text-white"
-                >
-                  <X className="w-4 h-4" />
-                </button>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  {isStoryOwner && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setConfirmDeleteStoryId(activeStory.id);
+                      }}
+                      title="حذف القصة"
+                      aria-label="حذف القصة"
+                      className="p-2 rounded-full bg-rose-600/80 hover:bg-rose-600 text-white cursor-pointer"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={closeViewer}
+                    aria-label="إغلاق القصة"
+                    className="p-2 rounded-full bg-black/45 hover:bg-black/65 text-white cursor-pointer"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
               </div>
             </div>
 
-            {/* Story Body */}
+            {/* Inline Delete Confirmation (Story Owner) */}
+            {confirmDeleteStoryId === activeStory.id && (
+              <div
+                onClick={(e) => e.stopPropagation()}
+                className="mx-4 z-30 p-3 rounded-2xl bg-slate-900/95 border border-rose-400/50 text-white flex items-center justify-between gap-2 text-xs shadow-xl"
+              >
+                <span className="font-bold">حذف هذه القصة وسجل مشاهداتها نهائياً؟</span>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => handleConfirmDeleteStory(activeStory.id)}
+                    className="px-3 py-1 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-black cursor-pointer"
+                  >
+                    حذف
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConfirmDeleteStoryId(null)}
+                    className="px-3 py-1 rounded-xl bg-white/15 hover:bg-white/25 text-white font-bold cursor-pointer"
+                  >
+                    إلغاء
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Story Body + Tap Left/Right Navigation strictly within SAME user's stories */}
             <div className="relative flex-1 flex items-center justify-center px-5 text-center overflow-hidden">
               {activeStory.mediaType === 'image' && activeStory.imageUrl ? (
                 <img
@@ -523,28 +747,30 @@ export const StoriesBar: React.FC<StoriesBarProps> = ({
                 </p>
               )}
 
-              {/* Tap Navigation Overlay */}
+              {/* Tap Right = Previous Story of SAME user */}
               <button
                 type="button"
                 aria-label="القصة السابقة"
-                onClick={() =>
-                  setActiveIndex((prev) => (prev !== null && prev > 0 ? prev - 1 : prev))
-                }
-                className="absolute right-0 top-0 bottom-0 w-1/4 flex items-center justify-start pr-2 opacity-0 hover:opacity-100 transition"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  goToPrevStoryOfSameUser();
+                }}
+                className="absolute right-0 top-0 bottom-0 w-1/3 flex items-center justify-start pr-2 opacity-0 hover:opacity-100 transition cursor-pointer"
               >
                 <span className="p-1.5 rounded-full bg-black/40 text-white">
                   <ChevronRight className="w-5 h-5" />
                 </span>
               </button>
+
+              {/* Tap Left = Next Story of SAME user (closes at end) */}
               <button
                 type="button"
                 aria-label="القصة التالية"
-                onClick={() =>
-                  setActiveIndex((prev) =>
-                    prev !== null && prev + 1 < stories.length ? prev + 1 : null
-                  )
-                }
-                className="absolute left-0 top-0 bottom-0 w-1/4 flex items-center justify-end pl-2 opacity-0 hover:opacity-100 transition"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  goToNextStoryOfSameUser();
+                }}
+                className="absolute left-0 top-0 bottom-0 w-1/3 flex items-center justify-end pl-2 opacity-0 hover:opacity-100 transition cursor-pointer"
               >
                 <span className="p-1.5 rounded-full bg-black/40 text-white">
                   <ChevronLeft className="w-5 h-5" />
@@ -552,40 +778,80 @@ export const StoriesBar: React.FC<StoriesBarProps> = ({
               </button>
             </div>
 
-            {/* Bottom Caption + Viewers Counter */}
-            <div className="p-4 bg-gradient-to-t from-black/80 via-black/40 to-transparent z-20 space-y-2.5">
+            {/* Bottom Caption + Working Action Buttons (Like, Share, View Counter) */}
+            <div
+              onClick={(e) => e.stopPropagation()}
+              className="p-4 bg-gradient-to-t from-black/85 via-black/45 to-transparent z-20 space-y-2.5"
+            >
               {activeStory.mediaType === 'image' && activeStory.caption && (
                 <p className="text-xs font-bold text-white/95 text-center">
                   {activeStory.caption}
                 </p>
               )}
-              <div className="flex items-center justify-center">
-                <button
-                  type="button"
-                  onClick={() => setShowViewersModal((p) => !p)}
-                  className="px-3.5 py-1.5 rounded-full bg-white/15 hover:bg-white/25 border border-white/25 text-white text-xs font-black flex items-center gap-1.5 backdrop-blur-md"
-                >
-                  <Eye className="w-3.5 h-3.5" />
-                  <span>شافها {viewersList.length}</span>
-                </button>
+
+              <div className="flex items-center justify-between gap-2">
+                {/* Left/Start Group: Real View Counter (Clickable ONLY for Story Owner) */}
+                {isStoryOwner ? (
+                  <button
+                    type="button"
+                    onClick={() => setShowViewersModal((p) => !p)}
+                    className="px-3.5 py-2 rounded-full bg-white/18 hover:bg-white/28 border border-white/30 text-white text-xs font-black flex items-center gap-1.5 backdrop-blur-md cursor-pointer transition"
+                    title="عرض قائمة المشاهدين"
+                  >
+                    <Eye className="w-4 h-4" />
+                    <span>شافها {realViewsCount}</span>
+                  </button>
+                ) : (
+                  <div className="px-3.5 py-2 rounded-full bg-white/12 border border-white/20 text-white/90 text-xs font-black flex items-center gap-1.5 backdrop-blur-md">
+                    <Eye className="w-4 h-4" />
+                    <span className="tabular-nums">{realViewsCount}</span>
+                  </div>
+                )}
+
+                {/* Right/End Group: Working Like (Heart) & Share Buttons */}
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleLikeActiveStory}
+                    className={`px-3.5 py-2 rounded-full border text-xs font-black flex items-center gap-1.5 backdrop-blur-md cursor-pointer transition active:scale-95 ${
+                      isStoryLikedByMe
+                        ? 'bg-rose-500/90 border-rose-300 text-white shadow'
+                        : 'bg-white/15 hover:bg-white/25 border-white/25 text-white'
+                    }`}
+                    title={isStoryLikedByMe ? 'إلغاء الإعجاب' : 'أعجبني'}
+                  >
+                    <Heart className={`w-4 h-4 ${isStoryLikedByMe ? 'fill-white text-white' : ''}`} />
+                    <span className="tabular-nums">{realLikesCount > 0 ? realLikesCount : 'إعجاب'}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleShareActiveStory}
+                    className="px-3.5 py-2 rounded-full bg-white/15 hover:bg-white/25 border border-white/25 text-white text-xs font-black flex items-center gap-1.5 backdrop-blur-md cursor-pointer transition active:scale-95"
+                    title="مشاركة القصة"
+                  >
+                    <Share2 className="w-4 h-4" />
+                    <span>مشاركة</span>
+                  </button>
+                </div>
               </div>
             </div>
 
-            {/* Viewers List Sheet */}
-            {showViewersModal && (
+            {/* Owner-Only Viewers List Sheet */}
+            {showViewersModal && isStoryOwner && (
               <div
-                className="absolute inset-x-0 bottom-0 z-30 bg-white text-slate-900 rounded-t-3xl p-4 max-h-[55%] flex flex-col shadow-2xl"
+                className="absolute inset-x-0 bottom-0 z-30 bg-white text-slate-900 rounded-t-3xl p-4 max-h-[58%] flex flex-col shadow-2xl"
                 onClick={(e) => e.stopPropagation()}
               >
                 <div className="flex items-center justify-between border-b border-slate-200 pb-2 mb-2">
                   <h4 className="text-xs font-black flex items-center gap-1.5">
-                    <Eye className="w-3.5 h-3.5 text-indigo-600" />
-                    <span>المشاهدون ({viewersList.length})</span>
+                    <Eye className="w-4 h-4 text-indigo-600" />
+                    <span>المشاهدون ({realViewsCount})</span>
                   </h4>
                   <button
                     type="button"
                     onClick={() => setShowViewersModal(false)}
-                    className="p-1 rounded-full bg-slate-100 text-slate-600"
+                    className="p-1.5 rounded-full bg-slate-100 text-slate-600 hover:text-slate-900 cursor-pointer"
                   >
                     <X className="w-3.5 h-3.5" />
                   </button>
@@ -599,27 +865,53 @@ export const StoriesBar: React.FC<StoriesBarProps> = ({
                     viewersList.map((v) => (
                       <div
                         key={v.id}
-                        className="flex items-center justify-between p-2 rounded-xl bg-slate-50 border border-slate-200 text-xs"
+                        onClick={() => {
+                          if (onOpenUserProfile) {
+                            closeViewer();
+                            onOpenUserProfile({
+                              id: v.userId || v.id,
+                              name: v.name,
+                              username: v.name,
+                              avatar: v.avatar || '',
+                              bio: '',
+                              country: 'مصر',
+                              countryFlag: '🇪🇬',
+                              role: 'member',
+                              coins: 0,
+                              earningsEgp: 0,
+                              earningsUsd: 0,
+                              vipBadge: '',
+                              frameStyle: 'default',
+                              profileWallpaper: 'default',
+                              fontPreference: 'cairo',
+                              isOnline: true,
+                              status: 'online',
+                              joinedAt: '',
+                              gender: 'male',
+                              level: 1,
+                              likesReceived: 0,
+                              giftsReceivedCount: 0,
+                            });
+                          }
+                        }}
+                        className="flex items-center justify-between p-2 rounded-xl bg-slate-50 hover:bg-indigo-50/70 border border-slate-200 text-xs cursor-pointer transition"
                       >
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 min-w-0">
                           {v.avatar ? (
                             <img
                               src={v.avatar}
                               alt={v.name}
-                              className="w-7 h-7 rounded-full object-cover"
+                              className="w-8 h-8 rounded-full object-cover border border-slate-200 shrink-0"
                             />
                           ) : (
-                            <span className="w-7 h-7 rounded-full bg-indigo-100 text-indigo-700 font-black flex items-center justify-center">
+                            <span className="w-8 h-8 rounded-full bg-indigo-100 text-indigo-700 font-black flex items-center justify-center shrink-0">
                               {v.name.slice(0, 1)}
                             </span>
                           )}
-                          <span className="font-bold text-slate-900">{v.name}</span>
+                          <span className="font-bold text-slate-900 truncate">{v.name}</span>
                         </div>
-                        <span className="text-[10px] text-slate-500">
-                          {new Date(v.viewedAt).toLocaleTimeString('ar-EG', {
-                            hour: '2-digit',
-                            minute: '2-digit',
-                          })}
+                        <span className="text-[10.5px] font-semibold text-slate-500 shrink-0">
+                          {formatRelativeArabicTime(v.viewedAt)}
                         </span>
                       </div>
                     ))

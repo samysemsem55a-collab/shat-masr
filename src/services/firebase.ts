@@ -22,7 +22,8 @@ import {
   where,
   arrayUnion,
   arrayRemove,
-  deleteField
+  deleteField,
+  runTransaction
 } from 'firebase/firestore';
 import {
   getStorage,
@@ -60,6 +61,7 @@ import {
 } from 'firebase/auth';
 import { Message, User, FriendRequest, Friend, ForumPost, ForumComment, ForumLikeUserSummary, SharedRoomMission, UserReport, StoryItem, BackupSnapshot } from '../types/chat';
 import { PRIMARY_OWNER_EMAIL } from '../data/seedData';
+import { PRESENCE_HEARTBEAT_MS, PRESENCE_OFFLINE_TIMEOUT_MS, resolveTimestampMs } from '../utils/presenceStatus';
 import firebaseConfigJson from '../../firebase-applet-config.json';
 
 // 1. Firebase Configuration from provided user credentials & applet config
@@ -269,6 +271,9 @@ export function subscribeToRoomPresence(
 
   let fsCleanup: (() => void) | null = null;
   let fsHeartbeat: ReturnType<typeof setInterval> | null = null;
+  let fsSweep: ReturnType<typeof setInterval> | null = null;
+  const roomLastSeenMap = new Map<string, number>();
+
   if (db && user?.id) {
     try {
       const presenceDocRef = doc(db, 'rooms', roomId, 'presence', user.id);
@@ -289,9 +294,20 @@ export function subscribeToRoomPresence(
       };
 
       setDoc(presenceDocRef, presencePayload, { merge: true }).catch(() => {});
+      roomLastSeenMap.set(user.id, Date.now());
+
       fsHeartbeat = setInterval(() => {
-        setDoc(presenceDocRef, { ...presencePayload, lastSeen: Date.now(), updatedAt: serverTimestamp() }, { merge: true }).catch(() => {});
-      }, 40000);
+        if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+          return;
+        }
+        const nowTs = Date.now();
+        roomLastSeenMap.set(user.id, nowTs);
+        setDoc(
+          presenceDocRef,
+          { ...presencePayload, lastSeen: nowTs, updatedAt: serverTimestamp() },
+          { merge: true }
+        ).catch(() => {});
+      }, PRESENCE_HEARTBEAT_MS);
 
       const presenceCol = collection(db, 'rooms', roomId, 'presence');
       const unsubFs = onSnapshot(
@@ -299,15 +315,22 @@ export function subscribeToRoomPresence(
         (snap) => {
           const now = Date.now();
           const activeDocIds = new Set<string>();
+          const isBrowserOnline =
+            typeof navigator === 'undefined' || navigator.onLine !== false;
           snap.docs.forEach((docSnap) => {
             const data = docSnap.data();
-            const lastSeen = typeof data.lastSeen === 'number'
-              ? data.lastSeen
-              : data.updatedAt?.toMillis
-              ? data.updatedAt.toMillis()
-              : now;
-            if (now - lastSeen < 180000) {
+            if (data.status === 'offline' || data.isOnline === false) {
+              roomLastSeenMap.delete(docSnap.id);
+              mergedMap.delete(docSnap.id);
+              return;
+            }
+            const lastSeen =
+              resolveTimestampMs(data.lastSeenMs ?? data.lastSeen ?? data.updatedAt) || 0;
+            const isFresh = lastSeen > 0 && now - lastSeen <= PRESENCE_OFFLINE_TIMEOUT_MS;
+            if (isFresh || !isBrowserOnline) {
+              const effectiveSeen = lastSeen || now;
               activeDocIds.add(docSnap.id);
+              roomLastSeenMap.set(docSnap.id, effectiveSeen);
               mergedMap.set(docSnap.id, {
                 id: docSnap.id,
                 name: data.name || 'عضو',
@@ -318,18 +341,23 @@ export function subscribeToRoomPresence(
                 badges: Array.isArray(data.badges) ? data.badges : [],
                 status: data.status || 'online',
                 isOnline: true,
+                lastSeen: effectiveSeen,
                 isBanned: !!data.isBanned,
                 isMuted: !!data.isMuted,
               } as User);
             } else {
+              roomLastSeenMap.delete(docSnap.id);
               mergedMap.delete(docSnap.id);
             }
           });
-          Array.from(mergedMap.keys()).forEach((id) => {
-            if (id !== user.id && !activeDocIds.has(id)) {
-              mergedMap.delete(id);
-            }
-          });
+          if (isBrowserOnline && !snap.metadata.fromCache) {
+            Array.from(mergedMap.keys()).forEach((id) => {
+              if (id !== user.id && !activeDocIds.has(id)) {
+                roomLastSeenMap.delete(id);
+                mergedMap.delete(id);
+              }
+            });
+          }
           emitMerged();
         },
         (err) => {
@@ -337,9 +365,25 @@ export function subscribeToRoomPresence(
         }
       );
 
+      fsSweep = setInterval(() => {
+        const isBrowserOnline =
+          typeof navigator === 'undefined' || navigator.onLine !== false;
+        if (!isBrowserOnline) return;
+        const now = Date.now();
+        let changed = false;
+        roomLastSeenMap.forEach((ts, id) => {
+          if (id !== user.id && now - ts > PRESENCE_OFFLINE_TIMEOUT_MS) {
+            roomLastSeenMap.delete(id);
+            if (mergedMap.delete(id)) changed = true;
+          }
+        });
+        if (changed) emitMerged();
+      }, 10000);
+
       fsCleanup = () => {
         unsubFs();
         if (fsHeartbeat) clearInterval(fsHeartbeat);
+        if (fsSweep) clearInterval(fsSweep);
         deleteDoc(presenceDocRef).catch(() => {});
       };
     } catch (e) {
@@ -438,10 +482,16 @@ export function subscribeToGlobalPresence(
 
   // Helper to emit merged live presence only when visible user list/fields actually change
   const emitPresence = () => {
+    const nowTs = Date.now();
     if (user && user.id && !liveUsersMap.has(user.id)) {
-      liveUsersMap.set(user.id, { ...user, isOnline: true });
+      liveUsersMap.set(user.id, { ...user, isOnline: true, lastSeen: nowTs });
     }
-    const list = Array.from(liveUsersMap.values());
+    const list = Array.from(liveUsersMap.values()).filter((u) => {
+      if (!u || !u.id) return false;
+      if (u.id === user?.id) return u.status !== 'offline';
+      const seen = resolveTimestampMs((u as any).lastSeenMs ?? u.lastSeen);
+      return u.isOnline === true && u.status !== 'offline' && typeof seen === 'number' && nowTs - seen <= PRESENCE_OFFLINE_TIMEOUT_MS;
+    });
     const sig = list
       .map(
         (u) =>
@@ -457,14 +507,18 @@ export function subscribeToGlobalPresence(
     onGlobalChange(list);
   };
 
-  // Pre-hydrate cached presence so temporary API/WS disconnects NEVER reset member count to 1
+  // Pre-hydrate ONLY fresh (<= 30s) cached presence so stale past users are NEVER counted as online
   try {
     const cachedRaw = localStorage.getItem(globalKey);
     if (cachedRaw) {
       const parsed = JSON.parse(cachedRaw);
+      const now = Date.now();
       if (Array.isArray(parsed)) {
         parsed.forEach((u: User) => {
-          if (u && u.id) liveUsersMap.set(u.id, { ...u, isOnline: true });
+          const seen = resolveTimestampMs((u as any)?.lastSeenMs ?? u?.lastSeen);
+          if (u && u.id && u.isOnline === true && u.status !== 'offline' && typeof seen === 'number' && now - seen <= PRESENCE_OFFLINE_TIMEOUT_MS) {
+            liveUsersMap.set(u.id, { ...u, isOnline: true, lastSeen: seen });
+          }
         });
       }
     }
@@ -472,7 +526,7 @@ export function subscribeToGlobalPresence(
 
   // Add initial self
   if (user && user.id) {
-    liveUsersMap.set(user.id, { ...user, isOnline: true });
+    liveUsersMap.set(user.id, { ...user, isOnline: true, lastSeen: Date.now() });
     emitPresence();
   }
 
@@ -480,11 +534,15 @@ export function subscribeToGlobalPresence(
   let unsubFirestore: (() => void) | null = null;
   let unsubReconnect: (() => void) | null = null;
   let heartbeatTimer: any = null;
+  let sweepTimer: any = null;
+  let visibilityHandler: (() => void) | null = null;
+  const rtdbTrackedIds = new Set<string>();
 
   if (db && user && user.id) {
     try {
       const userOnlineDoc = doc(db, 'online_users', user.id);
       const userPresenceDoc = doc(db, 'presence', user.id);
+      const userProfileDoc = doc(db, 'users', user.id);
       const onlinePayload = {
         id: user.id,
         name: user.name,
@@ -515,17 +573,12 @@ export function subscribeToGlobalPresence(
         updatedAt: serverTimestamp()
       };
 
-      const presencePayload = {
-        online: true,
-        lastSeen: serverTimestamp(),
-        lastSeenMs: Date.now(),
-        currentRoom: null as string | null,
-        username: user.name || user.username || 'عضو',
-        avatar: user.avatar || '',
-      };
-
-      const sendPresenceHeartbeat = () => {
+      const sendPresenceHeartbeat = (forceEvenIfHidden: boolean = false) => {
+        if (!forceEvenIfHidden && typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+          return;
+        }
         const nowTs = Date.now();
+        liveUsersMap.set(user.id, { ...liveUsersMap.get(user.id), ...user, isOnline: true, lastSeen: nowTs });
         setDoc(userOnlineDoc, {
           ...onlinePayload,
           lastSeen: nowTs,
@@ -538,37 +591,60 @@ export function subscribeToGlobalPresence(
           username: user.name || user.username || 'عضو',
           avatar: user.avatar || '',
         }, { merge: true }).catch(() => {});
+        setDoc(userProfileDoc, {
+          isOnline: true,
+          status: user.status || 'online',
+          lastSeen: serverTimestamp(),
+          lastSeenMs: nowTs,
+          updatedAt: nowTs
+        }, { merge: true }).catch(() => {});
+        if (rtdb) {
+          try {
+            update(ref(rtdb, `global_presence/${user.id}`), {
+              isOnline: true,
+              status: user.status || 'online',
+              lastSeen: nowTs
+            }).catch(() => {});
+          } catch {}
+        }
       };
 
       // Write presence immediately
-      sendPresenceHeartbeat();
+      sendPresenceHeartbeat(true);
 
-      // Send heartbeat every 10 seconds (30s inactivity timeout)
-      heartbeatTimer = setInterval(sendPresenceHeartbeat, 10000);
-      unsubReconnect = realtimeSocket.subscribeToReconnectSuccess(sendPresenceHeartbeat);
+      // Send heartbeat every 15 seconds while active (30s inactivity/disconnect timeout)
+      heartbeatTimer = setInterval(() => sendPresenceHeartbeat(false), PRESENCE_HEARTBEAT_MS);
+      unsubReconnect = realtimeSocket.subscribeToReconnectSuccess(() => sendPresenceHeartbeat(true));
 
-      // Listen to all online users in Firestore in real time (treat lastSeen > 60s as offline)
+      if (typeof document !== 'undefined') {
+        visibilityHandler = () => {
+          if (document.visibilityState === 'visible') {
+            sendPresenceHeartbeat(true);
+          }
+        };
+        document.addEventListener('visibilitychange', visibilityHandler);
+      }
+
+      // Listen to all online users in Firestore in real time (strict 30s freshness + isOnline === true)
       const onlineCol = collection(db, 'online_users');
       unsubFirestore = onSnapshot(onlineCol, (snap) => {
         const now = Date.now();
         const currentFsIds = new Set<string>();
+        const isBrowserOnline =
+          typeof navigator === 'undefined' || navigator.onLine !== false;
+
         snap.docs.forEach((docSnap) => {
           const data = docSnap.data();
-          if (data.status === 'offline' || data.isOnline === false) {
+          if (data.status === 'offline' || data.isOnline !== true) {
             firestoreTrackedIds.delete(docSnap.id);
             if (docSnap.id !== user.id) liveUsersMap.delete(docSnap.id);
             return;
           }
-          const lastSeen = typeof data.lastSeen === 'number'
-            ? data.lastSeen
-            : data.updatedAt?.toMillis
-            ? data.updatedAt.toMillis()
-            : now;
-          // Timeout: treat users whose heartbeat/lastSeen is older than 32s as Offline ONLY when connected
-          const isApiConnected =
-            realtimeSocket.getConnectionState() === 'connected' &&
-            (typeof navigator === 'undefined' || navigator.onLine !== false);
-          if (now - lastSeen <= 32000 || !isApiConnected) {
+          const lastSeen =
+            resolveTimestampMs(data.lastSeenMs ?? data.lastSeen ?? data.updatedAt) || 0;
+          const isFresh = lastSeen > 0 && now - lastSeen <= PRESENCE_OFFLINE_TIMEOUT_MS;
+
+          if (isFresh || (!isBrowserOnline && lastSeen > 0)) {
             currentFsIds.add(docSnap.id);
             firestoreTrackedIds.add(docSnap.id);
             liveUsersMap.set(docSnap.id, {
@@ -597,6 +673,7 @@ export function subscribeToGlobalPresence(
               isMuted: !!data.isMuted,
               coins: Number(data.coins) || 0,
               ratingPoints: Number(data.ratingPoints) || 0,
+              lastSeen,
               isOnline: true
             } as User);
           } else {
@@ -607,16 +684,21 @@ export function subscribeToGlobalPresence(
           }
         });
 
-        // Remove previously tracked docs ONLY when connected (never wipe cached count on API disconnect)
-        const canPrune =
-          realtimeSocket.getConnectionState() === 'connected' &&
-          (typeof navigator === 'undefined' || navigator.onLine !== false);
-        if (canPrune) {
+        // Remove stale offline docs when connected & fresh from server
+        if (isBrowserOnline && !snap.metadata.fromCache) {
           Array.from(firestoreTrackedIds).forEach((trackedId) => {
             if (!currentFsIds.has(trackedId)) {
               firestoreTrackedIds.delete(trackedId);
-              if (trackedId !== user.id) {
+              if (trackedId !== user.id && !rtdbTrackedIds.has(trackedId)) {
                 liveUsersMap.delete(trackedId);
+              }
+            }
+          });
+          Array.from(liveUsersMap.entries()).forEach(([uid, u]) => {
+            if (uid !== user.id && !currentFsIds.has(uid)) {
+              const seenTs = resolveTimestampMs((u as any).lastSeenMs ?? u.lastSeen);
+              if (!seenTs || now - seenTs > PRESENCE_OFFLINE_TIMEOUT_MS) {
+                liveUsersMap.delete(uid);
               }
             }
           });
@@ -626,22 +708,48 @@ export function subscribeToGlobalPresence(
       }, (err) => {
         console.warn('Firestore online_users onSnapshot notice:', err);
       });
+
+      // Sweep stale users whose heartbeat stopped for > 30s
+      sweepTimer = setInterval(() => {
+        const isBrowserOnline =
+          typeof navigator === 'undefined' || navigator.onLine !== false;
+        if (!isBrowserOnline) return;
+        const now = Date.now();
+        let changed = false;
+        Array.from(liveUsersMap.entries()).forEach(([uid, u]) => {
+          if (uid === user.id) return;
+          const seenTs = resolveTimestampMs((u as any).lastSeenMs ?? u.lastSeen);
+          if (typeof seenTs !== 'number' || now - seenTs > PRESENCE_OFFLINE_TIMEOUT_MS) {
+            firestoreTrackedIds.delete(uid);
+            rtdbTrackedIds.delete(uid);
+            liveUsersMap.delete(uid);
+            changed = true;
+          }
+        });
+        if (changed) emitPresence();
+      }, 10000);
     } catch (e) {
       console.warn('Firestore online_users setup error:', e);
     }
   }
 
-  // 2. Realtime Socket listener
+  // 2. Realtime Socket listener (also timestamps live active users with fresh lastSeen)
   const unsubSocket = realtimeSocket.subscribeToGlobalPresence((liveUsers) => {
     if (liveUsers && liveUsers.length > 0) {
+      const nowTs = Date.now();
       liveUsers.forEach(u => {
-        if (u && u.id) liveUsersMap.set(u.id, { ...u, isOnline: true });
+        if (u && u.id && u.status !== 'offline') {
+          const seen = resolveTimestampMs((u as any).lastSeenMs ?? u.lastSeen) || nowTs;
+          if (nowTs - seen <= PRESENCE_OFFLINE_TIMEOUT_MS) {
+            liveUsersMap.set(u.id, { ...liveUsersMap.get(u.id), ...u, isOnline: true, lastSeen: seen });
+          }
+        }
       });
       emitPresence();
     }
   });
 
-  // 3. RTDB Presence fallback
+  // 3. RTDB Presence fallback (with onDisconnect cleanup + freshness check)
   let rtdbCleanup: (() => void) | null = null;
   if (rtdb && user.id) {
     try {
@@ -667,13 +775,30 @@ export function subscribeToGlobalPresence(
 
       const unsubAll = onValue(allGlobalRef, (snap) => {
         const val = snap.val();
+        const nowTs = Date.now();
+        const nextRtdbIds = new Set<string>();
         if (val) {
           const list = Object.values(val) as User[];
           list.forEach(u => {
-            if (u && u.id) liveUsersMap.set(u.id, { ...u, isOnline: true });
+            if (u && u.id && u.isOnline !== false && u.status !== 'offline') {
+              const seen = resolveTimestampMs((u as any).lastSeenMs ?? u.lastSeen) || 0;
+              if (seen > 0 && nowTs - seen <= PRESENCE_OFFLINE_TIMEOUT_MS) {
+                nextRtdbIds.add(u.id);
+                rtdbTrackedIds.add(u.id);
+                liveUsersMap.set(u.id, { ...liveUsersMap.get(u.id), ...u, isOnline: true, lastSeen: seen });
+              }
+            }
           });
-          emitPresence();
         }
+        Array.from(rtdbTrackedIds).forEach((trackedId) => {
+          if (!nextRtdbIds.has(trackedId)) {
+            rtdbTrackedIds.delete(trackedId);
+            if (trackedId !== user.id && !firestoreTrackedIds.has(trackedId)) {
+              liveUsersMap.delete(trackedId);
+            }
+          }
+        });
+        emitPresence();
       });
 
       rtdbCleanup = () => {
@@ -698,18 +823,29 @@ export function subscribeToGlobalPresence(
 
   return () => {
     if (heartbeatTimer) clearInterval(heartbeatTimer);
+    if (sweepTimer) clearInterval(sweepTimer);
+    if (visibilityHandler && typeof document !== 'undefined') {
+      document.removeEventListener('visibilitychange', visibilityHandler);
+    }
     if (unsubReconnect) unsubReconnect();
     if (unsubFirestore) unsubFirestore();
     if (unsubSocket) unsubSocket();
     if (rtdbCleanup) rtdbCleanup();
     liveChatBus?.removeEventListener('message', handleMsg);
     if (db && user && user.id) {
+      const nowTs = Date.now();
       deleteDoc(doc(db, 'online_users', user.id)).catch(() => {});
       setDoc(doc(db, 'presence', user.id), {
         online: false,
         lastSeen: serverTimestamp(),
-        lastSeenMs: Date.now(),
+        lastSeenMs: nowTs,
         currentRoom: null
+      }, { merge: true }).catch(() => {});
+      setDoc(doc(db, 'users', user.id), {
+        isOnline: false,
+        status: 'offline',
+        lastSeen: serverTimestamp(),
+        lastSeenMs: nowTs
       }, { merge: true }).catch(() => {});
     }
   };
@@ -1270,8 +1406,15 @@ export function subscribeToAllUsers(
     try {
       const usersCol = collection(db, 'users');
       unsubFirestore = onSnapshot(usersCol, (snap) => {
+        const now = Date.now();
         snap.docs.forEach((docSnap) => {
           const data = docSnap.data();
+          const lastSeen = resolveTimestampMs(data.lastSeenMs ?? data.lastSeen ?? data.updatedAt);
+          const isRecentOnline =
+            data.status !== 'offline' &&
+            data.isOnline !== false &&
+            typeof lastSeen === 'number' &&
+            now - lastSeen <= PRESENCE_OFFLINE_TIMEOUT_MS;
           usersMap.set(docSnap.id, {
             id: docSnap.id,
             name: data.name || 'عضو شات مصر',
@@ -1300,8 +1443,9 @@ export function subscribeToAllUsers(
             profileBanner: data.profileBanner || '',
             favoriteMusicUrl: data.favoriteMusicUrl || '',
             bio: data.bio || '',
-            status: data.status || 'online',
-            isOnline: data.status !== 'offline'
+            lastSeen,
+            status: isRecentOnline ? (data.status || 'online') : 'offline',
+            isOnline: isRecentOnline
           } as User);
         });
         emit();
@@ -2458,15 +2602,18 @@ export function subscribeToFriendsList(
 
   const onlineSet = new Set<string>();
   const onlineStatusMap = new Map<string, User['status']>();
+  const lastSeenMap = new Map<string, number>();
 
   const emitUpdatedFriends = () => {
     const list = Object.values(currentFriendsMap).map(f => {
       const fId = f.friendId || f.id;
       const isOnline = onlineSet.has(fId);
+      const lastSeen = lastSeenMap.get(fId) ?? (f as any).lastSeen;
       return {
         ...f,
         isOnline,
-        status: onlineStatusMap.get(fId) || f.status || (isOnline ? 'online' : 'offline')
+        ...(lastSeen ? { lastSeen } : {}),
+        status: isOnline ? (onlineStatusMap.get(fId) || f.status || 'online') : 'offline'
       };
     });
     onFriends(list);
@@ -2488,6 +2635,8 @@ export function subscribeToFriendsList(
           snapshot.docs.forEach(docSnap => {
             const data = docSnap.data();
             const fId = docSnap.id;
+            const resolvedLastSeen = resolveTimestampMs(data.lastSeenMs ?? data.lastSeen);
+            if (resolvedLastSeen) lastSeenMap.set(fId, resolvedLastSeen);
             currentFriendsMap[fId] = {
               id: fId,
               friendId: fId,
@@ -2516,8 +2665,11 @@ export function subscribeToFriendsList(
         const now = Date.now();
         snap.docs.forEach((docSnap) => {
           const data = docSnap.data();
-          const lastSeen = data.lastSeen || (data.updatedAt?.toMillis ? data.updatedAt.toMillis() : now);
-          if (now - lastSeen < 180000) {
+          const lastSeen =
+            resolveTimestampMs(data.lastSeenMs ?? data.lastSeen ?? data.updatedAt) || 0;
+          if (lastSeen) lastSeenMap.set(docSnap.id, lastSeen);
+          const isFresh = data.isOnline !== false && lastSeen > 0 && (now - lastSeen <= PRESENCE_OFFLINE_TIMEOUT_MS);
+          if (isFresh) {
             onlineSet.add(docSnap.id);
             onlineStatusMap.set(docSnap.id, (data.status as User['status']) || 'online');
           } else {
@@ -3327,6 +3479,7 @@ export async function sendDirectMessage(
     stickerLabel: message.stickerLabel,
     stickerAnimation: message.stickerAnimation,
     gift: message.gift,
+    replyTo: message.replyTo,
     expiresAt: now + DM_MESSAGE_TTL_MS,
     createdAt: now,
     timestamp: now,
@@ -4387,13 +4540,14 @@ export const CLIENT_APP_VERSION = '2.4.0';
 export async function updatePresenceCurrentRoom(uid: string, roomId: string | null): Promise<void> {
   if (!db || !uid) return;
   try {
+    const nowTs = Date.now();
     await setDoc(
       doc(db, 'presence', uid),
       {
         online: true,
         currentRoom: roomId,
         lastSeen: serverTimestamp(),
-        lastSeenMs: Date.now()
+        lastSeenMs: nowTs
       },
       { merge: true }
     );
@@ -4404,19 +4558,140 @@ export async function markUserPresenceOffline(uid: string): Promise<void> {
   if (!uid) return;
   if (db) {
     try {
+      const nowTs = Date.now();
       await setDoc(
         doc(db, 'presence', uid),
         {
           online: false,
           currentRoom: null,
           lastSeen: serverTimestamp(),
-          lastSeenMs: Date.now()
+          lastSeenMs: nowTs
         },
         { merge: true }
       );
       await deleteDoc(doc(db, 'online_users', uid)).catch(() => {});
+      await setDoc(
+        doc(db, 'users', uid),
+        {
+          isOnline: false,
+          status: 'offline',
+          lastSeen: serverTimestamp(),
+          lastSeenMs: nowTs
+        },
+        { merge: true }
+      ).catch(() => {});
     } catch {}
   }
+}
+
+export function subscribeToAllRoomsOnlineCounts(
+  currentUserId: string,
+  onCountsChange: (counts: Record<string, number>) => void
+): () => void {
+  const cacheKey = 'shat_masr_room_online_counts';
+  let lastCachedCounts: Record<string, number> = {};
+  try {
+    const raw = localStorage.getItem(cacheKey);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') {
+        lastCachedCounts = parsed;
+        onCountsChange(lastCachedCounts);
+      }
+    }
+  } catch {}
+
+  if (!db) {
+    return () => {};
+  }
+
+  const latestPresenceEntries = new Map<string, { currentRoom: string; lastSeenMs: number }>();
+
+  const recomputeAndEmit = (allowPrune: boolean) => {
+    const now = Date.now();
+    const counts: Record<string, number> = {};
+    latestPresenceEntries.forEach((entry, uid) => {
+      if (allowPrune && uid !== currentUserId && now - entry.lastSeenMs > PRESENCE_OFFLINE_TIMEOUT_MS) {
+        return;
+      }
+      counts[entry.currentRoom] = (counts[entry.currentRoom] || 0) + 1;
+    });
+    lastCachedCounts = counts;
+    try {
+      localStorage.setItem(cacheKey, JSON.stringify(counts));
+    } catch {}
+    onCountsChange(counts);
+  };
+
+  const presenceCol = collection(db, 'presence');
+  const unsub = onSnapshot(
+    presenceCol,
+    (snap) => {
+      const isBrowserOnline =
+        typeof navigator === 'undefined' || navigator.onLine !== false;
+      if (!isBrowserOnline && snap.empty && Object.keys(lastCachedCounts).length > 0) {
+        return;
+      }
+
+      const now = Date.now();
+      latestPresenceEntries.clear();
+      snap.docs.forEach((docSnap) => {
+        const data = docSnap.data();
+        const roomId = typeof data.currentRoom === 'string' ? data.currentRoom.trim() : '';
+        if (!data.online || !roomId) return;
+        const lastSeenMs = resolveTimestampMs(data.lastSeenMs ?? data.lastSeen) || 0;
+        if (docSnap.id === currentUserId || (lastSeenMs > 0 && now - lastSeenMs <= PRESENCE_OFFLINE_TIMEOUT_MS) || !isBrowserOnline) {
+          latestPresenceEntries.set(docSnap.id, { currentRoom: roomId, lastSeenMs: lastSeenMs || now });
+        }
+      });
+
+      recomputeAndEmit(isBrowserOnline && !snap.metadata.fromCache);
+    },
+    (err) => {
+      console.warn('Firestore presence room counts notice:', err);
+    }
+  );
+
+  const sweepTimer = setInterval(() => {
+    const isBrowserOnline =
+      typeof navigator === 'undefined' || navigator.onLine !== false;
+    if (!isBrowserOnline) return;
+    recomputeAndEmit(true);
+  }, 10000);
+
+  return () => {
+    unsub();
+    clearInterval(sweepTimer);
+  };
+}
+
+export function subscribeToRegisteredUsersCount(
+  onUpdate: (count: number, users: User[]) => void
+): () => void {
+  const cacheKey = 'shat_masr_registered_users_count';
+  let lastCount = 0;
+  try {
+    const saved = Number(localStorage.getItem(cacheKey) || '0');
+    if (saved > 0) {
+      lastCount = saved;
+      onUpdate(lastCount, []);
+    }
+  } catch {}
+
+  return subscribeToAllUsers((users) => {
+    const isApiConnected =
+      realtimeSocket.getConnectionState() === 'connected' &&
+      (typeof navigator === 'undefined' || navigator.onLine !== false);
+    if (!isApiConnected && users.length <= 1 && lastCount > 1) {
+      return;
+    }
+    const nextCount = Math.max(users.length, 1);
+    lastCount = nextCount;
+    try {
+      localStorage.setItem(cacheKey, String(nextCount));
+    } catch {}
+    onUpdate(nextCount, users);
+  });
 }
 
 export interface UserThemeSettings {
@@ -4624,6 +4899,9 @@ export async function createStory(
     bgGradient: payload.bgGradient || 'from-indigo-600 via-purple-600 to-fuchsia-600',
     createdAt: now,
     expiresAt: now + 24 * 60 * 60 * 1000,
+    likedBy: [],
+    likesCount: 0,
+    viewsCount: 0,
     viewers: {}
   };
 
@@ -4649,28 +4927,129 @@ export async function markStoryViewed(storyId: string, viewer: User): Promise<vo
   if (!storyId || !viewer?.id) return;
   const viewerEntry = {
     id: viewer.id,
-    name: viewer.name,
+    userId: viewer.id,
+    name: viewer.name || 'عضو شات مصر',
     avatar: viewer.avatar || '',
     viewedAt: Date.now()
   };
+
+  let shouldSkipRemote = false;
+  try {
+    const raw = localStorage.getItem(LOCAL_STORIES_KEY);
+    if (raw) {
+      const list: StoryItem[] = JSON.parse(raw);
+      const updated = list.map((s) => {
+        if (s.id !== storyId) return s;
+        if (s.userId === viewer.id) {
+          shouldSkipRemote = true;
+          return s;
+        }
+        const prevViewers = s.viewers || {};
+        if (prevViewers[viewer.id]) {
+          shouldSkipRemote = true;
+          return s;
+        }
+        const nextViewers = { ...prevViewers, [viewer.id]: viewerEntry };
+        return {
+          ...s,
+          viewers: nextViewers,
+          viewsCount: Math.max((s.viewsCount || 0) + 1, Object.keys(nextViewers).length)
+        };
+      });
+      localStorage.setItem(LOCAL_STORIES_KEY, JSON.stringify(updated));
+    }
+  } catch {}
+
+  if (shouldSkipRemote) return;
+
+  if (db) {
+    try {
+      const storyRef = doc(db, 'stories', storyId);
+      await runTransaction(db, async (tx) => {
+        const snap = await tx.get(storyRef);
+        if (!snap.exists()) return;
+        const data = snap.data() as any;
+        if (data.userId === viewer.id) return;
+        const currentViewers = (data.viewers && typeof data.viewers === 'object' ? data.viewers : {}) as Record<string, any>;
+        if (currentViewers[viewer.id]) return;
+        const nextCount = Math.max(Number(data.viewsCount) || 0, Object.keys(currentViewers).length) + 1;
+        tx.update(storyRef, {
+          [`viewers.${viewer.id}`]: viewerEntry,
+          viewsCount: nextCount
+        });
+      });
+    } catch {}
+  }
+}
+
+export async function toggleStoryLike(storyId: string, user: User): Promise<void> {
+  if (!storyId || !user?.id) return;
+  let currentlyLiked = false;
 
   try {
     const raw = localStorage.getItem(LOCAL_STORIES_KEY);
     if (raw) {
       const list: StoryItem[] = JSON.parse(raw);
-      const updated = list.map((s) =>
-        s.id === storyId ? { ...s, viewers: { ...(s.viewers || {}), [viewer.id]: viewerEntry } } : s
-      );
+      const updated = list.map((s) => {
+        if (s.id !== storyId) return s;
+        const likedSet = new Set(s.likedBy || []);
+        currentlyLiked = likedSet.has(user.id);
+        if (currentlyLiked) {
+          likedSet.delete(user.id);
+        } else {
+          likedSet.add(user.id);
+        }
+        const likedBy = Array.from(likedSet);
+        return { ...s, likedBy, likesCount: likedBy.length };
+      });
       localStorage.setItem(LOCAL_STORIES_KEY, JSON.stringify(updated));
+      liveChatBus?.postMessage({ type: 'STORIES_CHANGED' });
     }
   } catch {}
 
   if (db) {
     try {
-      await updateDoc(doc(db, 'stories', storyId), {
-        [`viewers.${viewer.id}`]: viewerEntry
+      const storyRef = doc(db, 'stories', storyId);
+      await runTransaction(db, async (tx) => {
+        const snap = await tx.get(storyRef);
+        if (!snap.exists()) return;
+        const data = snap.data() as any;
+        const prevLiked: string[] = Array.isArray(data.likedBy) ? data.likedBy : [];
+        const hasLiked = prevLiked.includes(user.id);
+        const nextLiked = hasLiked
+          ? prevLiked.filter((id) => id !== user.id)
+          : [...prevLiked, user.id];
+        tx.update(storyRef, {
+          likedBy: nextLiked,
+          likesCount: nextLiked.length
+        });
       });
     } catch {}
+  }
+}
+
+export async function deleteStory(storyId: string): Promise<void> {
+  if (!storyId) return;
+  try {
+    const raw = localStorage.getItem(LOCAL_STORIES_KEY);
+    if (raw) {
+      const list: StoryItem[] = JSON.parse(raw);
+      localStorage.setItem(LOCAL_STORIES_KEY, JSON.stringify(list.filter((s) => s.id !== storyId)));
+    }
+  } catch {}
+  liveChatBus?.postMessage({ type: 'STORIES_CHANGED' });
+
+  if (db) {
+    try {
+      // Remove any nested viewer records first if present, then delete story document (clears viewsCount & viewers map)
+      const viewersSnap = await getDocs(collection(db, 'stories', storyId, 'viewers')).catch(() => null);
+      if (viewersSnap && !viewersSnap.empty) {
+        await Promise.all(viewersSnap.docs.map((d) => deleteDoc(d.ref).catch(() => {})));
+      }
+      await deleteDoc(doc(db, 'stories', storyId));
+    } catch (err) {
+      handleFirestoreError(err, OperationType.DELETE, `stories/${storyId}`);
+    }
   }
 }
 
@@ -5212,8 +5591,13 @@ export function subscribeToForumPosts(
               likedUsers: data.likedUsers && typeof data.likedUsers === 'object' ? data.likedUsers : {},
               likesCount: Number(data.likesCount) || (Array.isArray(data.likedBy) ? data.likedBy.length : 0),
               commentsCount: Number(data.commentsCount) || 0,
-              viewsCount: Number(data.viewsCount) || 0,
+              viewsCount: Math.max(
+                Number(data.viewsCount) || 0,
+                data.viewers && typeof data.viewers === 'object' ? Object.keys(data.viewers).length : 0,
+                Array.isArray(data.viewedBy) ? data.viewedBy.length : 0
+              ),
               viewedBy: Array.isArray(data.viewedBy) ? data.viewedBy : [],
+              viewers: data.viewers && typeof data.viewers === 'object' ? data.viewers : {},
               mentions: Array.isArray(data.mentions) ? data.mentions : [],
               createdAt: typeof data.createdAt === 'number' ? data.createdAt : Date.now()
             };
@@ -5253,34 +5637,70 @@ export function subscribeToForumPosts(
   };
 }
 
-export async function recordForumPostView(postId: string, viewerId: string): Promise<void> {
+export async function recordForumPostView(postId: string, viewer: User | string): Promise<void> {
+  const viewerId = typeof viewer === 'string' ? viewer : viewer?.id;
   if (!postId || !viewerId) return;
-  const sessionViewKey = `shatmasr_viewed_post_${postId}_${viewerId}`;
-  try {
-    if (sessionStorage.getItem(sessionViewKey) === '1') return;
-    sessionStorage.setItem(sessionViewKey, '1');
-  } catch {}
 
+  const viewerName = typeof viewer === 'string' ? 'عضو شات مصر' : (viewer.name || 'عضو شات مصر');
+  const viewerAvatar = typeof viewer === 'string' ? '' : (viewer.avatar || '');
+  const viewerEntry = {
+    id: viewerId,
+    userId: viewerId,
+    name: viewerName,
+    avatar: viewerAvatar,
+    viewedAt: Date.now()
+  };
+
+  let alreadyCountedOrOwner = false;
   try {
     const raw = localStorage.getItem(LOCAL_FORUM_KEY);
     if (raw) {
       const list: ForumPost[] = JSON.parse(raw);
       const updated = list.map((p) => {
         if (p.id !== postId) return p;
-        const viewed = new Set(p.viewedBy || []);
-        if (viewed.has(viewerId)) return p;
-        viewed.add(viewerId);
-        return { ...p, viewedBy: Array.from(viewed), viewsCount: Math.max((p.viewsCount || 0) + 1, viewed.size) };
+        if (p.authorId === viewerId) {
+          alreadyCountedOrOwner = true;
+          return p;
+        }
+        const prevViewers = p.viewers || {};
+        const viewedSet = new Set(p.viewedBy || []);
+        if (prevViewers[viewerId] || viewedSet.has(viewerId)) {
+          alreadyCountedOrOwner = true;
+          return p;
+        }
+        viewedSet.add(viewerId);
+        const nextViewers = { ...prevViewers, [viewerId]: viewerEntry };
+        return {
+          ...p,
+          viewedBy: Array.from(viewedSet),
+          viewers: nextViewers,
+          viewsCount: Math.max((p.viewsCount || 0) + 1, Object.keys(nextViewers).length, viewedSet.size)
+        };
       });
       localStorage.setItem(LOCAL_FORUM_KEY, JSON.stringify(updated));
     }
   } catch {}
 
+  if (alreadyCountedOrOwner) return;
+
   if (db) {
     try {
-      await updateDoc(doc(db, 'forum_posts', postId), {
-        viewedBy: arrayUnion(viewerId),
-        viewsCount: increment(1)
+      const postRef = doc(db, 'forum_posts', postId);
+      await runTransaction(db, async (tx) => {
+        const snap = await tx.get(postRef);
+        if (!snap.exists()) return;
+        const data = snap.data() as any;
+        if (data.authorId === viewerId) return;
+        const existingViewers = (data.viewers && typeof data.viewers === 'object' ? data.viewers : {}) as Record<string, any>;
+        const existingViewedBy: string[] = Array.isArray(data.viewedBy) ? data.viewedBy : [];
+        if (existingViewers[viewerId] || existingViewedBy.includes(viewerId)) return;
+        const nextCount =
+          Math.max(Number(data.viewsCount) || 0, Object.keys(existingViewers).length, existingViewedBy.length) + 1;
+        tx.update(postRef, {
+          [`viewers.${viewerId}`]: viewerEntry,
+          viewedBy: arrayUnion(viewerId),
+          viewsCount: nextCount
+        });
       });
     } catch {}
   }
@@ -5305,8 +5725,9 @@ export async function createForumPost(user: User, text: string, imageUrl?: strin
     likedBy: [],
     likesCount: 0,
     commentsCount: 0,
-    viewsCount: 1,
-    viewedBy: [user.id],
+    viewsCount: 0,
+    viewedBy: [],
+    viewers: {},
     mentions: mentionMatches,
     createdAt: Date.now()
   };
@@ -5521,6 +5942,10 @@ export async function deleteForumPost(postId: string): Promise<void> {
   liveChatBus?.postMessage({ type: 'FORUM_POSTS_CHANGED' });
   if (db) {
     try {
+      const commentsSnap = await getDocs(collection(db, 'forum_posts', postId, 'comments')).catch(() => null);
+      if (commentsSnap && !commentsSnap.empty) {
+        await Promise.all(commentsSnap.docs.map((d) => deleteDoc(d.ref).catch(() => {})));
+      }
       await deleteDoc(doc(db, 'forum_posts', postId));
     } catch (err) {
       handleFirestoreError(err, OperationType.DELETE, `forum_posts/${postId}`);

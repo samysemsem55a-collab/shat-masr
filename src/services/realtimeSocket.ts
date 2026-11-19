@@ -185,11 +185,14 @@ class RealtimeSocketManager {
   private startHeartbeat() {
     this.stopHeartbeat();
     this.heartbeatTimer = setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+        return;
+      }
       if (this.socket && this.socket.readyState === WebSocket.OPEN) {
         this.send('HEARTBEAT', { userId: this.currentUser?.id, timestamp: Date.now() });
         this.send('PING', { timestamp: Date.now() });
       }
-    }, 10000);
+    }, 15000);
   }
 
   private stopHeartbeat() {

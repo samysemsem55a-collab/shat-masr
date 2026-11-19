@@ -27,6 +27,8 @@ export interface User {
   fontPreference: 'cairo' | 'tajawal' | 'amiri';
   isOnline: boolean;
   status: 'online' | 'busy' | 'dnd' | 'away' | 'in_mic' | 'offline';
+  lastSeen?: number;
+  currentRoom?: string | null;
   joinedAt: string;
   gender: 'male' | 'female';
   age?: number;
@@ -238,8 +240,10 @@ export interface Message {
   };
   replyTo?: {
     id: string;
+    messageId?: string;
     senderName: string;
     content: string;
+    text?: string;
     type?: string;
   };
   expiresAt?: number;
@@ -294,6 +298,7 @@ export interface ForumPost {
   commentsCount: number;
   viewsCount?: number;
   viewedBy?: string[];
+  viewers?: Record<string, { id: string; userId?: string; name: string; avatar?: string; viewedAt: number }>;
   mentions?: string[];
   createdAt: number;
 }
@@ -311,7 +316,10 @@ export interface StoryItem {
   bgGradient?: string;
   createdAt: number;
   expiresAt: number;
-  viewers?: Record<string, { id: string; name: string; avatar?: string; viewedAt: number }>;
+  likedBy?: string[];
+  likesCount?: number;
+  viewsCount?: number;
+  viewers?: Record<string, { id: string; userId?: string; name: string; avatar?: string; viewedAt: number }>;
 }
 
 export interface BackupSnapshot {
