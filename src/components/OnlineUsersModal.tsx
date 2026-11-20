@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { AnimatePresence, motion } from 'framer-motion';
 import { 
   X, 
   Users, 
@@ -47,8 +48,6 @@ export const OnlineUsersModal: React.FC<OnlineUsersModalProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [roleFilter, setRoleFilter] = useState<'all' | 'diamond' | 'gold' | 'members'>('all');
   const [invitedUserIds, setInvitedUserIds] = useState<Set<string>>(new Set());
-
-  if (!isOpen) return null;
 
   // Use provided users, deduplicate by ID, and ensure at least currentUser is present
   const onlineIdSet = new Set<string>(allActiveUsers.map((u) => u.id));
@@ -102,15 +101,25 @@ export const OnlineUsersModal: React.FC<OnlineUsersModalProps> = ({
   };
 
   return (
-    <div
-      dir="rtl"
-      onClick={onClose}
-      className="fixed inset-0 z-[100] flex justify-start bg-slate-900/45 backdrop-blur-sm animate-in fade-in"
-    >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        className="h-[100dvh] w-1/2 w-[50vw] max-w-[420px] min-w-[200px] bg-white border-l border-slate-200 shadow-2xl flex flex-col text-slate-900 animate-drawer-in-right overflow-hidden"
-      >
+    <AnimatePresence>
+      {isOpen && (
+        <motion.div
+          dir="rtl"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.2 }}
+          onClick={onClose}
+          className="fixed inset-0 z-[100] flex justify-start bg-slate-900/45 backdrop-blur-sm"
+        >
+          <motion.div
+            initial={{ x: '100%', opacity: 0.7 }}
+            animate={{ x: 0, opacity: 1 }}
+            exit={{ x: '100%', opacity: 0.7 }}
+            transition={{ type: 'spring', stiffness: 360, damping: 34 }}
+            onClick={(e) => e.stopPropagation()}
+            className="h-[100dvh] w-1/2 w-[50vw] max-w-[420px] min-w-[200px] bg-white border-l border-slate-200 shadow-2xl flex flex-col text-slate-900 overflow-hidden"
+          >
         
         {/* Side Drawer Header */}
         <div className="p-2.5 sm:p-3 pt-[calc(env(safe-area-inset-top,0px)+0.625rem)] bg-gradient-to-l from-teal-600 via-emerald-600 to-cyan-700 text-white border-b border-emerald-500/40 flex items-center justify-between gap-1 shrink-0">
@@ -321,7 +330,9 @@ export const OnlineUsersModal: React.FC<OnlineUsersModalProps> = ({
           })}
         </div>
 
-      </div>
-    </div>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
   );
 };

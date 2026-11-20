@@ -52,7 +52,8 @@ import {
   Ban,
   Image as ImageIcon,
   Loader2,
-  Maximize2
+  Maximize2,
+  MoreVertical
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { toast } from 'sonner';
@@ -265,9 +266,22 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
 }) => {
   // Chat Wallpapers Modal State (Select & Purchase) + Image Upload & Lightbox
   const [isWallpapersModalOpen, setIsWallpapersModalOpen] = useState(false);
+  const [isHeaderToolsOpen, setIsHeaderToolsOpen] = useState(false);
+  const headerToolsRef = useRef<HTMLDivElement>(null);
   const roomImageInputRef = useRef<HTMLInputElement>(null);
   const [isUploadingRoomImage, setIsUploadingRoomImage] = useState(false);
   const [lightboxImageUrl, setLightboxImageUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isHeaderToolsOpen) return;
+    const handleOutsideClick = (e: MouseEvent) => {
+      if (headerToolsRef.current && !headerToolsRef.current.contains(e.target as Node)) {
+        setIsHeaderToolsOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleOutsideClick);
+    return () => document.removeEventListener('mousedown', handleOutsideClick);
+  }, [isHeaderToolsOpen]);
 
   // Top Message Type Filter State & Message Search & Join Mute & Live Audio Stage
   const [messageFilter, setMessageFilter] = useState<'all' | 'messages' | 'images' | 'gifts'>('all');
@@ -596,7 +610,7 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
   // Swipe detection ref
   const touchStartXRef = useRef<number>(0);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
 
   // Sequential 1-by-1 Room Join System Notice (5 seconds per user, clickable for 3 quick actions)
   const [activeJoinNotice, setActiveJoinNotice] = useState<{ id: string; userId: string; name: string; avatar: string } | null>(null);
@@ -1417,43 +1431,43 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
   return (
     <div style={getRoomContainerStyle(room.id, currentUser.chatWallpaper, effectiveRoomBackground)} className={`relative flex flex-col h-[100dvh] w-full bg-[#f6f8fc] overflow-hidden select-none transition-all duration-500 ${isDarkRoomBg ? 'text-white' : 'text-slate-900'}`}>
       
-      {/* 1. COMPACT SINGLE-ROW SLIM HEADER (Maximizes Message Viewport) */}
-      <header className={`backdrop-blur-md border-b px-2 sm:px-3 py-1.5 pt-[calc(env(safe-area-inset-top,0px)+0.35rem)] flex items-center justify-between gap-1.5 shrink-0 shadow-xs z-20 ${
+      {/* 1. COMPACT SINGLE-ROW SLIM HEADER (Full Room Name Visible + Condensed Tools) */}
+      <header className={`relative backdrop-blur-md border-b px-2 sm:px-3 py-1.5 pt-[calc(env(safe-area-inset-top,0px)+0.35rem)] flex items-center justify-between gap-2 shrink-0 shadow-xs z-30 ${
         room.id === 'room_egypt'
           ? 'bg-gradient-to-l from-amber-500/15 via-white/95 dark:via-slate-900/95 to-rose-500/15 border-amber-200/90 dark:border-slate-800'
           : room.id === 'room_egypt2'
           ? 'bg-gradient-to-l from-sky-500/15 via-white/95 dark:via-slate-900/95 to-teal-500/15 border-sky-200/90 dark:border-slate-800'
           : 'bg-gradient-to-l from-emerald-500/15 via-white/95 dark:via-slate-900/95 to-slate-500/10 border-emerald-200/90 dark:border-slate-800'
       }`}>
-        {/* Right (RTL): Back + Room Avatar + Title + Compact Online/Visitors Pills */}
+        {/* Right (RTL): Back + Room Avatar + Full Title + Compact Online Pill */}
         <div className="flex items-center gap-1.5 min-w-0 flex-1">
           <button
             type="button"
             onClick={onBack}
-            className="w-8 h-8 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 active:scale-95 transition-all shrink-0 flex items-center justify-center"
+            className="w-7.5 h-7.5 sm:w-8 sm:h-8 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 active:scale-95 transition-all shrink-0 flex items-center justify-center cursor-pointer"
             title="الرجوع للغرف"
           >
             <ArrowRight className="w-4 h-4" />
           </button>
 
-          <span className={`w-8 h-8 rounded-full bg-gradient-to-br ${
+          <span className={`w-7.5 h-7.5 sm:w-8 sm:h-8 rounded-full bg-gradient-to-br ${
             room.id === 'room_egypt'
               ? 'from-amber-500 via-orange-600 to-rose-700'
               : room.id === 'room_egypt2'
               ? 'from-sky-500 via-blue-600 to-teal-600'
               : room.iconBg || 'from-emerald-600 to-teal-700'
-          } border-2 border-white shadow-sm flex items-center justify-center text-base shrink-0`}>
+          } border-2 border-white shadow-sm flex items-center justify-center text-sm sm:text-base shrink-0`}>
             {room.icon}
           </span>
 
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1 min-w-0">
-              <h2 className="text-xs sm:text-sm font-black text-slate-900 truncate leading-tight">
+              <h2 className="text-[12.5px] sm:text-sm font-black text-slate-900 truncate leading-tight">
                 {room.title}
               </h2>
               {liveIsLocked ? (
                 <span
-                  className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md bg-rose-100 border border-rose-300 text-rose-700 text-[9px] font-black shrink-0"
+                  className="inline-flex items-center gap-0.5 px-1 py-0.5 rounded bg-rose-100 border border-rose-300 text-rose-700 text-[9px] font-black shrink-0"
                   title="الغرفة مقفلة — يمنع دخول أعضاء جدد"
                 >
                   <Lock className="w-2.5 h-2.5" />
@@ -1465,19 +1479,19 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
             </div>
 
-            <div className="flex items-center gap-1 mt-0.5 overflow-hidden">
+            <div className="flex items-center gap-1.5 mt-0.5">
               <button
                 type="button"
                 onClick={onOpenOnlineUsers}
-                className="px-1.5 py-0.2 rounded bg-emerald-50 border border-emerald-200 text-emerald-800 text-[9px] font-black flex items-center gap-0.5 active:scale-95 shrink-0 tabular-nums"
+                className="px-1.5 py-0.2 rounded bg-emerald-50 border border-emerald-200 text-emerald-800 text-[9.5px] font-black flex items-center gap-1 active:scale-95 shrink-0 tabular-nums cursor-pointer"
                 title="المتصلون الآن"
               >
                 <Users className="w-2.5 h-2.5 text-emerald-600" />
-                <span>{Math.max(1, room.activeUsers || 1)}</span>
+                <span>{Math.max(1, room.activeUsers || 1)} متصل</span>
               </button>
 
               <span
-                className="px-1.5 py-0.2 rounded bg-amber-50 border border-amber-200 text-amber-800 text-[9px] font-black flex items-center gap-0.5 shrink-0 tabular-nums"
+                className="hidden sm:inline-flex px-1.5 py-0.2 rounded bg-amber-50 border border-amber-200 text-amber-800 text-[9px] font-black items-center gap-0.5 shrink-0 tabular-nums"
                 title="زوار المنصة"
               >
                 <Eye className="w-2.5 h-2.5 text-rose-500" />
@@ -1487,70 +1501,120 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
           </div>
         </div>
 
-        {/* Left (RTL): Compact Integrated Icon Toolbar (Non-overlapping) */}
-        <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none shrink-0 whitespace-nowrap max-w-[60vw] sm:max-w-none">
-          <button
-            type="button"
-            onClick={() => {
-              setIsSearchOpen(prev => !prev);
-              setSearchQuery('');
-            }}
-            className={`h-8 w-8 rounded-xl border flex items-center justify-center active:scale-95 shrink-0 whitespace-nowrap transition cursor-pointer ${
-              isSearchOpen
-                ? 'bg-indigo-600 text-white border-indigo-600'
-                : 'bg-slate-100 hover:bg-slate-200 border-slate-200 text-slate-700'
-            }`}
-            title="بحث في رسائل الغرفة"
-          >
-            <Search className="w-3.5 h-3.5" />
-          </button>
+        {/* Left (RTL): Ultra-Compact 3-Button Mobile Toolbar + Expanded Desktop Controls */}
+        <div className="flex items-center gap-1 sm:gap-1.5 shrink-0 whitespace-nowrap">
+          {/* Desktop Inline Secondary Controls */}
+          <div className="hidden md:flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => {
+                setIsSearchOpen(prev => !prev);
+                setSearchQuery('');
+              }}
+              className={`h-8 w-8 rounded-xl border flex items-center justify-center active:scale-95 shrink-0 transition cursor-pointer ${
+                isSearchOpen
+                  ? 'bg-indigo-600 text-white border-indigo-600'
+                  : 'bg-slate-100 hover:bg-slate-200 border-slate-200 text-slate-700'
+              }`}
+              title="بحث في رسائل الغرفة"
+            >
+              <Search className="w-3.5 h-3.5" />
+            </button>
 
-          <button
-            type="button"
-            onClick={() => {
-              const nextMuted = !muteJoinNotices;
-              setMuteJoinNotices(nextMuted);
-              if (onUpdateUser) {
-                onUpdateUser({ ...currentUser, muteJoinNotices: nextMuted });
-              }
-              toast.info(nextMuted ? 'تم كتم إشعارات دخول الأعضاء 🔕' : 'تم تفعيل إشعارات دخول الأعضاء 🔔');
-            }}
-            className={`h-8 w-8 rounded-xl border flex items-center justify-center active:scale-95 shrink-0 whitespace-nowrap transition cursor-pointer ${
-              muteJoinNotices
-                ? 'bg-rose-50 border-rose-200 text-rose-600'
-                : 'bg-slate-100 hover:bg-slate-200 border-slate-200 text-slate-700'
-            }`}
-            title={muteJoinNotices ? 'تفعيل إشعارات الدخول' : 'كتم إشعارات الدخول'}
-          >
-            {muteJoinNotices ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
-          </button>
+            <button
+              type="button"
+              onClick={() => {
+                const nextMuted = !muteJoinNotices;
+                setMuteJoinNotices(nextMuted);
+                if (onUpdateUser) {
+                  onUpdateUser({ ...currentUser, muteJoinNotices: nextMuted });
+                }
+                toast.info(nextMuted ? 'تم كتم إشعارات دخول الأعضاء 🔕' : 'تم تفعيل إشعارات دخول الأعضاء 🔔');
+              }}
+              className={`h-8 w-8 rounded-xl border flex items-center justify-center active:scale-95 shrink-0 transition cursor-pointer ${
+                muteJoinNotices
+                  ? 'bg-rose-50 border-rose-200 text-rose-600'
+                  : 'bg-slate-100 hover:bg-slate-200 border-slate-200 text-slate-700'
+              }`}
+              title={muteJoinNotices ? 'تفعيل إشعارات الدخول' : 'كتم إشعارات الدخول'}
+            >
+              {muteJoinNotices ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
+            </button>
 
+            <button
+              type="button"
+              onClick={handleShareRoom}
+              className="h-8 px-2 rounded-xl bg-sky-50 hover:bg-sky-100 border border-sky-200 text-sky-700 text-[10.5px] font-black flex items-center justify-center gap-1 active:scale-95 shrink-0 cursor-pointer"
+              title="مشاركة رابط الغرفة"
+            >
+              <Share2 className="w-3.5 h-3.5" />
+              <span>مشاركة</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setIsWallpapersModalOpen(true)}
+              className="h-8 px-2 rounded-xl bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-700 text-[10.5px] font-black flex items-center justify-center gap-1 active:scale-95 shrink-0 cursor-pointer"
+              title="الخلفيات والألوان"
+            >
+              <Palette className="w-3.5 h-3.5" />
+              <span>خلفيات</span>
+            </button>
+
+            {isModerator && room.isPrivate && (
+              <button
+                type="button"
+                onClick={() => setIsJoinRequestsOpen(true)}
+                className="h-8 px-2 rounded-xl bg-indigo-50 border border-indigo-200 text-indigo-700 text-[10.5px] font-bold flex items-center gap-1 shrink-0 cursor-pointer"
+                title="طلبات الانضمام"
+              >
+                <span>طلبات ({pendingJoinRequests.length})</span>
+              </button>
+            )}
+
+            {isModerator && (
+              <button
+                type="button"
+                onClick={() => setIsModeratorPanelOpen(true)}
+                className={`relative h-8 px-2 rounded-xl border text-[10.5px] font-black flex items-center justify-center gap-1 active:scale-95 shrink-0 cursor-pointer ${
+                  liveIsLocked
+                    ? 'bg-rose-50 border-rose-300 text-rose-800 hover:bg-rose-100'
+                    : 'bg-amber-50 border-amber-300 text-amber-800 hover:bg-amber-100'
+                }`}
+                title="إعدادات الغرفة ولوحة المشرف"
+              >
+                <Settings className={`w-3.5 h-3.5 ${liveIsLocked ? 'text-rose-600' : 'text-amber-600'}`} />
+                <span className="hidden lg:inline">الإعدادات</span>
+              </button>
+            )}
+
+            {room.category === 'religious' && (
+              <button
+                type="button"
+                onClick={() => setShowTasbeeh(!showTasbeeh)}
+                className="h-8 px-2 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-700 text-[10.5px] font-bold flex items-center gap-1 shrink-0 tabular-nums cursor-pointer"
+              >
+                <BookOpen className="w-3.5 h-3.5" />
+                <span>({tasbeehCount})</span>
+              </button>
+            )}
+          </div>
+
+          {/* Primary Quick Buttons (Visible on All Viewports — Short & Clean) */}
           <button
             type="button"
-            onClick={() => {
-              onOpenOnlineUsers();
-            }}
-            className="h-8 px-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-[10.5px] font-black flex items-center gap-1 active:scale-95 shrink-0 whitespace-nowrap"
+            onClick={onOpenOnlineUsers}
+            className="h-7.5 w-7.5 sm:h-8 sm:w-auto sm:px-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-[10.5px] font-black flex items-center justify-center gap-1 active:scale-95 shrink-0 cursor-pointer"
             title="المتصلون والدعوة"
           >
             <Users className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">دعوة</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={handleShareRoom}
-            className="h-8 w-8 sm:w-auto sm:px-2 rounded-xl bg-sky-50 hover:bg-sky-100 border border-sky-200 text-sky-700 text-[10.5px] font-black flex items-center justify-center gap-1 active:scale-95 shrink-0 whitespace-nowrap"
-            title="مشاركة رابط الغرفة"
-          >
-            <Share2 className="w-3.5 h-3.5" />
-            <span className="hidden md:inline">مشاركة</span>
+            <span className="hidden sm:inline">المتصلون</span>
           </button>
 
           <button
             type="button"
             onClick={() => setIsMusicModalOpen(true)}
-            className="h-8 w-8 sm:w-auto sm:px-2 rounded-xl bg-purple-50 hover:bg-purple-100 border border-purple-200 text-purple-700 text-[10.5px] font-black flex items-center justify-center gap-1 active:scale-95 shrink-0 whitespace-nowrap"
+            className="h-7.5 w-7.5 sm:h-8 sm:w-auto sm:px-2 rounded-xl bg-purple-50 hover:bg-purple-100 border border-purple-200 text-purple-700 text-[10.5px] font-black flex items-center justify-center gap-1 active:scale-95 shrink-0 cursor-pointer"
             title="راديو FM ومكتبة الأغاني"
           >
             <Music className="w-3.5 h-3.5" />
@@ -1559,64 +1623,179 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
 
           <button
             type="button"
-            onClick={() => setIsWallpapersModalOpen(true)}
-            className="h-8 w-8 sm:w-auto sm:px-2 rounded-xl bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-700 text-[10.5px] font-black flex items-center justify-center gap-1 active:scale-95 shrink-0 whitespace-nowrap"
-            title="الخلفيات والألوان"
-          >
-            <Palette className="w-3.5 h-3.5" />
-            <span className="hidden md:inline">خلفيات</span>
-          </button>
-
-          {isModerator && room.isPrivate && (
-            <button
-              type="button"
-              onClick={() => setIsJoinRequestsOpen(true)}
-              className="h-8 px-2 rounded-xl bg-indigo-50 border border-indigo-200 text-indigo-700 text-[10.5px] font-bold flex items-center gap-1 shrink-0 whitespace-nowrap"
-              title="طلبات الانضمام"
-            >
-              <span>طلبات ({pendingJoinRequests.length})</span>
-            </button>
-          )}
-
-          {isModerator && (
-            <button
-              type="button"
-              onClick={() => setIsModeratorPanelOpen(true)}
-              className={`relative h-8 w-8 sm:w-auto sm:px-2 rounded-xl border text-[10.5px] font-black flex items-center justify-center gap-1 active:scale-95 shrink-0 whitespace-nowrap cursor-pointer ${
-                liveIsLocked
-                  ? 'bg-rose-50 border-rose-300 text-rose-800 hover:bg-rose-100'
-                  : 'bg-amber-50 border-amber-300 text-amber-800 hover:bg-amber-100'
-              }`}
-              title="إعدادات الغرفة ولوحة المشرف"
-            >
-              <Settings className={`w-3.5 h-3.5 ${liveIsLocked ? 'text-rose-600' : 'text-amber-600'}`} />
-              <span className="hidden lg:inline">الإعدادات</span>
-              {liveIsLocked && (
-                <span className="w-2 h-2 rounded-full bg-rose-500 border border-white shrink-0" title="الغرفة مقفلة" />
-              )}
-            </button>
-          )}
-
-          {room.category === 'religious' && (
-            <button
-              type="button"
-              onClick={() => setShowTasbeeh(!showTasbeeh)}
-              className="h-8 px-2 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-700 text-[10.5px] font-bold flex items-center gap-1 shrink-0 tabular-nums"
-            >
-              <BookOpen className="w-3.5 h-3.5" />
-              <span>({tasbeehCount})</span>
-            </button>
-          )}
-
-          <button
-            type="button"
             onClick={handleOpenGiftWithReminder}
-            className="h-8 px-2.5 rounded-xl bg-gradient-to-r from-pink-500 to-rose-500 text-white font-black text-[10.5px] flex items-center gap-1 shadow-xs active:scale-95 shrink-0"
+            className="hidden sm:flex h-8 px-2.5 rounded-xl bg-gradient-to-r from-pink-500 to-rose-500 text-white font-black text-[10.5px] items-center gap-1 shadow-xs active:scale-95 shrink-0 cursor-pointer"
             title="إرسال هدية فاخرة"
           >
             <Gift className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">هدية</span>
+            <span>هدية</span>
           </button>
+
+          {/* Compact Mobile Tools Menu (Replaces 6 Crowded Icons) */}
+          <div className="relative md:hidden" ref={headerToolsRef}>
+            <button
+              type="button"
+              onClick={() => setIsHeaderToolsOpen(prev => !prev)}
+              className={`relative h-7.5 w-7.5 rounded-xl border flex items-center justify-center active:scale-95 shrink-0 transition cursor-pointer ${
+                isHeaderToolsOpen
+                  ? 'bg-indigo-600 text-white border-indigo-600'
+                  : 'bg-slate-100 hover:bg-slate-200 border-slate-200 text-slate-700'
+              }`}
+              title="أدوات الغرفة"
+            >
+              <MoreVertical className="w-4 h-4" />
+              {(liveIsLocked || pendingJoinRequests.length > 0 || isSearchOpen) && (
+                <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-rose-500 border border-white" />
+              )}
+            </button>
+
+            <AnimatePresence>
+              {isHeaderToolsOpen && (
+                <motion.div
+                  dir="rtl"
+                  initial={{ opacity: 0, y: -8, scale: 0.94 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: -6, scale: 0.95 }}
+                  transition={{ type: 'spring', stiffness: 420, damping: 28 }}
+                  className="origin-top-left absolute left-0 top-full mt-1.5 w-52 bg-white border border-slate-200 rounded-2xl shadow-2xl p-1.5 space-y-1 z-[120] text-right"
+                >
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsHeaderToolsOpen(false);
+                      setIsWallpapersModalOpen(true);
+                    }}
+                    className="w-full px-2.5 py-2 rounded-xl hover:bg-amber-50 text-slate-800 text-xs font-bold flex items-center justify-between gap-2 cursor-pointer"
+                  >
+                    <span className="flex items-center gap-2">
+                      <Palette className="w-4 h-4 text-amber-600" />
+                      <span>الخلفيات والألوان</span>
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsHeaderToolsOpen(false);
+                      setIsSearchOpen(prev => !prev);
+                      setSearchQuery('');
+                    }}
+                    className="w-full px-2.5 py-2 rounded-xl hover:bg-indigo-50 text-slate-800 text-xs font-bold flex items-center justify-between gap-2 cursor-pointer"
+                  >
+                    <span className="flex items-center gap-2">
+                      <Search className="w-4 h-4 text-indigo-600" />
+                      <span>{isSearchOpen ? 'إغلاق البحث' : 'بحث في الرسائل'}</span>
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const nextMuted = !muteJoinNotices;
+                      setMuteJoinNotices(nextMuted);
+                      if (onUpdateUser) {
+                        onUpdateUser({ ...currentUser, muteJoinNotices: nextMuted });
+                      }
+                      setIsHeaderToolsOpen(false);
+                      toast.info(nextMuted ? 'تم كتم إشعارات دخول الأعضاء 🔕' : 'تم تفعيل إشعارات دخول الأعضاء 🔔');
+                    }}
+                    className="w-full px-2.5 py-2 rounded-xl hover:bg-slate-100 text-slate-800 text-xs font-bold flex items-center justify-between gap-2 cursor-pointer"
+                  >
+                    <span className="flex items-center gap-2">
+                      {muteJoinNotices ? (
+                        <VolumeX className="w-4 h-4 text-rose-600" />
+                      ) : (
+                        <Volume2 className="w-4 h-4 text-emerald-600" />
+                      )}
+                      <span>{muteJoinNotices ? 'تفعيل إشعارات الدخول' : 'كتم إشعارات الدخول'}</span>
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsHeaderToolsOpen(false);
+                      handleShareRoom();
+                    }}
+                    className="w-full px-2.5 py-2 rounded-xl hover:bg-sky-50 text-slate-800 text-xs font-bold flex items-center justify-between gap-2 cursor-pointer"
+                  >
+                    <span className="flex items-center gap-2">
+                      <Share2 className="w-4 h-4 text-sky-600" />
+                      <span>مشاركة رابط الغرفة</span>
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsHeaderToolsOpen(false);
+                      handleOpenGiftWithReminder();
+                    }}
+                    className="w-full px-2.5 py-2 rounded-xl hover:bg-rose-50 text-rose-700 text-xs font-bold flex items-center justify-between gap-2 cursor-pointer"
+                  >
+                    <span className="flex items-center gap-2">
+                      <Gift className="w-4 h-4 text-rose-500" />
+                      <span>إرسال هدية فاخرة</span>
+                    </span>
+                  </button>
+
+                  {room.category === 'religious' && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsHeaderToolsOpen(false);
+                        setShowTasbeeh(!showTasbeeh);
+                      }}
+                      className="w-full px-2.5 py-2 rounded-xl hover:bg-emerald-50 text-emerald-800 text-xs font-bold flex items-center justify-between gap-2 cursor-pointer"
+                    >
+                      <span className="flex items-center gap-2">
+                        <BookOpen className="w-4 h-4 text-emerald-600" />
+                        <span>المسبحة ({tasbeehCount})</span>
+                      </span>
+                    </button>
+                  )}
+
+                  {isModerator && room.isPrivate && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsHeaderToolsOpen(false);
+                        setIsJoinRequestsOpen(true);
+                      }}
+                      className="w-full px-2.5 py-2 rounded-xl hover:bg-indigo-50 text-indigo-800 text-xs font-bold flex items-center justify-between gap-2 cursor-pointer"
+                    >
+                      <span className="flex items-center gap-2">
+                        <Users className="w-4 h-4 text-indigo-600" />
+                        <span>طلبات الانضمام</span>
+                      </span>
+                      <span className="px-1.5 py-0.5 rounded-full bg-indigo-100 text-indigo-700 text-[10px]">
+                        {pendingJoinRequests.length}
+                      </span>
+                    </button>
+                  )}
+
+                  {isModerator && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsHeaderToolsOpen(false);
+                        setIsModeratorPanelOpen(true);
+                      }}
+                      className="w-full px-2.5 py-2 rounded-xl bg-amber-50/70 hover:bg-amber-100 text-amber-900 text-xs font-black flex items-center justify-between gap-2 cursor-pointer"
+                    >
+                      <span className="flex items-center gap-2">
+                        <Settings className={`w-4 h-4 ${liveIsLocked ? 'text-rose-600' : 'text-amber-600'}`} />
+                        <span>إعدادات الغرفة</span>
+                      </span>
+                      {liveIsLocked && (
+                        <span className="text-[10px] text-rose-600 font-black">مقفلة</span>
+                      )}
+                    </button>
+                  )}
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
         </div>
       </header>
 
@@ -2011,11 +2190,12 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
         )}
 
         {/* Scrollable Messages Feed */}
-        <div className="relative z-10 flex-1 overflow-y-auto px-2.5 sm:px-3.5 py-2 space-y-1.5 scroll-smooth text-right">
+        <div className="relative z-10 flex-1 overflow-y-auto overflow-x-hidden px-2.5 sm:px-3.5 py-2 space-y-1.5 scroll-smooth text-right">
+        <AnimatePresence initial={false}>
         {displayedMessages.map((msg, idx) => {
           const isMe = msg.senderId === currentUser.id;
           const isPrivateMsg = msg.type === 'private' || msg.isPrivate;
-          const uniqueKey = `${msg.id || 'msg'}_${idx}`;
+          const uniqueKey = msg.id || `msg_${idx}_${msg.senderId || 'u'}_${msg.timestamp || 0}`;
 
           // Automated System Conduct Notice Banner (Auto-hides after 5 seconds)
           if (msg.type === 'system_welcome' && msg.senderId === 'system_bot') {
@@ -2023,9 +2203,10 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
             return (
               <motion.div
                 key={uniqueKey}
-                initial={{ opacity: 0, y: 6 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.18, ease: 'easeOut' }}
+                initial={{ opacity: 0, y: 10, scale: 0.94 }}
+                animate={{ opacity: [0, 1, 1], y: [10, -1, 0], scale: [0.94, 1.025, 1] }}
+                exit={{ opacity: 0, y: -6, scale: 0.95, transition: { duration: 0.15 } }}
+                transition={{ duration: 0.38, times: [0, 0.55, 1], ease: 'easeOut' }}
                 className="px-3 py-1.5 my-1 rounded-2xl bg-amber-50/95 border border-amber-200 text-amber-950 flex items-center justify-between gap-2 shadow-2xs"
               >
                 <div className="flex items-center gap-2 min-w-0">
@@ -2055,9 +2236,10 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
             return (
               <motion.div 
                 key={uniqueKey} 
-                initial={{ opacity: 0, y: 8, scale: 0.96 }}
-                animate={{ opacity: 1, y: 0, scale: 1 }}
-                transition={{ duration: 0.2 }}
+                initial={{ opacity: 0, y: 12, scale: 0.92 }}
+                animate={{ opacity: [0, 1, 1], y: [12, -1, 0], scale: [0.92, 1.035, 1] }}
+                exit={{ opacity: 0, scale: 0.94, transition: { duration: 0.15 } }}
+                transition={{ duration: 0.4, times: [0, 0.55, 1], ease: 'easeOut' }}
                 className="flex justify-center my-1"
               >
                 <div className="max-w-[90%] px-3 py-1 rounded-full bg-slate-200/85 border border-slate-300/80 text-slate-700 text-[10px] sm:text-[11px] font-bold flex items-center gap-1.5 shadow-xs backdrop-blur-sm truncate">
@@ -2072,9 +2254,10 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
             return (
               <motion.div 
                 key={uniqueKey} 
-                initial={{ opacity: 0, scale: 0.9, y: 12 }}
-                animate={{ opacity: 1, scale: 1, y: 0 }}
-                transition={{ duration: 0.3, type: 'spring' }}
+                initial={{ opacity: 0, scale: 0.88, y: 16 }}
+                animate={{ opacity: [0, 1, 1], scale: [0.88, 1.04, 1], y: [16, -2, 0] }}
+                exit={{ opacity: 0, scale: 0.92, transition: { duration: 0.16 } }}
+                transition={{ duration: 0.46, times: [0, 0.55, 1], ease: 'easeOut' }}
                 className="flex justify-center my-3 px-1"
               >
                 <div className="relative overflow-hidden rounded-3xl bg-gradient-to-r from-amber-50 via-white to-rose-50 border-2 border-amber-300 p-3 sm:p-4 max-w-[94%] sm:max-w-md w-full shadow-lg animate-subtle-gift-pulse">
@@ -2169,9 +2352,15 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
           return (
             <motion.div
               key={uniqueKey}
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.18, ease: 'easeOut' }}
+              initial={{ opacity: 0, y: 14, x: isMe ? 12 : -12, scale: 0.94 }}
+              animate={{
+                opacity: [0, 1, 1],
+                y: [14, -2, 0],
+                x: [isMe ? 12 : -12, 0, 0],
+                scale: [0.94, 1.03, 1],
+              }}
+              exit={{ opacity: 0, scale: 0.92, transition: { duration: 0.15 } }}
+              transition={{ duration: 0.42, times: [0, 0.55, 1], ease: 'easeOut' }}
               data-preserve-light={!isDarkRoomBg ? 'true' : undefined}
               className={`chat-msg-row flex items-start gap-2 justify-start group rounded-xl transition-colors ${msgTextOutlineClass} ${
                 vipBorderClass
@@ -2603,6 +2792,7 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
             </motion.div>
           );
         })}
+        </AnimatePresence>
         <div ref={messagesEndRef} />
         </div>
 
@@ -2770,22 +2960,33 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
           )}
         </button>
 
-        {/* Text Input with Form (Autofill suppressed) */}
-        <form onSubmit={handleSendText} className="flex-1 flex items-center">
-          <input
+        {/* Text Composer (No <form>/<input> so Android Chrome hides the black autofill bar) */}
+        <div className="flex-1 min-w-0 flex items-center">
+          <textarea
             ref={inputRef}
-            type="text"
-            name="room_chat_message"
-            id="room_chat_message"
+            rows={1}
+            name="room_composer_text"
+            id="room_composer_text"
+            inputMode="text"
+            enterKeyHint="send"
             autoComplete="off"
             autoCorrect="off"
             autoCapitalize="off"
             spellCheck={false}
+            aria-autocomplete="none"
             data-lpignore="true"
+            data-1p-ignore="true"
+            data-bwignore="true"
             data-form-type="other"
             value={inputText}
             disabled={currentUser.isBanned || currentUser.isMuted}
             onChange={(e) => handleInputChange(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                handleSendText();
+              }
+            }}
             placeholder={
               currentUser.isBanned
                 ? "عفواً، حسابك محظور من الإدارة 🚫"
@@ -2793,11 +2994,11 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
                 ? "أنت مكتوم حالياً بواسطة الإدارة 🔇"
                 : "اكتب رسالتك في المجلس..."
             }
-            className={`w-full bg-slate-100 hover:bg-slate-100 focus:bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs sm:text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-indigo-500 transition-colors ${
+            className={`w-full min-w-0 bg-slate-100 hover:bg-slate-100 focus:bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs sm:text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-indigo-500 min-h-[38px] max-h-24 leading-[1.4] resize-none overflow-y-auto transition-colors ${
               currentUser.isBanned || currentUser.isMuted ? 'opacity-50 cursor-not-allowed bg-slate-200' : ''
             }`}
           />
-        </form>
+        </div>
 
         {/* Inline Emoji Picker Button */}
         <div className="relative" ref={emojiPickerRef}>
@@ -2937,17 +3138,26 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
         isHost={isModerator}
       />
 
-      {/* Room Settings & Moderator Control Modal (Light Theme) */}
-      {isModeratorPanelOpen && isModerator && (
-        <div
-          className="fixed inset-0 z-[200] flex items-center justify-center bg-slate-900/45 backdrop-blur-sm p-4 animate-in fade-in"
-          onClick={() => setIsModeratorPanelOpen(false)}
-        >
-          <div
-            className="w-full max-w-sm bg-white border border-amber-300 rounded-2xl shadow-2xl p-4 space-y-3 text-slate-900 max-h-[88vh] overflow-y-auto"
-            dir="rtl"
-            onClick={(e) => e.stopPropagation()}
+      {/* Room Settings & Moderator Control Modal (Light Theme with Framer Motion) */}
+      <AnimatePresence>
+        {isModeratorPanelOpen && isModerator && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.18 }}
+            className="fixed inset-0 z-[200] flex items-center justify-center bg-slate-900/45 backdrop-blur-sm p-4"
+            onClick={() => setIsModeratorPanelOpen(false)}
           >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.92, y: 16 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.94, y: 10 }}
+              transition={{ type: 'spring', stiffness: 380, damping: 28 }}
+              className="w-full max-w-sm bg-white border border-amber-300 rounded-2xl shadow-2xl p-4 space-y-3 text-slate-900 max-h-[88vh] overflow-y-auto"
+              dir="rtl"
+              onClick={(e) => e.stopPropagation()}
+            >
             <div className="flex items-center justify-between border-b border-slate-200 pb-2.5">
               <div className="flex items-center gap-2">
                 <div className="w-7 h-7 rounded-lg bg-amber-100 text-amber-700 flex items-center justify-center">
@@ -3117,17 +3327,33 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
                 <span>طرد مستخدم من الغرفة:</span>
               </label>
               <div className="max-h-28 overflow-y-auto space-y-1 pr-1">
-                {uniqueMessages.filter(m => m.senderId !== currentUser.id && !bannedUserIds.includes(m.senderId)).slice(0, 3).map(m => (
-                  <div key={m.senderId} className="flex items-center justify-between p-1.5 rounded-lg bg-white border border-slate-200 text-xs">
-                    <span className="text-slate-900 font-bold truncate max-w-[180px]">{m.senderName}</span>
-                    <button
-                      onClick={() => handleKickUser(m.senderId, m.senderName)}
-                      className="px-2 py-0.5 rounded bg-red-600 hover:bg-red-500 text-white text-[10px] font-bold"
-                    >
-                      طرد 🚪
-                    </button>
-                  </div>
-                ))}
+                {Array.from(
+                  uniqueMessages
+                    .filter(
+                      (m) =>
+                        m.senderId &&
+                        m.senderId !== currentUser.id &&
+                        m.senderId !== 'system_bot' &&
+                        !bannedUserIds.includes(m.senderId)
+                    )
+                    .reduce((acc, m) => {
+                      if (!acc.has(m.senderId)) acc.set(m.senderId, m);
+                      return acc;
+                    }, new Map<string, Message>())
+                    .values()
+                )
+                  .slice(0, 5)
+                  .map((m) => (
+                    <div key={`kick_${m.senderId}`} className="flex items-center justify-between p-1.5 rounded-lg bg-white border border-slate-200 text-xs">
+                      <span className="text-slate-900 font-bold truncate max-w-[180px]">{m.senderName}</span>
+                      <button
+                        onClick={() => handleKickUser(m.senderId, m.senderName)}
+                        className="px-2 py-0.5 rounded bg-red-600 hover:bg-red-500 text-white text-[10px] font-bold"
+                      >
+                        طرد 🚪
+                      </button>
+                    </div>
+                  ))}
               </div>
             </div>
 
@@ -3145,9 +3371,10 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
               <Trash2 className="w-3.5 h-3.5" />
               <span>تفريغ رسائل الغرفة 🧹</span>
             </button>
-          </div>
-        </div>
-      )}
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Unified ChatWallpapersModal handles both personal wallpapers & room backgrounds */}
 

@@ -200,6 +200,7 @@ export interface GiftItem {
   animation: 'lion' | 'car' | 'cairo_tower' | 'crown' | 'rocket' | 'rose' | 'coffee' | 'diamond';
   bannerText: string;
   category?: 'luxury' | 'interactive';
+  giftTag?: 'economy' | 'romantic' | 'royal' | 'interactive';
   effectType?: 'roses' | 'fireworks' | 'gold_rain' | 'hearts';
 }
 

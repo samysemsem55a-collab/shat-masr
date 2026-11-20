@@ -2788,7 +2788,7 @@ export default function App() {
       )}
 
       {/* 2. Main View Routing: Home Page (RoomsView) remains persistently mounted & frozen to prevent re-mounts/reloads */}
-      <main className={activeRoom ? "w-full h-screen overflow-hidden" : "max-w-7xl mx-auto min-h-[calc(100vh-56px)]"}>
+      <main className={activeRoom ? "w-full h-[100dvh] overflow-hidden" : "max-w-7xl mx-auto min-h-[calc(100dvh-56px)]"}>
         {/* Frozen Home Page Container (always mounted; hidden via CSS when inside a room or on another tab) */}
         <div className={!activeRoom && currentTab === 'home' ? '' : 'hidden'}>
           <RoomsView
@@ -2990,52 +2990,62 @@ export default function App() {
       />
 
       {/* Private Messages & Friends Side Drawer (Full Width on Mobile) */}
-      {isPrivateChatDrawerOpen && (
-        <div
-          dir="rtl"
-          onClick={() => setIsPrivateChatDrawerOpen(false)}
-          className="fixed inset-0 z-[100] flex justify-end bg-slate-900/45 backdrop-blur-sm animate-in fade-in"
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            className="h-full w-full sm:max-w-[420px] bg-white sm:border-r border-slate-200 shadow-2xl flex flex-col overflow-hidden animate-drawer-in-left"
+      <AnimatePresence>
+        {isPrivateChatDrawerOpen && (
+          <motion.div
+            dir="rtl"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            onClick={() => setIsPrivateChatDrawerOpen(false)}
+            className="fixed inset-0 z-[100] flex justify-end bg-slate-900/45 backdrop-blur-sm"
           >
-            <PrivateChatView
-              isDrawer
-              onCloseDrawer={() => setIsPrivateChatDrawerOpen(false)}
-              currentUser={currentUser}
-              onOpenWallet={openWallet}
-              targetUser={targetChatUser}
-              onClearTargetUser={() => {
-                setTargetChatUser(null);
-                setIsInsidePrivateChat(false);
-              }}
-              globalOnlineUsers={trulyOnlineUsers}
-              allRegisteredUsers={allRegisteredUsers}
-              onChatActiveChange={setIsInsidePrivateChat}
-              onOpenUserProfile={(u) => {
-                setIsPrivateChatDrawerOpen(false);
-                setSelectedProfileUser(u);
-              }}
-              onUpdateUser={(updated) => {
-                const merged = { ...currentUserRef.current, ...updated };
-                setCurrentUser(merged);
-                propagateUserIdentityAcrossApp(merged).catch(() => {});
-              }}
-              onPromptRegister={() => {
-                setIsPrivateChatDrawerOpen(false);
-                openExclusiveAuthModal();
-              }}
-              unreadBySender={unreadCountsBySenderId}
-              unreadMessagesBySender={unreadMessagesBySender}
-              onMarkSenderRead={clearUnreadForSender}
-              onClearAllUnreadMessages={clearAllUnreadMessages}
-              prefilledDraft={privateChatDraft}
-              onClearPrefilledDraft={() => setPrivateChatDraft(null)}
-            />
-          </div>
-        </div>
-      )}
+            <motion.div
+              initial={{ x: '-100%', opacity: 0.8 }}
+              animate={{ x: 0, opacity: 1 }}
+              exit={{ x: '-100%', opacity: 0.8 }}
+              transition={{ type: 'spring', stiffness: 360, damping: 34 }}
+              onClick={(e) => e.stopPropagation()}
+              className="h-full w-full sm:max-w-[420px] bg-white sm:border-r border-slate-200 shadow-2xl flex flex-col overflow-hidden"
+            >
+              <PrivateChatView
+                isDrawer
+                onCloseDrawer={() => setIsPrivateChatDrawerOpen(false)}
+                currentUser={currentUser}
+                onOpenWallet={openWallet}
+                targetUser={targetChatUser}
+                onClearTargetUser={() => {
+                  setTargetChatUser(null);
+                  setIsInsidePrivateChat(false);
+                }}
+                globalOnlineUsers={trulyOnlineUsers}
+                allRegisteredUsers={allRegisteredUsers}
+                onChatActiveChange={setIsInsidePrivateChat}
+                onOpenUserProfile={(u) => {
+                  setIsPrivateChatDrawerOpen(false);
+                  setSelectedProfileUser(u);
+                }}
+                onUpdateUser={(updated) => {
+                  const merged = { ...currentUserRef.current, ...updated };
+                  setCurrentUser(merged);
+                  propagateUserIdentityAcrossApp(merged).catch(() => {});
+                }}
+                onPromptRegister={() => {
+                  setIsPrivateChatDrawerOpen(false);
+                  openExclusiveAuthModal();
+                }}
+                unreadBySender={unreadCountsBySenderId}
+                unreadMessagesBySender={unreadMessagesBySender}
+                onMarkSenderRead={clearUnreadForSender}
+                onClearAllUnreadMessages={clearAllUnreadMessages}
+                prefilledDraft={privateChatDraft}
+                onClearPrefilledDraft={() => setPrivateChatDraft(null)}
+              />
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* User Profile Card Modal with Friend Request & Earned Badges */}
       <UserProfileModal

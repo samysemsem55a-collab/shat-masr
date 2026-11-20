@@ -248,19 +248,30 @@ export const RADIO_STATIONS: import('../types/chat').RadioStation[] = [
 ];
 
 export const LUXURY_GIFTS: GiftItem[] = [
-  { id: 'gift_rose', name: 'وردة المحبة', icon: '🌹', cost: 50, animation: 'rose', category: 'luxury', bannerText: 'أهدى باقة ورد أنيقة تعبيراً عن الود!' },
-  { id: 'gift_coffee', name: 'فنجان قهوة عربي', icon: '☕', cost: 100, animation: 'coffee', category: 'luxury', bannerText: 'حيّاك الله بفنجان قهوة وكرم ضيافة!' },
-  { id: 'gift_horus', name: 'عين حورس الذهبية', icon: '🧿', cost: 250, animation: 'diamond', category: 'luxury', bannerText: 'أرسل تميمة المحبة والحماية المصرية!' },
-  { id: 'gift_crown', name: 'التاج الملكي الفاخر', icon: '👑', cost: 500, animation: 'crown', category: 'luxury', bannerText: 'توّج المضيف بتاج العز والملوك!' },
-  { id: 'gift_tower', name: 'برج القاهرة المضيء', icon: '🗼', cost: 1000, animation: 'cairo_tower', category: 'luxury', bannerText: 'أضاء سماء الروم ببرج القاهرة الشامخ!' },
-  { id: 'gift_ferrari', name: 'فيراري حمراء سبيد', icon: '🏎️', cost: 2500, animation: 'car', category: 'luxury', bannerText: 'انطلق بأقوى سرعة وفخامة الفيراري!' },
-  { id: 'gift_lion', name: 'الأسد المصري الملكي', icon: '🦁', cost: 5000, animation: 'lion', category: 'luxury', bannerText: 'زأر الأسد الملكي لتهتز أركان المجلس بالهيبة!' },
-  { id: 'gift_rocket', name: 'الصاروخ الذهبي العملاق', icon: '🚀', cost: 10000, animation: 'rocket', category: 'luxury', bannerText: 'أطلق الصاروخ الذهبي إلى الفضاء مع عاصفة ذهبية!' },
-  // الهدايا التفاعلية (تظهر كرسوم متحركة تملأ شاشة الغرفة بالكامل)
-  { id: 'gift_interactive_roses', name: 'مطر الورود التفاعلي', icon: '🌸', cost: 350, animation: 'rose', category: 'interactive', effectType: 'roses', bannerText: 'أمطر سماء الغرفة بوابل من الورود المتساقطة!' },
-  { id: 'gift_interactive_fireworks', name: 'ألعاب نارية احتفالية', icon: '🎆', cost: 750, animation: 'rocket', category: 'interactive', effectType: 'fireworks', bannerText: 'أشعل سماء الغرفة بالألعاب النارية المبهرة!' },
-  { id: 'gift_interactive_gold', name: 'عاصفة الكوينز الذهبية', icon: '✨', cost: 1200, animation: 'crown', category: 'interactive', effectType: 'gold_rain', bannerText: 'أطلق عاصفة من النجوم والذهب في كامل الشاشة!' },
-  { id: 'gift_interactive_hearts', name: 'وابل القلوب الرومانسية', icon: '💖', cost: 450, animation: 'diamond', category: 'interactive', effectType: 'hearts', bannerText: 'ملأ شاشة الغرفة بقلوب المحبة المتطايرة!' }
+  // هدايا اقتصادية وسريعة (Economy)
+  { id: 'gift_rose', name: 'وردة المحبة', icon: '🌹', cost: 50, animation: 'rose', category: 'luxury', giftTag: 'economy', bannerText: 'أهدى باقة ورد أنيقة تعبيراً عن الود!' },
+  { id: 'gift_coffee', name: 'فنجان قهوة عربي', icon: '☕', cost: 100, animation: 'coffee', category: 'luxury', giftTag: 'economy', bannerText: 'حيّاك الله بفنجان قهوة وكرم ضيافة!' },
+  { id: 'gift_chocolate', name: 'شوكولاتة فاخرة', icon: '🍫', cost: 150, animation: 'coffee', category: 'luxury', giftTag: 'economy', bannerText: 'تحلية سريعة ولفتة لطيفة تُسعد القلوب!' },
+  { id: 'gift_lotus', name: 'زهرة اللوتس الفرعونية', icon: '🪷', cost: 200, animation: 'rose', category: 'luxury', giftTag: 'economy', bannerText: 'أهدى زهرة اللوتس المصرية رمز الجمال والرقي!' },
+  { id: 'gift_horus', name: 'عين حورس الذهبية', icon: '🧿', cost: 250, animation: 'diamond', category: 'luxury', giftTag: 'economy', bannerText: 'أرسل تميمة المحبة والحماية المصرية!' },
+
+  // هدايا رومانسية ومودة (Romantic)
+  { id: 'gift_interactive_roses', name: 'مطر الورود التفاعلي', icon: '🌸', cost: 350, animation: 'rose', category: 'interactive', giftTag: 'romantic', effectType: 'roses', bannerText: 'أمطر سماء الغرفة بوابل من الورود المتساقطة!' },
+  { id: 'gift_interactive_hearts', name: 'وابل القلوب الرومانسية', icon: '💖', cost: 450, animation: 'diamond', category: 'interactive', giftTag: 'romantic', effectType: 'hearts', bannerText: 'ملأ شاشة الغرفة بقلوب المحبة المتطايرة!' },
+  { id: 'gift_ring', name: 'خاتم الألماس الساحر', icon: '💍', cost: 600, animation: 'diamond', category: 'luxury', giftTag: 'romantic', bannerText: 'قدّم خاتم الألماس البراق تعبيراً عن التقدير الخاص!' },
+  { id: 'gift_bouquet', name: 'باقة حب ملكية', icon: '💐', cost: 800, animation: 'rose', category: 'luxury', giftTag: 'romantic', bannerText: 'أهدى باقة زهور ملكية تفوح بالعطر والأناقة!' },
+
+  // هدايا ملكية وفاخرة (Royal / VIP Luxury)
+  { id: 'gift_crown', name: 'التاج الملكي الفاخر', icon: '👑', cost: 500, animation: 'crown', category: 'luxury', giftTag: 'royal', bannerText: 'توّج المضيف بتاج العز والملوك!' },
+  { id: 'gift_tower', name: 'برج القاهرة المضيء', icon: '🗼', cost: 1000, animation: 'cairo_tower', category: 'luxury', giftTag: 'royal', bannerText: 'أضاء سماء الروم ببرج القاهرة الشامخ!' },
+  { id: 'gift_ferrari', name: 'فيراري حمراء سبيد', icon: '🏎️', cost: 2500, animation: 'car', category: 'luxury', giftTag: 'royal', bannerText: 'انطلق بأقوى سرعة وفخامة الفيراري!' },
+  { id: 'gift_lion', name: 'الأسد المصري الملكي', icon: '🦁', cost: 5000, animation: 'lion', category: 'luxury', giftTag: 'royal', bannerText: 'زأر الأسد الملكي لتهتز أركان المجلس بالهيبة!' },
+  { id: 'gift_palace', name: 'قصر النيل الملكي', icon: '🏰', cost: 7500, animation: 'cairo_tower', category: 'luxury', giftTag: 'royal', bannerText: 'أهدى قصر النيل المهيب بفخامة أسطورية!' },
+  { id: 'gift_rocket', name: 'الصاروخ الذهبي العملاق', icon: '🚀', cost: 10000, animation: 'rocket', category: 'luxury', giftTag: 'royal', bannerText: 'أطلق الصاروخ الذهبي إلى الفضاء مع عاصفة ذهبية!' },
+
+  // الهدايا التفاعلية الاحتفالية (Interactive Fullscreen)
+  { id: 'gift_interactive_fireworks', name: 'ألعاب نارية احتفالية', icon: '🎆', cost: 750, animation: 'rocket', category: 'interactive', giftTag: 'interactive', effectType: 'fireworks', bannerText: 'أشعل سماء الغرفة بالألعاب النارية المبهرة!' },
+  { id: 'gift_interactive_gold', name: 'عاصفة الكوينز الذهبية', icon: '✨', cost: 1200, animation: 'crown', category: 'interactive', giftTag: 'interactive', effectType: 'gold_rain', bannerText: 'أطلق عاصفة من النجوم والذهب في كامل الشاشة!' }
 ];
 
 export const QUICK_PHRASES = [

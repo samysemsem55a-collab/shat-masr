@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { motion } from 'framer-motion';
+import { AnimatePresence, motion } from 'framer-motion';
 import { 
   MessageCircle, 
   Search, 
@@ -160,7 +160,7 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
   const swipeMovedRef = useRef(false);
   const messageRefs = useRef<{ [msgId: string]: HTMLDivElement | null }>({});
   const mediaFileInputRef = useRef<HTMLInputElement>(null);
-  const chatInputRef = useRef<HTMLInputElement>(null);
+  const chatInputRef = useRef<HTMLTextAreaElement>(null);
   const emojiStickerPanelRef = useRef<HTMLDivElement>(null);
   const actionsMenuRef = useRef<HTMLDivElement>(null);
 
@@ -1307,8 +1307,15 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                       <MoreVertical className="w-4 h-4" />
                     </button>
 
-                    {isActionsMenuOpen && (
-                      <div className="absolute left-0 top-full mt-1.5 w-52 bg-white border border-slate-200 rounded-2xl shadow-2xl py-1.5 z-[100] text-right animate-in fade-in zoom-in-95">
+                    <AnimatePresence>
+                      {isActionsMenuOpen && (
+                        <motion.div
+                          initial={{ opacity: 0, y: -8, scale: 0.94 }}
+                          animate={{ opacity: 1, y: 0, scale: 1 }}
+                          exit={{ opacity: 0, y: -6, scale: 0.95 }}
+                          transition={{ type: 'spring', stiffness: 420, damping: 28 }}
+                          className="origin-top-left absolute left-0 top-full mt-1.5 w-52 bg-white border border-slate-200 rounded-2xl shadow-2xl py-1.5 z-[100] text-right"
+                        >
                         <button
                           type="button"
                           onClick={() => {
@@ -1403,8 +1410,9 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                           <Flag className="w-4 h-4 text-rose-600 shrink-0" />
                           <span>إبلاغ عن إساءة 🚩</span>
                         </button>
-                      </div>
-                    )}
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
                   </div>
 
                   {isDrawer && onCloseDrawer && (
@@ -2056,25 +2064,36 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                   <Mic className="w-4 h-4 sm:w-5 sm:h-5" />
                 </button>
 
-                {/* Message Input Field (Autofill suppressed) */}
-                <form onSubmit={handleSendMessage} className="flex-1 min-w-0 flex items-center">
-                  <input
+                {/* Message Composer (No <form>/<input> so Android Chrome hides the black autofill bar) */}
+                <div className="flex-1 min-w-0 flex items-center">
+                  <textarea
                     ref={chatInputRef}
-                    type="text"
-                    name="private_chat_message"
-                    id="private_chat_message"
+                    rows={1}
+                    name="dm_composer_text"
+                    id="dm_composer_text"
+                    inputMode="text"
+                    enterKeyHint="send"
                     autoComplete="off"
                     autoCorrect="off"
                     autoCapitalize="off"
                     spellCheck={false}
+                    aria-autocomplete="none"
                     data-lpignore="true"
+                    data-1p-ignore="true"
+                    data-bwignore="true"
                     data-form-type="other"
                     value={inputText}
                     onChange={(e) => handleInputChange(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        handleSendMessage();
+                      }
+                    }}
                     placeholder="اكتب رسالة خاصة هنا..."
-                    className="w-full min-w-0 bg-slate-100/90 hover:bg-slate-100 focus:bg-white text-slate-900 placeholder:text-slate-400 border border-slate-200 focus:border-amber-400 rounded-2xl px-3.5 py-2.5 text-xs sm:text-sm focus:outline-none min-h-[42px] transition-all shadow-inner"
+                    className="w-full min-w-0 bg-slate-100/90 hover:bg-slate-100 focus:bg-white text-slate-900 placeholder:text-slate-400 border border-slate-200 focus:border-amber-400 rounded-2xl px-3.5 py-2 text-xs sm:text-sm focus:outline-none min-h-[42px] max-h-24 leading-[1.45] resize-none overflow-y-auto transition-all shadow-inner"
                   />
-                </form>
+                </div>
 
                 {/* Send Button */}
                 <button

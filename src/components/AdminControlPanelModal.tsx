@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { AnimatePresence, motion } from 'framer-motion';
 import {
   X,
   ShieldCheck,
@@ -459,16 +460,26 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
   );
 
   // Strict Security Gate (placed after all hooks to preserve React hook call order)
-  if (!isOpen || !isAdminOrOwner) {
-    return null;
-  }
-
   return (
-    <div
-      className="fixed inset-0 z-[200] flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-2 sm:p-4 animate-in fade-in"
-      dir="rtl"
-    >
-      <div className="w-full max-w-4xl bg-white border border-slate-200 rounded-3xl overflow-hidden shadow-2xl flex flex-col max-h-[92vh] text-slate-900">
+    <AnimatePresence>
+      {isOpen && isAdminOrOwner && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.18 }}
+          onClick={onClose}
+          className="fixed inset-0 z-[200] flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-2 sm:p-4"
+          dir="rtl"
+        >
+          <motion.div
+            initial={{ opacity: 0, scale: 0.94, y: 16 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.95, y: 12 }}
+            transition={{ type: 'spring', stiffness: 360, damping: 28 }}
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-4xl bg-white border border-slate-200 rounded-3xl overflow-hidden shadow-2xl flex flex-col max-h-[92vh] text-slate-900"
+          >
         {/* Header + Live Health Strip */}
         <div className="p-3.5 sm:p-4 bg-gradient-to-l from-amber-50 via-white to-indigo-50 border-b border-slate-200 flex flex-col gap-2.5 shrink-0">
           <div className="flex items-center justify-between gap-2">
@@ -1458,7 +1469,9 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
             </div>
           </div>
         )}
-      </div>
-    </div>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
   );
 };
