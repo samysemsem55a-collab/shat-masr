@@ -104,6 +104,8 @@ interface PinnedRoomMessage {
 // Stores
 const messagesByRoom: Map<string, ChatMessage[]> = new Map();
 const lastMessageByRoom: Map<string, { senderName: string; content: string; type?: string; timestamp: number }> = new Map();
+const typingUsersByRoom: Map<string, Map<string, { userId: string; userName: string; updatedAt: number }>> = new Map();
+const ROOM_TYPING_TTL_MS = 6000;
 const pinnedMessageByRoom: Map<string, PinnedRoomMessage | null> = new Map();
 const roomBackgroundByRoom: Map<string, string> = new Map();
 const roomLockByRoom: Map<string, boolean> = new Map();
@@ -117,6 +119,91 @@ let latestAppUpdateNotice: { version: string; message: string; pushedBy: string;
 const socketToUser: Map<WebSocket, { userId: string; sessionId?: string; roomId?: string; lastHeartbeatAt?: number }> = new Map();
 // Global map of connected sockets by userId
 const connectedUsers: Map<string, { ws: WebSocket; user: UserProfile; lastSeen: number }> = new Map();
+
+function getAllRoomsTypingSnapshot(): Record<string, { userId: string; userName: string }[]> {
+  const now = Date.now();
+  const snapshot: Record<string, { userId: string; userName: string }[]> = {};
+  typingUsersByRoom.forEach((typersMap, rId) => {
+    const active: { userId: string; userName: string }[] = [];
+    typersMap.forEach((entry, uid) => {
+      if (now - entry.updatedAt < ROOM_TYPING_TTL_MS) {
+        active.push({ userId: entry.userId, userName: entry.userName });
+      } else {
+        typersMap.delete(uid);
+      }
+    });
+    if (active.length > 0) {
+      snapshot[rId] = active;
+    } else if (typersMap.size === 0) {
+      typingUsersByRoom.delete(rId);
+    }
+  });
+  return snapshot;
+}
+
+function setRoomTypingState(
+  roomId: string,
+  userId: string,
+  userName: string,
+  isTyping: boolean,
+  excludeWs?: WebSocket
+) {
+  if (!roomId || !userId) return;
+  let roomTypers = typingUsersByRoom.get(roomId);
+  if (isTyping) {
+    if (!roomTypers) {
+      roomTypers = new Map();
+      typingUsersByRoom.set(roomId, roomTypers);
+    }
+    roomTypers.set(userId, {
+      userId,
+      userName: userName || 'عضو شات مصر',
+      updatedAt: Date.now()
+    });
+  } else if (roomTypers) {
+    const hadUser = roomTypers.delete(userId);
+    if (roomTypers.size === 0) {
+      typingUsersByRoom.delete(roomId);
+    }
+    if (!hadUser) return;
+  } else {
+    return;
+  }
+
+  broadcastToAll(
+    {
+      type: 'ROOM_TYPING_UPDATE',
+      roomId,
+      userId,
+      userName: userName || '',
+      isTyping: !!isTyping
+    },
+    excludeWs
+  );
+}
+
+// 3s Room Typing TTL Sweep (cleans orphaned typers if client drops abruptly)
+setInterval(() => {
+  if (typingUsersByRoom.size === 0) return;
+  const now = Date.now();
+  typingUsersByRoom.forEach((typersMap, rId) => {
+    typersMap.forEach((entry, uid) => {
+      if (now - entry.updatedAt >= ROOM_TYPING_TTL_MS) {
+        typersMap.delete(uid);
+        broadcastToAll({
+          type: 'ROOM_TYPING_UPDATE',
+          roomId: rId,
+          userId: uid,
+          userName: entry.userName,
+          isTyping: false
+        });
+      }
+    });
+    if (typersMap.size === 0) {
+      typingUsersByRoom.delete(rId);
+    }
+  });
+}, 3000);
 
 // 10s WS Heartbeat Keepalive + 30s Stale User Timeout Sweep
 setInterval(() => {
@@ -412,6 +499,10 @@ wss.on('connection', (ws: WebSocket) => {
     type: 'ALL_ROOM_LAST_MESSAGES',
     lastMessages: Object.fromEntries(lastMessageByRoom)
   }));
+  ws.send(JSON.stringify({
+    type: 'ALL_ROOM_TYPING',
+    typingByRoom: getAllRoomsTypingSnapshot()
+  }));
   if (latestAppUpdateNotice) {
     ws.send(JSON.stringify({
       type: 'APP_UPDATE_NOTICE',
@@ -628,17 +719,11 @@ wss.on('connection', (ws: WebSocket) => {
           const { roomId, userId } = payload;
           if (roomId && userId) {
             const occMap = roomOccupants.get(roomId);
+            const departingUser = occMap?.get(userId);
+            setRoomTypingState(roomId, userId, departingUser?.name || '', false, ws);
             if (occMap && occMap.has(userId)) {
-              const departingUser = occMap.get(userId);
               occMap.delete(userId);
               const list = Array.from(occMap.values());
-              broadcastToRoom(roomId, {
-                type: 'ROOM_TYPING_UPDATE',
-                roomId,
-                userId,
-                userName: departingUser?.name || '',
-                isTyping: false
-              }, ws);
               broadcastToRoom(roomId, {
                 type: 'PRESENCE_UPDATE',
                 roomId,
@@ -713,13 +798,7 @@ wss.on('connection', (ws: WebSocket) => {
 
           // Clear sender's active typing indicator immediately when message is sent
           if (completeMsg.senderId) {
-            broadcastToRoom(roomId, {
-              type: 'ROOM_TYPING_UPDATE',
-              roomId,
-              userId: completeMsg.senderId,
-              userName: completeMsg.senderName || '',
-              isTyping: false
-            }, ws);
+            setRoomTypingState(roomId, completeMsg.senderId, completeMsg.senderName || '', false, ws);
           }
 
           // Broadcast to everyone in that room (including sender for confirmation)
@@ -809,15 +888,9 @@ wss.on('connection', (ws: WebSocket) => {
         }
 
         case 'ROOM_TYPING': {
-          const { roomId, userId, userName, isTyping } = payload;
+          const { roomId, userId, userName, isTyping } = payload || {};
           if (roomId && userId) {
-            broadcastToRoom(roomId, {
-              type: 'ROOM_TYPING_UPDATE',
-              roomId,
-              userId,
-              userName,
-              isTyping: !!isTyping
-            }, ws);
+            setRoomTypingState(roomId, userId, userName || '', !!isTyping, ws);
           }
           break;
         }
@@ -1342,19 +1415,19 @@ wss.on('connection', (ws: WebSocket) => {
     const info = socketToUser.get(ws);
     if (info) {
       const { userId, roomId } = info;
+      if (userId) {
+        typingUsersByRoom.forEach((typersMap, rId) => {
+          const entry = typersMap.get(userId);
+          if (entry) {
+            setRoomTypingState(rId, userId, entry.userName, false, ws);
+          }
+        });
+      }
       if (roomId && userId) {
         const occMap = roomOccupants.get(roomId);
         if (occMap && occMap.has(userId)) {
-          const departingUser = occMap.get(userId);
           occMap.delete(userId);
           const list = Array.from(occMap.values());
-          broadcastToRoom(roomId, {
-            type: 'ROOM_TYPING_UPDATE',
-            roomId,
-            userId,
-            userName: departingUser?.name || '',
-            isTyping: false
-          }, ws);
           broadcastToRoom(roomId, {
             type: 'PRESENCE_UPDATE',
             roomId,

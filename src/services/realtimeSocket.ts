@@ -9,6 +9,7 @@ type AdminEventCallback = (targetUserId: string, updates: Partial<User>) => void
 type FriendReqCallback = (req: FriendRequest) => void;
 export type PrivateTypingCallback = (isTyping: boolean, senderName: string) => void;
 export type RoomTypingCallback = (userId: string, userName: string, isTyping: boolean) => void;
+export type AllRoomsTypingMap = Record<string, { id: string; name: string }[]>;
 type DirectMessageCallback = (msg: Message, convId: string) => void;
 type ReactionCallback = (data: {
   messageId: string;
@@ -47,6 +48,8 @@ class RealtimeSocketManager {
   private privateTypingListeners: Map<string, Set<PrivateTypingCallback>> = new Map();
   private privateAllTypingListeners: Set<(senderId: string, senderName: string, isTyping: boolean) => void> = new Set();
   private roomTypingListeners: Map<string, Set<RoomTypingCallback>> = new Map();
+  private allRoomTypingListeners: Set<(typingByRoom: AllRoomsTypingMap) => void> = new Set();
+  private latestRoomTyping: Map<string, Map<string, { id: string; name: string; updatedAt: number }>> = new Map();
   private reactionListeners: Map<string, Set<ReactionCallback>> = new Map();
   private roomReadListeners: Map<string, Set<ReadReceiptCallback>> = new Map();
   private directReadListeners: Map<string, Set<ReadReceiptCallback>> = new Map();
@@ -476,11 +479,40 @@ class RealtimeSocketManager {
         break;
       }
 
+      case 'ALL_ROOM_TYPING': {
+        const rawMap =
+          action.typingByRoom && typeof action.typingByRoom === 'object'
+            ? (action.typingByRoom as Record<string, { userId?: string; id?: string; userName?: string; name?: string }[]>)
+            : {};
+        this.latestRoomTyping.clear();
+        const now = Date.now();
+        Object.entries(rawMap).forEach(([rId, list]) => {
+          if (!Array.isArray(list) || list.length === 0) return;
+          const roomMap = new Map<string, { id: string; name: string; updatedAt: number }>();
+          list.forEach((u) => {
+            const uid = u?.userId || u?.id;
+            const uName = u?.userName || u?.name || 'عضو شات مصر';
+            if (uid) {
+              roomMap.set(uid, { id: uid, name: uName, updatedAt: now });
+            }
+          });
+          if (roomMap.size > 0) {
+            this.latestRoomTyping.set(rId, roomMap);
+          }
+        });
+        this.emitAllRoomsTyping();
+        break;
+      }
+
       case 'ROOM_TYPING_UPDATE': {
         const { roomId, userId, userName, isTyping } = action;
-        const listeners = this.roomTypingListeners.get(roomId);
-        if (listeners) {
-          listeners.forEach(cb => cb(userId, userName || '', !!isTyping));
+        if (roomId && userId) {
+          this.updateRoomTypingCache(roomId, userId, userName || 'عضو شات مصر', !!isTyping);
+          const listeners = this.roomTypingListeners.get(roomId);
+          if (listeners) {
+            listeners.forEach(cb => cb(userId, userName || '', !!isTyping));
+          }
+          this.emitAllRoomsTyping();
         }
         break;
       }
@@ -1039,6 +1071,56 @@ class RealtimeSocketManager {
     };
   }
 
+  private updateRoomTypingCache(roomId: string, userId: string, userName: string, isTyping: boolean) {
+    if (!roomId || !userId) return;
+    let roomMap = this.latestRoomTyping.get(roomId);
+    if (isTyping) {
+      if (!roomMap) {
+        roomMap = new Map();
+        this.latestRoomTyping.set(roomId, roomMap);
+      }
+      roomMap.set(userId, { id: userId, name: userName || 'عضو شات مصر', updatedAt: Date.now() });
+    } else if (roomMap) {
+      roomMap.delete(userId);
+      if (roomMap.size === 0) {
+        this.latestRoomTyping.delete(roomId);
+      }
+    }
+  }
+
+  private getAllRoomsTypingSnapshot(): { snapshot: AllRoomsTypingMap; pruned: boolean } {
+    const now = Date.now();
+    const snapshot: AllRoomsTypingMap = {};
+    let pruned = false;
+    this.latestRoomTyping.forEach((roomMap, rId) => {
+      const list: { id: string; name: string }[] = [];
+      roomMap.forEach((entry, uid) => {
+        if (now - entry.updatedAt < 6000) {
+          list.push({ id: entry.id, name: entry.name });
+        } else {
+          roomMap.delete(uid);
+          pruned = true;
+        }
+      });
+      if (list.length > 0) {
+        snapshot[rId] = list;
+      } else {
+        this.latestRoomTyping.delete(rId);
+      }
+    });
+    return { snapshot, pruned };
+  }
+
+  private emitAllRoomsTyping() {
+    if (this.allRoomTypingListeners.size === 0) return;
+    const { snapshot } = this.getAllRoomsTypingSnapshot();
+    this.allRoomTypingListeners.forEach((cb) => {
+      try {
+        cb(snapshot);
+      } catch {}
+    });
+  }
+
   subscribeToRoomTyping(roomId: string, callback: RoomTypingCallback): () => void {
     if (!this.roomTypingListeners.has(roomId)) {
       this.roomTypingListeners.set(roomId, new Set());
@@ -1046,6 +1128,49 @@ class RealtimeSocketManager {
     this.roomTypingListeners.get(roomId)!.add(callback);
     return () => {
       this.roomTypingListeners.get(roomId)?.delete(callback);
+    };
+  }
+
+  subscribeToAllRoomsTyping(callback: (typingByRoom: AllRoomsTypingMap) => void): () => void {
+    this.allRoomTypingListeners.add(callback);
+    const { snapshot } = this.getAllRoomsTypingSnapshot();
+    if (Object.keys(snapshot).length > 0) {
+      callback(snapshot);
+    }
+
+    let bus: BroadcastChannel | null = null;
+    if (typeof window !== 'undefined') {
+      try {
+        bus = new BroadcastChannel('arab_egypt_chat_bus');
+        bus.onmessage = (e) => {
+          if (e.data?.type === 'ROOM_TYPING_UPDATE' && e.data.roomId && e.data.user?.id) {
+            this.updateRoomTypingCache(
+              e.data.roomId,
+              e.data.user.id,
+              e.data.user.name || 'عضو شات مصر',
+              !!e.data.isTyping
+            );
+            this.emitAllRoomsTyping();
+          }
+        };
+      } catch {}
+    }
+
+    const sweepTimer = setInterval(() => {
+      const { snapshot: freshSnapshot, pruned } = this.getAllRoomsTypingSnapshot();
+      if (pruned) {
+        this.allRoomTypingListeners.forEach((cb) => {
+          try {
+            cb(freshSnapshot);
+          } catch {}
+        });
+      }
+    }, 2000);
+
+    return () => {
+      clearInterval(sweepTimer);
+      this.allRoomTypingListeners.delete(callback);
+      if (bus) bus.close();
     };
   }
 

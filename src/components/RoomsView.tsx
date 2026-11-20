@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { AnimatePresence, motion } from 'framer-motion';
 import {
   Users,
   Eye,
@@ -49,7 +50,7 @@ import { StoriesBar } from './StoriesBar';
 import { compressImageFile } from '../utils/imageCompression';
 import { VerifiedBadge } from '../utils/verifiedBadge';
 import { sounds } from '../utils/soundEffects';
-import { realtimeSocket } from '../services/realtimeSocket';
+import { realtimeSocket, AllRoomsTypingMap } from '../services/realtimeSocket';
 import { toast } from '../utils/appToast';
 
 interface RoomsViewProps {
@@ -870,6 +871,15 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
     return () => clearInterval(timer);
   }, [pulsingRoomsMap]);
 
+  // Real-time WebSocket typing indicator across all public rooms
+  const [typingByRoom, setTypingByRoom] = useState<AllRoomsTypingMap>({});
+  useEffect(() => {
+    const unsubTyping = realtimeSocket.subscribeToAllRoomsTyping((nextMap) => {
+      setTypingByRoom({ ...nextMap });
+    });
+    return () => unsubTyping();
+  }, []);
+
   useEffect(() => {
     if (!highlightedPostId || forumPosts.length === 0) return;
     const el = document.getElementById(`forum-post-${highlightedPostId}`);
@@ -1220,6 +1230,18 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
             const isRoomPulsing = newMsgCount > 0;
             const formattedNewMsgCount = newMsgCount > 99 ? '99+' : String(newMsgCount);
 
+            const roomTypingUsers = (typingByRoom[room.id] || []).filter(
+              (u) => u.id && u.id !== currentUser.id
+            );
+            const roomTypingText =
+              roomTypingUsers.length === 1
+                ? `${roomTypingUsers[0].name} يكتب الآن...`
+                : roomTypingUsers.length === 2
+                ? `${roomTypingUsers[0].name} و ${roomTypingUsers[1].name} يكتبان الآن...`
+                : roomTypingUsers.length > 2
+                ? `${roomTypingUsers[0].name} و ${roomTypingUsers[1].name} و+${roomTypingUsers.length - 2} يكتبون...`
+                : '';
+
             return (
               <div
                 key={room.id}
@@ -1316,9 +1338,37 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
                           </span>
                         )}
                       </div>
-                      <p className="text-[10.5px] text-white/90 font-medium truncate">
-                        {room.isLocked ? '🔒 مقفلة مؤقتاً من الإدارة' : room.description}
-                      </p>
+                      <AnimatePresence mode="wait" initial={false}>
+                        {roomTypingUsers.length > 0 ? (
+                          <motion.div
+                            key={`typing-${room.id}-${roomTypingUsers.map((u) => u.id).join(',')}`}
+                            initial={{ opacity: 0, y: 4 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            exit={{ opacity: 0, y: -4 }}
+                            transition={{ duration: 0.18 }}
+                            aria-live="polite"
+                            className="mt-0.5 inline-flex items-center gap-1.5 max-w-full px-2 py-0.5 rounded-full bg-emerald-400/25 border border-emerald-200/55 text-emerald-50 text-[10px] font-black shadow-2xs"
+                          >
+                            <span className="inline-flex items-center gap-0.5 shrink-0" aria-hidden="true">
+                              <span className="w-1 h-1 rounded-full bg-emerald-200 animate-bounce [animation-delay:0ms]" />
+                              <span className="w-1 h-1 rounded-full bg-emerald-100 animate-bounce [animation-delay:150ms]" />
+                              <span className="w-1 h-1 rounded-full bg-white animate-bounce [animation-delay:300ms]" />
+                            </span>
+                            <span className="truncate">{roomTypingText}</span>
+                          </motion.div>
+                        ) : (
+                          <motion.p
+                            key={`desc-${room.id}`}
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            exit={{ opacity: 0 }}
+                            transition={{ duration: 0.15 }}
+                            className="text-[10.5px] text-white/90 font-medium truncate"
+                          >
+                            {room.isLocked ? '🔒 مقفلة مؤقتاً من الإدارة' : room.description}
+                          </motion.p>
+                        )}
+                      </AnimatePresence>
                     </div>
                   </div>
 
