@@ -1376,6 +1376,13 @@ wss.on('connection', (ws: WebSocket) => {
         });
         if (!hasOtherSocket) {
           lastAnnouncedJoinAt.delete(userId);
+          broadcastToAll({
+            type: 'PRIVATE_TYPING_UPDATE',
+            senderId: userId,
+            senderName: '',
+            targetUserId: '',
+            isTyping: false,
+          });
         }
       }
 

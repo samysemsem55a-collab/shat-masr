@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Toaster, toast, type ToasterProps } from 'sonner';
+import { Toaster } from 'sonner';
+import { toast, TOASTER_ICONS, getToasterOptions } from './utils/appToast';
 import { X, Check, RefreshCw, UserPlus, MessageCircle, Sparkles, Download } from 'lucide-react';
 import { Header } from './components/Header';
 import { BottomNav, NavTab } from './components/BottomNav';
@@ -540,7 +541,7 @@ export default function App() {
       const updatedUser = { ...currentUser, coins: newCoins };
       setCurrentUser(updatedUser);
       syncUserProfileToFirebase(updatedUser);
-      toast.success(`تم استلام مكافأة المهمة (+${target.rewardCoins} كوينز) 🪙`);
+      toast.coins(`تم استلام مكافأة المهمة (+${target.rewardCoins} كوينز) 🪙`);
 
       return updated;
     });
@@ -1065,14 +1066,13 @@ export default function App() {
             const senderDisplayName = rawMsg.senderName || existing?.senderName || 'عضو شات مصر';
             const dmPrefsEnabled = currentUser.notificationPrefs?.directMessages !== false;
             if (dmPrefsEnabled) {
-              toast.info(
+              toast.social(
                 nextCount > 1
                   ? `رسائل خاصة جديدة (${nextCount}) من ${senderDisplayName} 💬`
                   : `رسالة خاصة جديدة من ${senderDisplayName} 💬`,
                 {
                   id: `grouped_dm_${rawMsg.senderId}`,
                   description: msgPreview,
-                  duration: 5000,
                 }
               );
             }
@@ -1142,10 +1142,9 @@ export default function App() {
         if (rawMsg.type === 'gift' && rawMsg.gift) {
           if (giftNotifsEnabled) {
             sounds.playGiftFanfare();
-            toast.success(`🎁 استلمت هدية جديدة من ${toastPayload.senderName}!`, {
+            toast.gift(`🎁 استلمت هدية جديدة من ${toastPayload.senderName}!`, {
               id: `dm_gift_${rawMsg.id}`,
               description: `${rawMsg.gift.icon || '🎁'} ${rawMsg.gift.name} (${rawMsg.gift.cost} كوينز)`,
-              duration: 6000,
               action: {
                 label: 'عرض الهدية',
                 onClick: () => handleOpenIncomingChat(toastPayload)
@@ -1154,10 +1153,9 @@ export default function App() {
           }
         } else if (rawMsg.type === 'coins_transfer') {
           sounds.playCoinsReward();
-          toast.success(`🪙 تحويل كوينز من ${toastPayload.senderName}`, {
+          toast.coins(`🪙 تحويل كوينز من ${toastPayload.senderName}`, {
             id: `dm_coins_${rawMsg.id}`,
             description: rawMsg.content || 'تم تحويل كوينز إلى رصيدك',
-            duration: 6000,
             action: {
               label: 'فتح المحادثة',
               onClick: () => handleOpenIncomingChat(toastPayload)
@@ -1366,7 +1364,7 @@ export default function App() {
           const newest = unseen[0];
           sounds.playMessageReceived();
           setFriendReqBanner(newest);
-          toast.info(
+          toast.social(
             pending.length > 1
               ? `لديك ${pending.length} طلبات صداقة جديدة 🤝`
               : `لديك طلب صداقة جديد من ${newest.senderName} 🤝`,
@@ -1505,7 +1503,7 @@ export default function App() {
             if (prefsRaw) giftNotifsEnabled = JSON.parse(prefsRaw).gifts !== false;
           } catch {}
           if (giftNotifsEnabled) {
-            toast.success(`${newMsg.gift.icon || '🎁'} هدية فاخرة في الغرفة!`, {
+            toast.gift(`${newMsg.gift.icon || '🎁'} هدية فاخرة في الغرفة!`, {
               id: `room_gift_${newMsg.id}`,
               description: `أهدى ${newMsg.senderName} ${newMsg.gift.name} إلى ${newMsg.gift.recipientName}`
             });
@@ -1675,7 +1673,7 @@ export default function App() {
           if (prefsRaw) giftNotifsEnabled = JSON.parse(prefsRaw).gifts !== false;
         } catch {}
         if (giftNotifsEnabled && gift) {
-          toast.success(`${gift.icon || '🎁'} هدية فاخرة: ${gift.name}`, {
+          toast.gift(`${gift.icon || '🎁'} هدية فاخرة: ${gift.name}`, {
             id: `luxury_gift_${gift.id}_${senderName}_${recipientName}`,
             description: `أرسل ${senderName} هذه الهدية إلى ${recipientName}`
           });
@@ -1846,7 +1844,7 @@ export default function App() {
       recipientName,
     });
     sounds.playGiftFanfare();
-    toast.success(`تم إرسال هدية ${gift.name} إلى ${recipientName} بنجاح! ${gift.icon}`, {
+    toast.gift(`تم إرسال هدية ${gift.name} إلى ${recipientName} بنجاح! ${gift.icon}`, {
       description: `خصم ${isOwner ? 0 : gift.cost} كوينز من رصيدك`
     });
 
@@ -1919,7 +1917,7 @@ export default function App() {
       (room.moderators || []).includes(me.id);
 
     if (room.isLocked && !canManageRoom) {
-      toast.error('🔒 هذه الغرفة مقفلة حالياً', {
+      toast.security('🔒 هذه الغرفة مقفلة حالياً', {
         description: `قام مديرو "${room.title}" بقفل الغرفة مؤقتاً، ولا يمكن دخول أعضاء جدد الآن.`,
       });
       return;
@@ -2038,7 +2036,7 @@ export default function App() {
           ? 'border-cyan-400 shadow-[0_0_18px_rgba(6,182,212,0.8)]'
           : 'border-amber-400 shadow-[0_0_15px_rgba(245,158,11,0.6)]',
     }));
-    toast.success(`تهانينا! تم تفعيل عضوية ${tier.name} بنجاح 👑`);
+    toast.vip(`تهانينا! تم تفعيل عضوية ${tier.name} بنجاح 👑`);
   };
 
   // Update Balance
@@ -2136,7 +2134,7 @@ export default function App() {
     const updated = { ...currentUserRef.current, coins: currentUserRef.current.coins + coins };
     setCurrentUser(updated);
     syncUserProfileToFirebase(updated);
-    toast.success(`مبروك! تم استلام +${coins} كوينز من ${label} 🎉`);
+    toast.coins(`مبروك! تم استلام +${coins} كوينز من ${label} 🎉`);
   }, []);
   const handleShareForumPostToPrivateChat = useCallback((post: ForumPost) => {
     const excerpt = (post.text || '').trim().split('\n')[0].slice(0, 80) || 'منشور في منتدى شات مصر';
@@ -2325,21 +2323,7 @@ export default function App() {
     setIsWelcomeAuthOpen(true);
   }, []);
 
-  const toasterOptions: ToasterProps['toastOptions'] = useMemo(
-    () => ({
-      className: 'shat-toast-fade transition-all duration-300 ease-out',
-      style: {
-        fontFamily: 'Cairo, Tajawal, sans-serif',
-        borderRadius: '1rem',
-        boxShadow: isDarkMode
-          ? '0 14px 32px -8px rgba(2, 6, 23, 0.55)'
-          : '0 12px 30px -8px rgba(15, 23, 42, 0.18)',
-        transition: 'opacity 0.3s cubic-bezier(0.22, 1, 0.36, 1), transform 0.3s cubic-bezier(0.22, 1, 0.36, 1)',
-        transitionDuration: '300ms'
-      }
-    }),
-    [isDarkMode]
-  );
+  const toasterOptions = useMemo(() => getToasterOptions(isDarkMode), [isDarkMode]);
 
   // Initial Full-Screen Arabic RTL Welcome Screen until user taps "دخول فوري بدون تسجيل" or logs in
   if (!isProfileReady) {
@@ -2353,6 +2337,7 @@ export default function App() {
           expand={false}
           theme={isDarkMode ? 'dark' : 'light'}
           style={{ zIndex: 300 }}
+          icons={TOASTER_ICONS}
           toastOptions={toasterOptions}
         />
         <WelcomeScreen
@@ -2380,6 +2365,7 @@ export default function App() {
         expand={false}
         theme={isDarkMode ? 'dark' : 'light'}
         style={{ zIndex: 300 }}
+        icons={TOASTER_ICONS}
         toastOptions={toasterOptions}
       />
 

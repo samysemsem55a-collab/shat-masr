@@ -48,11 +48,11 @@ import {
   updateUserActivityStatus,
   submitUserReport
 } from '../services/firebase';
-import { cropBannerToDataUrl } from '../utils/imageCompression';
+import { compressImageFile, cropBannerToDataUrl } from '../utils/imageCompression';
 import { maskEmail, maskPhone } from '../utils/maskData';
 import { isDataSaverEnabled, setDataSaverEnabled } from '../utils/assetCache';
 import { checkImpersonationAttempt, VerifiedBadge } from '../utils/verifiedBadge';
-import { toast } from 'sonner';
+import { toast } from '../utils/appToast';
 
 const ZODIAC_SIGNS = [
   'الحمل ♈',
@@ -183,7 +183,10 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   const [fontPreference, setFontPreference] = useState(currentUser.fontPreference || 'cairo');
   const [selectedWallpaper, setSelectedWallpaper] = useState(currentUser.profileWallpaper || '/assets/wallpapers/nature_nile_sunset.jpg');
   const [selectedFrame, setSelectedFrame] = useState(currentUser.frameStyle || 'border-slate-600');
-  const [profileBanner, setProfileBanner] = useState(currentUser.profileBanner || 'royal_gold');
+  const [profileBanner, setProfileBanner] = useState(
+    currentUser.profileBanner || currentUser.profileWallpaper || '/assets/wallpapers/nature_nile_sunset.jpg'
+  );
+  const [coverFilter, setCoverFilter] = useState<'all' | 'wallpapers' | 'banners'>('all');
   const [favoriteMusicUrl, setFavoriteMusicUrl] = useState(currentUser.favoriteMusicUrl || '');
   const [avatarUrl, setAvatarUrl] = useState(currentUser.avatar);
   const [allowPrivateMessages, setAllowPrivateMessages] = useState<boolean>(currentUser.allowPrivateMessages !== false);
@@ -210,10 +213,11 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   const [showAvatarModal, setShowAvatarModal] = useState(false);
   const [avatarModalMode, setAvatarModalMode] = useState<'choose' | 'anime'>('choose');
 
-  // Custom Banner Live Preview & Crop Modal State
+  // Custom Banner / Phone Cover Live Preview & Crop Modal State
   const [bannerCropModal, setBannerCropModal] = useState<{
     open: boolean;
     imageSrc: string;
+    rawFile: File | null;
     zoom: number;
     offsetX: number;
     offsetY: number;
@@ -221,6 +225,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   }>({
     open: false,
     imageSrc: '',
+    rawFile: null,
     zoom: 1,
     offsetX: 0,
     offsetY: 0,
@@ -333,8 +338,10 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   const wallpapers = [
     { name: 'غروب نيل القاهرة 🌅', url: '/assets/wallpapers/nature_nile_sunset.jpg', isVipOnly: false },
     { name: 'سماء الأهرامات 🏺', url: '/assets/wallpapers/egypt_chat_bg.jpg', isVipOnly: false },
+    { name: 'السماء الصافية ☁️', url: '/assets/wallpapers/nature_clear_sky.jpg', isVipOnly: false },
     { name: 'المروج الخضراء 🌿', url: '/assets/wallpapers/nature_green_meadow.jpg', isVipOnly: true },
     { name: 'ليالي الواحة والنجوم 🌌', url: '/assets/wallpapers/nature_starry_oasis.jpg', isVipOnly: true },
+    { name: 'زخارف شرقية أصيلة 🕌', url: '/assets/wallpapers/doodle_chat_bg.jpg', isVipOnly: true },
   ];
 
   const frames = [
@@ -344,9 +351,25 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
     { name: 'إمبراطوري بنفسجي', class: 'border-purple-400 shadow-[0_0_15px_rgba(168,85,247,0.6)]', isVipOnly: true }
   ];
 
-  const handleCustomFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleCustomFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
+    e.target.value = '';
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      toast.error('يرجى اختيار ملف صورة صالح');
+      return;
+    }
+    try {
+      const compressed = await compressImageFile(file, {
+        maxWidth: 420,
+        maxHeight: 420,
+        maxBytes: 140 * 1024,
+      });
+      setAvatarUrl(compressed);
+      onUpdateUser({ avatar: compressed });
+      setShowAvatarModal(false);
+      toast.success('تم تحديث صورتك الشخصية من الهاتف بنجاح 📸');
+    } catch {
       const reader = new FileReader();
       reader.onload = (event) => {
         if (event.target?.result) {
@@ -373,7 +396,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
     e.target.value = '';
     if (!file) return;
     if (!file.type.startsWith('image/')) {
-      toast.error('يرجى اختيار ملف صورة صالح للبانر');
+      toast.error('يرجى اختيار ملف صورة صالح من الهاتف');
       return;
     }
     const reader = new FileReader();
@@ -382,6 +405,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
         setBannerCropModal({
           open: true,
           imageSrc: reader.result,
+          rawFile: file,
           zoom: 1,
           offsetX: 0,
           offsetY: 0,
@@ -405,18 +429,50 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
         300
       );
       setProfileBanner(croppedDataUrl);
-      onUpdateUser({ profileBanner: croppedDataUrl });
-      toast.success('تم قص وتطبيق بانر البروفايل المخصص بنجاح 🖼️');
+      setSelectedWallpaper(croppedDataUrl);
+      onUpdateUser({ profileBanner: croppedDataUrl, profileWallpaper: croppedDataUrl });
+      toast.success('تم قص وتطبيق صورة الغلاف والبانر من الهاتف بنجاح 🖼️');
       setBannerCropModal({
         open: false,
         imageSrc: '',
+        rawFile: null,
         zoom: 1,
         offsetX: 0,
         offsetY: 0,
         isApplying: false,
       });
     } catch {
-      toast.error('تعذر معالجة صورة البانر — يرجى اختيار صورة أخرى');
+      toast.error('تعذر معالجة الصورة المختارة — يرجى اختيار صورة أخرى');
+      setBannerCropModal((prev) => ({ ...prev, isApplying: false }));
+    }
+  };
+
+  const handleApplyFullPhoneCover = async () => {
+    if (!bannerCropModal.imageSrc || bannerCropModal.isApplying) return;
+    setBannerCropModal((prev) => ({ ...prev, isApplying: true }));
+    try {
+      const finalUrl = bannerCropModal.rawFile
+        ? await compressImageFile(bannerCropModal.rawFile, {
+            maxWidth: 960,
+            maxHeight: 540,
+            maxBytes: 185 * 1024,
+          })
+        : bannerCropModal.imageSrc;
+      setProfileBanner(finalUrl);
+      setSelectedWallpaper(finalUrl);
+      onUpdateUser({ profileBanner: finalUrl, profileWallpaper: finalUrl });
+      toast.success('تم تطبيق الصورة من الهاتف كخلفية وبانر للبروفايل بنجاح 📱');
+      setBannerCropModal({
+        open: false,
+        imageSrc: '',
+        rawFile: null,
+        zoom: 1,
+        offsetX: 0,
+        offsetY: 0,
+        isApplying: false,
+      });
+    } catch {
+      toast.error('تعذر تطبيق الصورة — يرجى اختيار صورة أخرى');
       setBannerCropModal((prev) => ({ ...prev, isApplying: false }));
     }
   };
@@ -440,7 +496,10 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
     }).catch(() => {});
 
     const allowCustomBannerSave =
-      isVipUser || profileBanner.startsWith('data:image/') || profileBanner.startsWith('http');
+      isVipUser ||
+      profileBanner.startsWith('data:image/') ||
+      profileBanner.startsWith('http') ||
+      profileBanner.startsWith('/');
 
     onUpdateUser({
       name: name.trim() || currentUser.name,
@@ -464,7 +523,11 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   };
 
   const hasCustomBannerActive =
-    isVipUser || profileBanner.startsWith('data:image/') || profileBanner.startsWith('http');
+    isVipUser ||
+    profileBanner.startsWith('data:image/') ||
+    profileBanner.startsWith('http') ||
+    profileBanner.startsWith('/');
+  const effectiveHeroCover = hasCustomBannerActive ? profileBanner : selectedWallpaper;
 
   const maskedAccountEmail = (() => {
     const rawEmail =
@@ -499,19 +562,28 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
 
       {/* Header Profile Hero Card */}
       <div className="relative overflow-hidden rounded-3xl border border-slate-200 shadow-md bg-white">
-        {/* Larger Top Cover Wallpaper or Privileged/Custom Banner */}
+        {/* Larger Top Cover Wallpaper / Unified Custom Banner */}
         <div
           className="h-40 sm:h-52 w-full overflow-hidden relative"
-          style={hasCustomBannerActive ? resolveBannerStyle(profileBanner) : undefined}
+          style={resolveBannerStyle(effectiveHeroCover)}
         >
-          {(!hasCustomBannerActive || !resolveBannerStyle(profileBanner)) && (
-            <img 
-              src={selectedWallpaper} 
-              alt="Cover" 
+          {!resolveBannerStyle(effectiveHeroCover) && (
+            <img
+              src={selectedWallpaper}
+              alt="Cover"
               className="w-full h-full object-cover"
             />
           )}
           <div className="absolute inset-0 bg-gradient-to-t from-white dark:from-slate-900 via-white/25 dark:via-slate-900/35 to-black/15" />
+          <button
+            type="button"
+            onClick={() => bannerFileInputRef.current?.click()}
+            className="absolute top-3 right-3 z-10 inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-full bg-slate-900/65 hover:bg-slate-900/85 backdrop-blur-sm text-white text-[10.5px] font-black border border-white/25 shadow-sm active:scale-95 transition cursor-pointer"
+            title="اختيار بانر أو خلفية من الهاتف"
+          >
+            <Camera className="w-3.5 h-3.5 text-amber-300" />
+            <span>تغيير الغلاف من الهاتف</span>
+          </button>
           <div className="absolute top-3 left-3 z-10 inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-slate-900/65 backdrop-blur-sm text-white text-[10.5px] font-black border border-white/20">
             <Eye className="w-3 h-3 text-amber-300" />
             <span>زيارات البروفايل: {(currentUser.profileVisitsCount || 0).toLocaleString()}</span>
@@ -837,50 +909,169 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
               </div>
             </div>
 
-            {/* Wallpapers with VIP Lock */}
-            <div>
-              <div className="flex items-center justify-between mb-1.5">
-                <label className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
-                  <Palette className="w-3.5 h-3.5 text-purple-600" />
-                  خلفية البروفايل:
+            {/* Merged Profile Banners & Wallpapers + Phone Gallery Picker */}
+            <div className="p-3.5 rounded-2xl bg-slate-50/85 border border-slate-200 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <label className="text-xs font-black text-slate-800 flex items-center gap-1.5">
+                  <Palette className="w-4 h-4 text-purple-600" />
+                  <span>البانرات وخلفيات البروفايل الموحدة</span>
                 </label>
                 {!isVipUser && (
                   <span className="text-[10px] text-amber-700 font-bold flex items-center gap-1">
-                    <Lock className="w-2.5 h-2.5" /> الخلفيات الملكية مخصصة لرتب VIP
+                    <Lock className="w-2.5 h-2.5" /> التدرجات الملكية لـ VIP
                   </span>
                 )}
               </div>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                {wallpapers.map((w, idx) => {
-                  const locked = w.isVipOnly && !isVipUser;
-                  return (
-                    <div
-                      key={idx}
+
+              {/* Phone Selection Card + Active Cover Preview */}
+              <div className="p-3 rounded-2xl bg-white border border-slate-200 space-y-2.5 shadow-2xs">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <button
+                    type="button"
+                    onClick={() => bannerFileInputRef.current?.click()}
+                    className="flex-1 min-w-[200px] py-2.5 px-3 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white text-xs font-black flex items-center justify-center gap-2 shadow-sm active:scale-95 transition cursor-pointer"
+                  >
+                    <Upload className="w-4 h-4" />
+                    <span>اختيار بانر أو خلفية من الهاتف 📱</span>
+                  </button>
+                  {effectiveHeroCover !== '/assets/wallpapers/nature_nile_sunset.jpg' && (
+                    <button
+                      type="button"
                       onClick={() => {
-                        if (locked) {
-                          onOpenVip();
-                        } else {
-                          setSelectedWallpaper(w.url);
-                        }
+                        const defUrl = '/assets/wallpapers/nature_nile_sunset.jpg';
+                        setProfileBanner(defUrl);
+                        setSelectedWallpaper(defUrl);
+                        onUpdateUser({ profileBanner: defUrl, profileWallpaper: defUrl });
+                        toast.info('تمت استعادة الخلفية الافتراضية');
                       }}
-                      className={`relative rounded-xl overflow-hidden cursor-pointer h-14 border-2 transition-all ${
-                        selectedWallpaper === w.url ? 'border-amber-500 scale-[1.02]' : 'border-slate-200'
-                      }`}
+                      className="px-3 py-2 rounded-xl bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 text-[11px] font-black cursor-pointer"
                     >
-                      <img src={w.url} alt="" className={`w-full h-full object-cover ${locked ? 'filter blur-[1px] brightness-50' : ''}`} />
-                      <div className="absolute inset-0 bg-black/35 flex items-center justify-center text-[10px] text-white font-bold text-center px-1">
-                        {locked ? (
-                          <span className="flex items-center gap-1 text-amber-300">
-                            <Lock className="w-3 h-3" /> VIP
-                          </span>
-                        ) : (
-                          w.name
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
+                      استعادة الافتراضي
+                    </button>
+                  )}
+                </div>
+
+                {/* Live Active Cover Preview (16:5) */}
+                <div
+                  className="relative rounded-xl overflow-hidden border border-indigo-200 aspect-[16/5] bg-slate-200 shadow-inner"
+                  style={resolveBannerStyle(effectiveHeroCover)}
+                >
+                  {!resolveBannerStyle(effectiveHeroCover) && (
+                    <img
+                      src={selectedWallpaper}
+                      alt="معاينة غلاف البروفايل"
+                      className="w-full h-full object-cover"
+                    />
+                  )}
+                  <span className="absolute bottom-1.5 right-2 px-2 py-0.5 rounded-md bg-slate-900/75 text-white text-[9.5px] font-black">
+                    الغلاف والبانر النشط حالياً
+                  </span>
+                </div>
               </div>
+
+              {/* Filter Tabs inside Merged Section */}
+              <div className="flex items-center gap-1.5 bg-white p-1 rounded-xl border border-slate-200 text-[11px] font-black">
+                {[
+                  { id: 'all', label: 'الكل ✨' },
+                  { id: 'wallpapers', label: 'خلفيات طبيعية 🌿' },
+                  { id: 'banners', label: 'بانرات ملكية 👑' },
+                ].map((tab) => (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => setCoverFilter(tab.id as 'all' | 'wallpapers' | 'banners')}
+                    className={`flex-1 py-1.5 px-2 rounded-lg transition cursor-pointer ${
+                      coverFilter === tab.id
+                        ? 'bg-indigo-600 text-white shadow-xs'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Natural & Heritage Wallpapers */}
+              {(coverFilter === 'all' || coverFilter === 'wallpapers') && (
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                  {wallpapers.map((w, idx) => {
+                    const locked = w.isVipOnly && !isVipUser;
+                    const isSelected = effectiveHeroCover === w.url;
+                    return (
+                      <button
+                        key={idx}
+                        type="button"
+                        onClick={() => {
+                          if (locked) {
+                            onOpenVip();
+                          } else {
+                            setSelectedWallpaper(w.url);
+                            setProfileBanner(w.url);
+                            onUpdateUser({ profileWallpaper: w.url, profileBanner: w.url });
+                            toast.success(`تم تطبيق "${w.name}" كخلفية وبانر للبروفايل 🎨`);
+                          }
+                        }}
+                        className={`relative rounded-xl overflow-hidden cursor-pointer h-16 border-2 transition-all text-right ${
+                          isSelected ? 'border-amber-500 ring-2 ring-amber-300/60 scale-[1.02]' : 'border-slate-200 hover:border-indigo-300'
+                        }`}
+                      >
+                        <img src={w.url} alt={w.name} className={`w-full h-full object-cover ${locked ? 'filter blur-[1px] brightness-50' : ''}`} />
+                        <div className="absolute inset-0 bg-black/35 flex items-center justify-center text-[10.5px] text-white font-black text-center px-1.5">
+                          {locked ? (
+                            <span className="flex items-center gap-1 text-amber-300">
+                              <Lock className="w-3 h-3" /> {w.name}
+                            </span>
+                          ) : (
+                            w.name
+                          )}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Royal Gradient Banners */}
+              {(coverFilter === 'all' || coverFilter === 'banners') && (
+                <div className="space-y-2">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                    {PROFILE_BANNER_PRESETS.map((preset) => {
+                      const isSelected = isVipUser && effectiveHeroCover === preset.id;
+                      return (
+                        <button
+                          key={preset.id}
+                          type="button"
+                          onClick={() => {
+                            if (!isVipUser) {
+                              onOpenVip();
+                              return;
+                            }
+                            setProfileBanner(preset.id);
+                            onUpdateUser({ profileBanner: preset.id });
+                            toast.success(`تم تفعيل بانر "${preset.label}" بنجاح 👑`);
+                          }}
+                          style={{ background: preset.preview }}
+                          className={`relative p-2.5 h-14 rounded-xl text-white text-[10.5px] font-black flex items-center justify-center gap-1 text-center border-2 transition-all cursor-pointer ${
+                            isSelected
+                              ? 'border-amber-400 ring-2 ring-amber-300 scale-[1.02]'
+                              : 'border-white/40 opacity-90 hover:opacity-100'
+                          }`}
+                        >
+                          {!isVipUser && <Lock className="w-3 h-3 text-amber-300 shrink-0" />}
+                          <span>{preset.label}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <input
+                    type="url"
+                    value={profileBanner.startsWith('http') ? profileBanner : ''}
+                    onChange={(e) => setProfileBanner(e.target.value)}
+                    placeholder="أو الصق رابط صورة بانر / خلفية مباشر (https://...)"
+                    className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 focus:outline-none focus:border-indigo-500"
+                  />
+                </div>
+              )}
             </div>
 
             {/* Frames with VIP Lock */}
@@ -924,103 +1115,8 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
               </div>
             </div>
 
-            {/* Privileged VIP / Admin Custom Banner & Favorite Music */}
+            {/* Favorite Music */}
             <div className="pt-3 border-t border-slate-100 space-y-4">
-              {/* Custom Profile Banner + Gallery Upload with Live Crop Preview */}
-              <div className="space-y-2.5">
-                <div className="flex items-center justify-between">
-                  <label className="text-xs font-black text-slate-800 flex items-center gap-1.5">
-                    <ImageIcon className="w-3.5 h-3.5 text-amber-500" />
-                    <span>بانر البروفايل الحصري (Banner)</span>
-                  </label>
-                  {!isVipUser && (
-                    <span className="text-[10px] text-amber-700 font-bold flex items-center gap-1">
-                      <Lock className="w-2.5 h-2.5" /> التدرجات الملكية لـ VIP
-                    </span>
-                  )}
-                </div>
-
-                {/* Custom Gallery Upload Button + Live Banner Thumbnail */}
-                <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200 space-y-2.5">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <button
-                      type="button"
-                      onClick={() => bannerFileInputRef.current?.click()}
-                      className="flex-1 min-w-[200px] py-2.5 px-3 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white text-xs font-black flex items-center justify-center gap-2 shadow-sm active:scale-95 transition cursor-pointer"
-                    >
-                      <Upload className="w-4 h-4" />
-                      <span>رفع بانر من الاستوديو + معاينة وقص 📸</span>
-                    </button>
-                    {(profileBanner.startsWith('data:image/') || profileBanner.startsWith('http')) && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setProfileBanner('royal_gold');
-                          onUpdateUser({ profileBanner: 'royal_gold' });
-                          toast.info('تمت استعادة البانر الافتراضي');
-                        }}
-                        className="px-3 py-2 rounded-xl bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 text-[11px] font-black cursor-pointer"
-                      >
-                        إزالة البانر
-                      </button>
-                    )}
-                  </div>
-
-                  {(profileBanner.startsWith('data:image/') || profileBanner.startsWith('http')) && (
-                    <div className="relative rounded-xl overflow-hidden border border-indigo-200 aspect-[16/5] bg-slate-200 shadow-inner">
-                      <img
-                        src={profileBanner}
-                        alt="معاينة البانر المخصص"
-                        className="w-full h-full object-cover"
-                      />
-                      <span className="absolute bottom-1.5 right-2 px-2 py-0.5 rounded-md bg-slate-900/75 text-white text-[9.5px] font-black">
-                        البانر النشط (16:5)
-                      </span>
-                    </div>
-                  )}
-                </div>
-
-                {isVipUser ? (
-                  <div className="space-y-2">
-                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                      {PROFILE_BANNER_PRESETS.map((preset) => (
-                        <button
-                          key={preset.id}
-                          type="button"
-                          onClick={() => {
-                            setProfileBanner(preset.id);
-                            onUpdateUser({ profileBanner: preset.id });
-                          }}
-                          style={{ background: preset.preview }}
-                          className={`p-2.5 rounded-xl text-white text-[10.5px] font-black text-center border-2 transition-all cursor-pointer ${
-                            profileBanner === preset.id
-                              ? 'border-amber-400 ring-2 ring-amber-300 scale-[1.02]'
-                              : 'border-white/40 opacity-90 hover:opacity-100'
-                          }`}
-                        >
-                          {preset.label}
-                        </button>
-                      ))}
-                    </div>
-                    <input
-                      type="url"
-                      value={profileBanner.startsWith('http') ? profileBanner : ''}
-                      onChange={(e) => setProfileBanner(e.target.value)}
-                      placeholder="أو الصق رابط صورة بانر مخصص (https://...)"
-                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 focus:outline-none focus:border-indigo-500"
-                    />
-                  </div>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={onOpenVip}
-                    className="w-full p-2.5 rounded-xl bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-800 text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer"
-                  >
-                    <Crown className="w-3.5 h-3.5 text-amber-500" />
-                    <span>قم بالترقية لـ VIP لفتح التدرجات الحصرية والخلفيات الملكية</span>
-                  </button>
-                )}
-              </div>
 
               {/* Custom Favorite Profile Music */}
               <div className="space-y-2">
@@ -1383,14 +1479,14 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
 
       </form>
 
-      {/* Custom Banner Live Preview & Interactive 16:5 Crop Modal (z-[200]) */}
+      {/* Custom Banner & Wallpaper Live Preview + Interactive Crop Modal (z-[200]) */}
       {bannerCropModal.open && (
         <div
           className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-slate-950/65 backdrop-blur-sm animate-fade-in"
           dir="rtl"
           onClick={() =>
             !bannerCropModal.isApplying &&
-            setBannerCropModal((prev) => ({ ...prev, open: false, imageSrc: '' }))
+            setBannerCropModal((prev) => ({ ...prev, open: false, imageSrc: '', rawFile: null }))
           }
         >
           <div
@@ -1401,14 +1497,14 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
               <div className="flex items-center gap-2">
                 <ImageIcon className="w-5 h-5 text-indigo-600" />
                 <div>
-                  <h3 className="text-sm font-black text-slate-900">معاينة وضبط بانر البروفايل</h3>
-                  <p className="text-[10.5px] text-slate-500">حرّك الصورة وكبّرها لتناسب إطار 16:5</p>
+                  <h3 className="text-sm font-black text-slate-900">معاينة وضبط الخلفية والبانر</h3>
+                  <p className="text-[10.5px] text-slate-500">حرّك الصورة وكبّرها أو طبقها كاملة مباشرة</p>
                 </div>
               </div>
               <button
                 type="button"
                 disabled={bannerCropModal.isApplying}
-                onClick={() => setBannerCropModal((prev) => ({ ...prev, open: false, imageSrc: '' }))}
+                onClick={() => setBannerCropModal((prev) => ({ ...prev, open: false, imageSrc: '', rawFile: null }))}
                 className="p-1.5 rounded-full bg-slate-100 text-slate-500 hover:text-slate-900 cursor-pointer"
               >
                 <X className="w-4 h-4" />
@@ -1495,15 +1591,25 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
               </div>
             </div>
 
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                disabled={bannerCropModal.isApplying}
-                onClick={handleConfirmBannerCrop}
-                className="flex-1 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-black text-xs shadow-sm active:scale-95 transition cursor-pointer"
-              >
-                {bannerCropModal.isApplying ? 'جاري القص والحفظ...' : 'اعتماد وحفظ البانر ✅'}
-              </button>
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  disabled={bannerCropModal.isApplying}
+                  onClick={handleConfirmBannerCrop}
+                  className="flex-1 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-black text-xs shadow-sm active:scale-95 transition cursor-pointer"
+                >
+                  {bannerCropModal.isApplying ? 'جاري القص والحفظ...' : 'قص واعتماد الغلاف ✅'}
+                </button>
+                <button
+                  type="button"
+                  disabled={bannerCropModal.isApplying}
+                  onClick={handleApplyFullPhoneCover}
+                  className="px-3 py-2.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 disabled:opacity-50 text-emerald-700 font-black text-xs active:scale-95 transition cursor-pointer"
+                >
+                  تطبيق كاملة
+                </button>
+              </div>
               <button
                 type="button"
                 disabled={bannerCropModal.isApplying}
@@ -1511,13 +1617,14 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                   setBannerCropModal({
                     open: false,
                     imageSrc: '',
+                    rawFile: null,
                     zoom: 1,
                     offsetX: 0,
                     offsetY: 0,
                     isApplying: false,
                   })
                 }
-                className="px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs cursor-pointer"
+                className="w-full py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs cursor-pointer"
               >
                 إلغاء
               </button>

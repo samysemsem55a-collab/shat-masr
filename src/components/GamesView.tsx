@@ -14,7 +14,7 @@ import {
   Crown
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
-import { toast } from 'sonner';
+import { toast } from '../utils/appToast';
 import { User } from '../types/chat';
 import { TRIVIA_QUESTIONS, isUserAdminOrOwner } from '../data/seedData';
 import { subscribeToLeaderboardUsers } from '../services/firebase';

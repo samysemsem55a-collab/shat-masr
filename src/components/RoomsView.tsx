@@ -50,7 +50,7 @@ import { compressImageFile } from '../utils/imageCompression';
 import { VerifiedBadge } from '../utils/verifiedBadge';
 import { sounds } from '../utils/soundEffects';
 import { realtimeSocket } from '../services/realtimeSocket';
-import { toast } from 'sonner';
+import { toast } from '../utils/appToast';
 
 interface RoomsViewProps {
   rooms: Room[];

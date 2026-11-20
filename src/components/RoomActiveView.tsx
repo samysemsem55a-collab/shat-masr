@@ -56,7 +56,7 @@ import {
   MoreVertical
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
-import { toast } from 'sonner';
+import { toast } from '../utils/appToast';
 import { Room, Message, User, SpeakerSeat } from '../types/chat';
 import { isUserAdminOrOwner, LUXURY_GIFTS } from '../data/seedData';
 import { STICKERS_CATALOG } from '../data/stickers';
@@ -3602,7 +3602,7 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
                     setActiveContextMenu(null);
                     await adminUpdateUser(target.senderId, { isBanned: true });
                     handleKickUser(target.senderId, target.senderName);
-                    toast.error(`تم حظر ${target.senderName} نهائياً 🚫`);
+                    toast.security(`تم حظر ${target.senderName} نهائياً 🚫`);
                   }}
                   className="py-1.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-[11px] font-black flex items-center justify-center gap-1 cursor-pointer"
                 >

@@ -57,7 +57,7 @@ import { CallModal } from './CallModal';
 import { CoinsTransferModal } from './CoinsTransferModal';
 import { ChatWallpapersModal } from './ChatWallpapersModal';
 import { STICKERS_CATALOG, CURATED_EMOJIS } from '../data/stickers';
-import { toast } from 'sonner';
+import { toast } from '../utils/appToast';
 import { getWallpaperStyleById } from '../data/wallpapers';
 import { AvatarWithFrame } from './AvatarWithFrame';
 import { getRankDisplayMeta } from '../utils/userRanks';
@@ -67,6 +67,7 @@ import { compressImageFileToBlob } from '../utils/imageCompression';
 import { offlineQueue } from '../services/offlineQueue';
 import { translateChatMessage } from '../utils/translateMessage';
 import { globalRadioPlayer } from '../services/radioPlayer';
+import { realtimeSocket } from '../services/realtimeSocket';
 import { formatLastSeenArabic, isUserTrulyOnline } from '../utils/presenceStatus';
 
 interface PrivateChatViewProps {
@@ -257,7 +258,9 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
       spread: 70,
       origin: { y: 0.6 }
     });
-    toast.success(`تم إرسال هدية ${gift.name} إلى ${activeContact.name} بنجاح! ${gift.icon}`);
+    toast.gift(`تم إرسال هدية ${gift.name} إلى ${activeContact.name} بنجاح! ${gift.icon}`, {
+      description: `خصم ${isOwner ? 0 : gift.cost} كوينز من رصيدك`
+    });
 
     sendDirectMessage(currentUser.id, activeContact.id, {
       senderId: currentUser.id,
@@ -357,18 +360,60 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
     }
   }, [prefilledDraft, activeContact?.id]);
 
-  // Live Typing Indicator via Database-Backed Firestore + RTDB + Real-time Socket
+  // Live Typing Indicator via WebSocket + Database-Backed Firestore + RTDB
   const [isPeerTyping, setIsPeerTyping] = useState<boolean>(false);
+  const [typingPeersMap, setTypingPeersMap] = useState<Record<string, number>>({});
   const typingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastPrivateTypingEmitRef = useRef<number>(0);
   const peerTypingSafetyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Global WebSocket typing listener for Contacts & Online lists
+  useEffect(() => {
+    if (!currentUser?.id) return;
+    const unsubAll = realtimeSocket.subscribeToAllPrivateTyping((senderId, _senderName, isTyping) => {
+      if (!senderId || senderId === currentUser.id) return;
+      setTypingPeersMap(prev => {
+        if (isTyping) {
+          return { ...prev, [senderId]: Date.now() };
+        }
+        if (!(senderId in prev)) return prev;
+        const next = { ...prev };
+        delete next[senderId];
+        return next;
+      });
+    });
+
+    const pruneInterval = setInterval(() => {
+      const now = Date.now();
+      setTypingPeersMap(prev => {
+        const keys = Object.keys(prev);
+        if (keys.length === 0) return prev;
+        let changed = false;
+        const next: Record<string, number> = {};
+        for (const k of keys) {
+          if (now - prev[k] < 6000) {
+            next[k] = prev[k];
+          } else {
+            changed = true;
+          }
+        }
+        return changed ? next : prev;
+      });
+    }, 2000);
+
+    return () => {
+      unsubAll();
+      clearInterval(pruneInterval);
+    };
+  }, [currentUser?.id]);
 
   useEffect(() => {
     if (!activeContact || !currentUser?.id) {
       setIsPeerTyping(false);
       return;
     }
-    const unsub = subscribeToPrivateTyping(currentUser.id, activeContact.id, (isTyping) => {
+
+    const handleTypingSignal = (isTyping: boolean) => {
       if (peerTypingSafetyTimerRef.current) {
         clearTimeout(peerTypingSafetyTimerRef.current);
         peerTypingSafetyTimerRef.current = null;
@@ -380,9 +425,17 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
         }, 6000);
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
       }
+    };
+
+    const unsubSocketDirect = realtimeSocket.subscribeToPrivateTyping(activeContact.id, (isTyping) => {
+      handleTypingSignal(isTyping);
+    });
+    const unsub = subscribeToPrivateTyping(currentUser.id, activeContact.id, (isTyping) => {
+      handleTypingSignal(isTyping);
     });
 
     return () => {
+      unsubSocketDirect();
       unsub();
       if (peerTypingSafetyTimerRef.current) {
         clearTimeout(peerTypingSafetyTimerRef.current);
@@ -402,6 +455,12 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
         peerTypingSafetyTimerRef.current = null;
       }
       setIsPeerTyping(false);
+      setTypingPeersMap(prev => {
+        if (!(activeContact.id in prev)) return prev;
+        const next = { ...prev };
+        delete next[activeContact.id];
+        return next;
+      });
     }
   }, [messages, activeContact?.id]);
 
@@ -420,6 +479,23 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
       }
     };
   }, [activeContact?.id, currentUser.id]);
+
+  const stopPrivateTypingNow = () => {
+    if (typingTimerRef.current) {
+      clearTimeout(typingTimerRef.current);
+      typingTimerRef.current = null;
+    }
+    if (lastPrivateTypingEmitRef.current !== 0 && activeContact) {
+      lastPrivateTypingEmitRef.current = 0;
+      setPrivateTyping(
+        currentUser.id,
+        activeContact.id,
+        currentUser.name,
+        false,
+        getActivePeerSessionId()
+      );
+    }
+  };
 
   const handleInputChange = (val: string) => {
     setInputText(val);
@@ -1077,9 +1153,20 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                               محادثة مباشرة
                             </span>
                           </div>
-                          <p className={`text-xs truncate max-w-[190px] sm:max-w-xs mt-0.5 ${unreadCount > 0 ? 'text-slate-900 font-bold' : 'text-slate-600'}`}>
-                            {chat.lastMessage || 'بدء المحادثة...'}
-                          </p>
+                          {typingPeersMap[chat.peerId] ? (
+                            <p className="text-xs truncate max-w-[190px] sm:max-w-xs mt-0.5 text-amber-600 font-bold flex items-center gap-1.5">
+                              <span>جاري الكتابة...</span>
+                              <span className="inline-flex items-center gap-0.5 shrink-0">
+                                <span className="w-1 h-1 rounded-full bg-amber-500 animate-bounce" style={{ animationDelay: '0ms' }}></span>
+                                <span className="w-1 h-1 rounded-full bg-amber-500 animate-bounce" style={{ animationDelay: '150ms' }}></span>
+                                <span className="w-1 h-1 rounded-full bg-amber-500 animate-bounce" style={{ animationDelay: '300ms' }}></span>
+                              </span>
+                            </p>
+                          ) : (
+                            <p className={`text-xs truncate max-w-[190px] sm:max-w-xs mt-0.5 ${unreadCount > 0 ? 'text-slate-900 font-bold' : 'text-slate-600'}`}>
+                              {chat.lastMessage || 'بدء المحادثة...'}
+                            </p>
+                          )}
                         </div>
                       </div>
 
@@ -1158,10 +1245,21 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                                 </span>
                               ) : null;
                             })()}
-                            <span className="text-emerald-600 font-bold flex items-center gap-1">
-                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-                              متصل الآن
-                            </span>
+                            {typingPeersMap[user.id] ? (
+                              <span className="text-amber-600 font-bold flex items-center gap-1">
+                                <span>جاري الكتابة...</span>
+                                <span className="inline-flex items-center gap-0.5">
+                                  <span className="w-1 h-1 rounded-full bg-amber-500 animate-bounce" style={{ animationDelay: '0ms' }}></span>
+                                  <span className="w-1 h-1 rounded-full bg-amber-500 animate-bounce" style={{ animationDelay: '150ms' }}></span>
+                                  <span className="w-1 h-1 rounded-full bg-amber-500 animate-bounce" style={{ animationDelay: '300ms' }}></span>
+                                </span>
+                              </span>
+                            ) : (
+                              <span className="text-emerald-600 font-bold flex items-center gap-1">
+                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                                متصل الآن
+                              </span>
+                            )}
                           </div>
                         </div>
 
@@ -1265,7 +1363,7 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                       </h3>
                       {isPeerTyping ? (
                         <span className="text-[10px] sm:text-[11px] text-amber-600 font-bold flex items-center gap-1.5 truncate">
-                          <span>يكتب الآن...</span>
+                          <span>جاري الكتابة...</span>
                           <span className="flex items-center gap-0.5 shrink-0">
                             <span className="w-1 h-1 rounded-full bg-amber-500 animate-bounce" style={{ animationDelay: '0ms' }}></span>
                             <span className="w-1 h-1 rounded-full bg-amber-500 animate-bounce" style={{ animationDelay: '150ms' }}></span>
@@ -1838,24 +1936,33 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
             })()}
             
             {/* Live Peer Typing Indicator Bubble (Left / Receiver side in RTL) */}
-            {isPeerTyping && (
-              <div className="flex items-center gap-2 justify-end animate-in fade-in slide-in-from-bottom-2 my-1.5">
-                <div className="bg-white/95 backdrop-blur-md border border-amber-300/80 rounded-2xl rounded-tl-none px-3.5 py-2 flex items-center gap-2 shadow-md">
-                  <div className="flex items-center gap-1">
-                    <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-bounce" style={{ animationDelay: '0ms' }}></span>
-                    <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-bounce" style={{ animationDelay: '150ms' }}></span>
-                    <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-bounce" style={{ animationDelay: '300ms' }}></span>
+            <AnimatePresence>
+              {isPeerTyping && (
+                <motion.div
+                  key="private-peer-typing-bubble"
+                  initial={{ opacity: 0, y: 8, scale: 0.96 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: 6, scale: 0.96 }}
+                  transition={{ duration: 0.18, ease: 'easeOut' }}
+                  className="flex items-center gap-2 justify-end my-1.5"
+                >
+                  <div className="bg-white/95 backdrop-blur-md border border-amber-300/80 rounded-2xl rounded-tl-none px-3.5 py-2 flex items-center gap-2 shadow-md">
+                    <div className="flex items-center gap-1">
+                      <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-bounce" style={{ animationDelay: '0ms' }}></span>
+                      <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-bounce" style={{ animationDelay: '150ms' }}></span>
+                      <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-bounce" style={{ animationDelay: '300ms' }}></span>
+                    </div>
+                    <span className="text-xs font-bold text-slate-800">
+                      {activeContact.name}: جاري الكتابة...
+                    </span>
                   </div>
-                  <span className="text-xs font-bold text-slate-800">
-                    {activeContact.name} يكتب الآن...
-                  </span>
-                </div>
-                <div className="relative w-7 h-7 rounded-full overflow-hidden border border-amber-400 shrink-0 shadow-xs">
-                  <img src={activeContact.avatar} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                  <span className="absolute bottom-0 right-0 w-2 h-2 rounded-full bg-amber-400 animate-ping"></span>
-                </div>
-              </div>
-            )}
+                  <div className="relative w-7 h-7 rounded-full overflow-hidden border border-amber-400 shrink-0 shadow-xs">
+                    <img src={activeContact.avatar} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                    <span className="absolute bottom-0 right-0 w-2 h-2 rounded-full bg-amber-400 animate-ping"></span>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
             <div ref={messagesEndRef} />
           </div>
 
@@ -2084,6 +2191,7 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                     data-form-type="other"
                     value={inputText}
                     onChange={(e) => handleInputChange(e.target.value)}
+                    onBlur={stopPrivateTypingNow}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter' && !e.shiftKey) {
                         e.preventDefault();
@@ -2253,7 +2361,7 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
             if (onUpdateUser) {
               onUpdateUser({ ...currentUser, coins: newBalance });
             }
-            toast.success(`تم تحويل ${amount.toLocaleString()} كوينز إلى ${activeContact.name} بنجاح! 🪙`);
+            toast.coins(`تم تحويل ${amount.toLocaleString()} كوينز إلى ${activeContact.name} بنجاح! 🪙`);
             sendDirectMessage(currentUser.id, activeContact.id, {
               senderId: currentUser.id,
               senderName: currentUser.name,

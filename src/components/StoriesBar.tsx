@@ -24,7 +24,7 @@ import {
 import { compressImageFile } from '../utils/imageCompression';
 import { VerifiedBadge } from '../utils/verifiedBadge';
 import { realtimeSocket } from '../services/realtimeSocket';
-import { toast } from 'sonner';
+import { toast } from '../utils/appToast';
 
 interface StoriesBarProps {
   currentUser: User;

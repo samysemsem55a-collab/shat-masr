@@ -29,7 +29,7 @@ import { realtimeSocket } from '../services/realtimeSocket';
 import { sounds } from '../utils/soundEffects';
 import { VerifiedBadge } from '../utils/verifiedBadge';
 import { formatLastSeenArabic, isUserTrulyOnline } from '../utils/presenceStatus';
-import { toast } from 'sonner';
+import { toast } from '../utils/appToast';
 
 interface UserProfileModalProps {
   user: User | null;
@@ -130,7 +130,15 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
 
   const rankMeta = getRankDisplayMeta(user.role, user.vipBadge);
   const isPrivileged = hasPrivilegedRank(user.role);
-  const bannerStyle = isPrivileged ? resolveBannerStyle(user.profileBanner) : undefined;
+  const effectiveCover =
+    user.profileBanner &&
+    (user.profileBanner.startsWith('data:image/') ||
+      user.profileBanner.startsWith('http') ||
+      user.profileBanner.startsWith('/') ||
+      isPrivileged)
+      ? user.profileBanner
+      : user.profileWallpaper;
+  const bannerStyle = resolveBannerStyle(effectiveCover);
   const liveOnlineRecord = onlineUsers.find((u) => u.id === user.id);
   const regRecord = allRegisteredUsers.find((u) => u.id === user.id);
   const isAvailable = isMe
@@ -165,7 +173,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
       status: 'pending'
     });
     setFriendRequestSent(true);
-    toast.success(`تم إرسال طلب صداقة إلى ${user.name} بنجاح 🤝`);
+    toast.social(`تم إرسال طلب صداقة إلى ${user.name} بنجاح 🤝`);
   };
 
   const handleSubmitReport = async (e: React.FormEvent) => {
@@ -185,7 +193,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
 
       setReportSentSuccess(true);
       setReportNotes('');
-      toast.info('تم إرسال البلاغ للإدارة للمراجعة الفورية 🛡️');
+      toast.security('تم إرسال البلاغ للإدارة للمراجعة الفورية 🛡️');
       setTimeout(() => {
         setReportSentSuccess(false);
         setIsReportOpen(false);

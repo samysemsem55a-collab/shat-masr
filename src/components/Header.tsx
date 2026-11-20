@@ -21,7 +21,7 @@ import { isUserAdminOrOwner } from '../data/seedData';
 import { getRankDisplayMeta, hasPrivilegedRank } from '../utils/userRanks';
 import { AvatarWithFrame } from './AvatarWithFrame';
 import { PWAInstallButton } from './PWAInstallButton';
-import { toast } from 'sonner';
+import { toast } from '../utils/appToast';
 import { VerifiedBadge } from '../utils/verifiedBadge';
 import { realtimeSocket } from '../services/realtimeSocket';
 import appBrandIcon from '../assets/images/shat_masr_official_icon.png';

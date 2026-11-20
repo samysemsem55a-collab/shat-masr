@@ -45,6 +45,7 @@ class RealtimeSocketManager {
   private directMessageListeners: Map<string, Set<DirectMessageCallback>> = new Map();
   private globalDirectMessageListeners: Set<DirectMessageCallback> = new Set();
   private privateTypingListeners: Map<string, Set<PrivateTypingCallback>> = new Map();
+  private privateAllTypingListeners: Set<(senderId: string, senderName: string, isTyping: boolean) => void> = new Set();
   private roomTypingListeners: Map<string, Set<RoomTypingCallback>> = new Map();
   private reactionListeners: Map<string, Set<ReactionCallback>> = new Map();
   private roomReadListeners: Map<string, Set<ReadReceiptCallback>> = new Map();
@@ -468,6 +469,9 @@ class RealtimeSocketManager {
         const listeners = this.privateTypingListeners.get(senderId);
         if (listeners) {
           listeners.forEach(cb => cb(!!isTyping, senderName || ''));
+        }
+        if (senderId) {
+          this.privateAllTypingListeners.forEach(cb => cb(senderId, senderName || '', !!isTyping));
         }
         break;
       }
@@ -999,6 +1003,38 @@ class RealtimeSocketManager {
 
     return () => {
       this.privateTypingListeners.get(targetUserId)?.delete(callback);
+      if (bus) bus.close();
+    };
+  }
+
+  subscribeToAllPrivateTyping(
+    callback: (senderId: string, senderName: string, isTyping: boolean) => void
+  ): () => void {
+    this.privateAllTypingListeners.add(callback);
+
+    let bus: BroadcastChannel | null = null;
+    if (typeof window !== 'undefined') {
+      try {
+        bus = new BroadcastChannel('arab_egypt_chat_bus');
+        bus.onmessage = (e) => {
+          if (e.data?.type === 'PRIVATE_TYPING_BROADCAST' && e.data.senderId) {
+            const recipientId = e.data.targetUserId;
+            if (
+              recipientId &&
+              this.currentUser &&
+              recipientId !== this.currentUser.id &&
+              recipientId !== this.currentUser.sessionId
+            ) {
+              return;
+            }
+            callback(e.data.senderId, e.data.senderName || '', !!e.data.isTyping);
+          }
+        };
+      } catch {}
+    }
+
+    return () => {
+      this.privateAllTypingListeners.delete(callback);
       if (bus) bus.close();
     };
   }
