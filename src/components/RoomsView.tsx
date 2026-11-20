@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   Users,
   Eye,
@@ -757,6 +757,95 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
     return realtimeSocket.subscribeToConnectionState(setSocketState);
   }, []);
 
+  // Live Pulse Indicator for rooms receiving new messages (guides users to most active rooms)
+  const [pulsingRoomsMap, setPulsingRoomsMap] = useState<Record<string, number>>({});
+  const prevRoomLastMsgRef = useRef<Record<string, { timestamp?: number; content?: string }>>({});
+  const hasSeededRoomPulseRef = useRef<boolean>(false);
+
+  useEffect(() => {
+    const now = Date.now();
+    const newlyActiveIds: string[] = [];
+
+    for (const room of rooms) {
+      const lm = room.lastMessage;
+      const prev = prevRoomLastMsgRef.current[room.id];
+
+      if (!hasSeededRoomPulseRef.current) {
+        if (lm?.timestamp && now - lm.timestamp < 15000) {
+          newlyActiveIds.push(room.id);
+        }
+      } else if (lm?.timestamp || lm?.content) {
+        const isNewerTs = Boolean(lm.timestamp && (!prev?.timestamp || lm.timestamp > prev.timestamp));
+        const isChangedContent = Boolean(lm.content && prev && lm.content !== prev.content);
+        if (isNewerTs || isChangedContent || (!prev && lm.content)) {
+          newlyActiveIds.push(room.id);
+        }
+      }
+
+      prevRoomLastMsgRef.current[room.id] = {
+        timestamp: lm?.timestamp,
+        content: lm?.content,
+      };
+    }
+
+    hasSeededRoomPulseRef.current = true;
+
+    if (newlyActiveIds.length > 0) {
+      setPulsingRoomsMap((prev) => {
+        const next = { ...prev };
+        for (const id of newlyActiveIds) {
+          next[id] = now;
+        }
+        return next;
+      });
+    }
+  }, [rooms]);
+
+  useEffect(() => {
+    const unsubLastMsgs = realtimeSocket.subscribeToAllRoomLastMessages((lastMessages) => {
+      const now = Date.now();
+      const newlyActiveIds: string[] = [];
+      for (const [roomId, lm] of Object.entries(lastMessages || {})) {
+        const prev = prevRoomLastMsgRef.current[roomId];
+        const isNewer = Boolean(lm?.timestamp && (!prev?.timestamp || lm.timestamp > prev.timestamp));
+        if (isNewer && now - lm.timestamp < 20000) {
+          newlyActiveIds.push(roomId);
+          prevRoomLastMsgRef.current[roomId] = { timestamp: lm.timestamp, content: lm.content };
+        }
+      }
+      if (newlyActiveIds.length > 0) {
+        setPulsingRoomsMap((prev) => {
+          const next = { ...prev };
+          for (const id of newlyActiveIds) {
+            next[id] = now;
+          }
+          return next;
+        });
+      }
+    });
+    return () => unsubLastMsgs();
+  }, []);
+
+  useEffect(() => {
+    if (Object.keys(pulsingRoomsMap).length === 0) return;
+    const timer = setInterval(() => {
+      const now = Date.now();
+      setPulsingRoomsMap((prev) => {
+        let changed = false;
+        const next: Record<string, number> = {};
+        for (const [id, startedAt] of Object.entries(prev)) {
+          if (now - startedAt < 12000) {
+            next[id] = startedAt;
+          } else {
+            changed = true;
+          }
+        }
+        return changed ? next : prev;
+      });
+    }, 1500);
+    return () => clearInterval(timer);
+  }, [pulsingRoomsMap]);
+
   useEffect(() => {
     if (!highlightedPostId || forumPosts.length === 0) return;
     const el = document.getElementById(`forum-post-${highlightedPostId}`);
@@ -1102,11 +1191,25 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
               room.hostId === currentUser.id ||
               (room.moderators || []).includes(currentUser.id);
 
+            const isRoomPulsing = Boolean(pulsingRoomsMap[room.id]);
+
             return (
               <div
                 key={room.id}
-                onClick={() => onSelectRoom(room)}
-                className={`group relative cursor-pointer overflow-hidden rounded-2xl bg-gradient-to-br ${gradientTheme} border p-3 min-h-[96px] sm:min-h-[108px] text-white shadow-sm hover:shadow-lg hover:brightness-105 active:scale-[0.99] transition-all flex flex-col justify-between gap-1.5`}
+                onClick={() => {
+                  if (isRoomPulsing) {
+                    setPulsingRoomsMap((prev) => {
+                      if (!(room.id in prev)) return prev;
+                      const next = { ...prev };
+                      delete next[room.id];
+                      return next;
+                    });
+                  }
+                  onSelectRoom(room);
+                }}
+                className={`group relative cursor-pointer overflow-hidden rounded-2xl bg-gradient-to-br ${gradientTheme} border p-3 min-h-[96px] sm:min-h-[108px] text-white shadow-sm hover:shadow-lg hover:brightness-105 active:scale-[0.99] transition-all flex flex-col justify-between gap-1.5 ${
+                  isRoomPulsing ? 'ring-2 ring-amber-300/75 shadow-[0_6px_22px_rgba(251,191,36,0.28)]' : ''
+                }`}
               >
                 {/* Atmospheric Cover Image Layer */}
                 <div
@@ -1123,15 +1226,49 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
                   className="absolute inset-0 bg-gradient-to-t from-black/50 via-black/15 to-transparent pointer-events-none"
                 />
 
-                {/* Top Cover Header: Icon + Title + Live Counter */}
+                {/* Top Cover Header: Icon (with Live Pulse on new messages) + Title + Live Counter */}
                 <div className="relative z-10 flex items-center justify-between gap-2">
                   <div className="flex items-center gap-2.5 min-w-0">
-                    <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-white/20 backdrop-blur-sm border border-white/40 flex items-center justify-center shrink-0 shadow-sm">
-                      {isLiveAudio ? <Mic className="w-4 h-4 sm:w-5 sm:h-5 text-white" /> : isEgypt1 ? <MessageSquare className="w-4 h-4 sm:w-5 sm:h-5 text-white" /> : <Flame className="w-4 h-4 sm:w-5 sm:h-5 text-white" />}
+                    <div className="relative shrink-0">
+                      {isRoomPulsing && (
+                        <span
+                          aria-hidden="true"
+                          className="absolute inset-0 rounded-xl bg-amber-300/75 motion-safe:animate-ping pointer-events-none"
+                        />
+                      )}
+                      <div
+                        className={`relative w-9 h-9 sm:w-10 sm:h-10 rounded-xl backdrop-blur-sm border flex items-center justify-center shadow-sm transition-all ${
+                          isRoomPulsing
+                            ? 'bg-amber-400/35 border-amber-200 ring-2 ring-amber-300/80 shadow-[0_0_16px_rgba(251,191,36,0.65)] motion-safe:animate-pulse'
+                            : 'bg-white/20 border-white/40'
+                        }`}
+                      >
+                        {isLiveAudio ? (
+                          <Mic className={`w-4 h-4 sm:w-5 sm:h-5 ${isRoomPulsing ? 'text-amber-200' : 'text-white'}`} />
+                        ) : isEgypt1 ? (
+                          <MessageSquare className={`w-4 h-4 sm:w-5 sm:h-5 ${isRoomPulsing ? 'text-amber-200' : 'text-white'}`} />
+                        ) : (
+                          <Flame className={`w-4 h-4 sm:w-5 sm:h-5 ${isRoomPulsing ? 'text-amber-200' : 'text-white'}`} />
+                        )}
+                      </div>
+                      {isRoomPulsing && (
+                        <span
+                          aria-label="رسالة جديدة نشطة"
+                          className="absolute -top-1 -left-1 flex h-3 w-3 pointer-events-none"
+                        >
+                          <span className="motion-safe:animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-300 opacity-85" />
+                          <span className="relative inline-flex rounded-full h-3 w-3 bg-amber-400 border border-white shadow-xs" />
+                        </span>
+                      )}
                     </div>
                     <div className="min-w-0 text-right">
                       <div className="flex items-center gap-1.5 min-w-0">
                         <h3 className="text-xs sm:text-sm font-black truncate drop-shadow-xs">{room.title}</h3>
+                        {isRoomPulsing && (
+                          <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-amber-400 text-slate-950 text-[9px] font-black shrink-0 shadow-xs motion-safe:animate-pulse">
+                            <span>نشط الآن 🔥</span>
+                          </span>
+                        )}
                         {isLiveAudio && (
                           <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-rose-500 text-white text-[9px] font-black shrink-0 animate-pulse">
                             <Radio className="w-2.5 h-2.5" />
