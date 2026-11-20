@@ -757,8 +757,8 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
     return realtimeSocket.subscribeToConnectionState(setSocketState);
   }, []);
 
-  // Live Pulse Indicator for rooms receiving new messages (guides users to most active rooms)
-  const [pulsingRoomsMap, setPulsingRoomsMap] = useState<Record<string, number>>({});
+  // Live Pulse Indicator & Numeric Counter for rooms receiving new messages (guides users to most active rooms)
+  const [pulsingRoomsMap, setPulsingRoomsMap] = useState<Record<string, { count: number; updatedAt: number }>>({});
   const prevRoomLastMsgRef = useRef<Record<string, { timestamp?: number; content?: string }>>({});
   const hasSeededRoomPulseRef = useRef<boolean>(false);
 
@@ -776,16 +776,23 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
         }
       } else if (lm?.timestamp || lm?.content) {
         const isNewerTs = Boolean(lm.timestamp && (!prev?.timestamp || lm.timestamp > prev.timestamp));
-        const isChangedContent = Boolean(lm.content && prev && lm.content !== prev.content);
-        if (isNewerTs || isChangedContent || (!prev && lm.content)) {
+        const isSameTsChangedContent = Boolean(
+          lm.content &&
+            prev &&
+            lm.content !== prev.content &&
+            (!lm.timestamp || !prev.timestamp || lm.timestamp >= prev.timestamp)
+        );
+        if (isNewerTs || isSameTsChangedContent || (!prev && lm.content)) {
           newlyActiveIds.push(room.id);
         }
       }
 
-      prevRoomLastMsgRef.current[room.id] = {
-        timestamp: lm?.timestamp,
-        content: lm?.content,
-      };
+      if (lm?.timestamp || lm?.content) {
+        prevRoomLastMsgRef.current[room.id] = {
+          timestamp: lm?.timestamp ?? prev?.timestamp,
+          content: lm?.content ?? prev?.content,
+        };
+      }
     }
 
     hasSeededRoomPulseRef.current = true;
@@ -794,7 +801,11 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
       setPulsingRoomsMap((prev) => {
         const next = { ...prev };
         for (const id of newlyActiveIds) {
-          next[id] = now;
+          const existing = next[id];
+          next[id] = {
+            count: existing ? existing.count + 1 : 1,
+            updatedAt: now,
+          };
         }
         return next;
       });
@@ -807,17 +818,30 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
       const newlyActiveIds: string[] = [];
       for (const [roomId, lm] of Object.entries(lastMessages || {})) {
         const prev = prevRoomLastMsgRef.current[roomId];
-        const isNewer = Boolean(lm?.timestamp && (!prev?.timestamp || lm.timestamp > prev.timestamp));
-        if (isNewer && now - lm.timestamp < 20000) {
+        const isNewerTs = Boolean(lm?.timestamp && (!prev?.timestamp || lm.timestamp > prev.timestamp));
+        const isSameTsChangedContent = Boolean(
+          lm?.content &&
+            prev &&
+            lm.content !== prev.content &&
+            lm.timestamp === prev.timestamp
+        );
+        if ((isNewerTs || isSameTsChangedContent) && (!lm?.timestamp || now - lm.timestamp < 20000)) {
           newlyActiveIds.push(roomId);
-          prevRoomLastMsgRef.current[roomId] = { timestamp: lm.timestamp, content: lm.content };
+          prevRoomLastMsgRef.current[roomId] = {
+            timestamp: lm?.timestamp ?? prev?.timestamp,
+            content: lm?.content ?? prev?.content,
+          };
         }
       }
       if (newlyActiveIds.length > 0) {
         setPulsingRoomsMap((prev) => {
           const next = { ...prev };
           for (const id of newlyActiveIds) {
-            next[id] = now;
+            const existing = next[id];
+            next[id] = {
+              count: existing ? existing.count + 1 : 1,
+              updatedAt: now,
+            };
           }
           return next;
         });
@@ -832,10 +856,10 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
       const now = Date.now();
       setPulsingRoomsMap((prev) => {
         let changed = false;
-        const next: Record<string, number> = {};
-        for (const [id, startedAt] of Object.entries(prev)) {
-          if (now - startedAt < 12000) {
-            next[id] = startedAt;
+        const next: Record<string, { count: number; updatedAt: number }> = {};
+        for (const [id, entry] of Object.entries(prev)) {
+          if (now - entry.updatedAt < 15000) {
+            next[id] = entry;
           } else {
             changed = true;
           }
@@ -1191,7 +1215,10 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
               room.hostId === currentUser.id ||
               (room.moderators || []).includes(currentUser.id);
 
-            const isRoomPulsing = Boolean(pulsingRoomsMap[room.id]);
+            const roomPulseEntry = pulsingRoomsMap[room.id];
+            const newMsgCount = roomPulseEntry?.count || 0;
+            const isRoomPulsing = newMsgCount > 0;
+            const formattedNewMsgCount = newMsgCount > 99 ? '99+' : String(newMsgCount);
 
             return (
               <div
@@ -1226,7 +1253,7 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
                   className="absolute inset-0 bg-gradient-to-t from-black/50 via-black/15 to-transparent pointer-events-none"
                 />
 
-                {/* Top Cover Header: Icon (with Live Pulse on new messages) + Title + Live Counter */}
+                {/* Top Cover Header: Icon (with Live Pulse + Numeric Counter on new messages) + Title + Live Counter */}
                 <div className="relative z-10 flex items-center justify-between gap-2">
                   <div className="flex items-center gap-2.5 min-w-0">
                     <div className="relative shrink-0">
@@ -1244,20 +1271,25 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
                         }`}
                       >
                         {isLiveAudio ? (
-                          <Mic className={`w-4 h-4 sm:w-5 sm:h-5 ${isRoomPulsing ? 'text-amber-200' : 'text-white'}`} />
+                          <Mic className={`w-4 h-4 sm:w-5 sm:h-5 ${isRoomPulsing ? 'text-amber-100' : 'text-white'}`} />
                         ) : isEgypt1 ? (
-                          <MessageSquare className={`w-4 h-4 sm:w-5 sm:h-5 ${isRoomPulsing ? 'text-amber-200' : 'text-white'}`} />
+                          <MessageSquare className={`w-4 h-4 sm:w-5 sm:h-5 ${isRoomPulsing ? 'text-amber-100' : 'text-white'}`} />
                         ) : (
-                          <Flame className={`w-4 h-4 sm:w-5 sm:h-5 ${isRoomPulsing ? 'text-amber-200' : 'text-white'}`} />
+                          <Flame className={`w-4 h-4 sm:w-5 sm:h-5 ${isRoomPulsing ? 'text-amber-100' : 'text-white'}`} />
                         )}
                       </div>
                       {isRoomPulsing && (
                         <span
-                          aria-label="رسالة جديدة نشطة"
-                          className="absolute -top-1 -left-1 flex h-3 w-3 pointer-events-none"
+                          key={newMsgCount}
+                          aria-label={`${newMsgCount} رسالة جديدة نشطة`}
+                          title={`${newMsgCount} رسالة جديدة`}
+                          className="absolute -top-1.5 -left-1.5 z-20 inline-flex items-center justify-center min-w-[20px] h-5 px-1 rounded-full bg-gradient-to-tr from-rose-600 via-orange-500 to-amber-400 text-white text-[10px] leading-none font-black tabular-nums border-[1.5px] border-white shadow-[0_2px_8px_rgba(245,158,11,0.85)] pointer-events-none"
                         >
-                          <span className="motion-safe:animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-300 opacity-85" />
-                          <span className="relative inline-flex rounded-full h-3 w-3 bg-amber-400 border border-white shadow-xs" />
+                          <span
+                            aria-hidden="true"
+                            className="motion-safe:animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-300 opacity-65"
+                          />
+                          <span className="relative drop-shadow-xs">{formattedNewMsgCount}</span>
                         </span>
                       )}
                     </div>
@@ -1265,8 +1297,8 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
                       <div className="flex items-center gap-1.5 min-w-0">
                         <h3 className="text-xs sm:text-sm font-black truncate drop-shadow-xs">{room.title}</h3>
                         {isRoomPulsing && (
-                          <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-amber-400 text-slate-950 text-[9px] font-black shrink-0 shadow-xs motion-safe:animate-pulse">
-                            <span>نشط الآن 🔥</span>
+                          <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-amber-400 text-slate-950 text-[9px] font-black shrink-0 shadow-xs motion-safe:animate-pulse tabular-nums">
+                            <span>{newMsgCount > 1 ? `نشط +${formattedNewMsgCount} 🔥` : 'نشط الآن 🔥'}</span>
                           </span>
                         )}
                         {isLiveAudio && (
