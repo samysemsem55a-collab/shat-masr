@@ -10,13 +10,12 @@ import {
   VolumeX,
   ShieldCheck,
   Sparkles,
-  AlertCircle,
   PhoneIncoming,
 } from 'lucide-react';
 import { User } from '../types/chat';
-import { isGuestUser } from '../data/seedData';
 import { sounds } from '../utils/soundEffects';
 import { realtimeSocket } from '../services/realtimeSocket';
+import { sendFirestoreCallSignal, subscribeToFirestoreCallSignals } from '../services/firebase';
 import { globalRadioPlayer } from '../services/radioPlayer';
 
 interface CallModalProps {
@@ -50,12 +49,9 @@ export const CallModal: React.FC<CallModalProps> = ({
   currentUser,
   peerUser,
   callType,
-  onPromptRegister,
   incomingMode = false,
   incomingSignal,
 }) => {
-  const isGuest = isGuestUser(currentUser);
-
   const [callState, setCallState] = useState<'incoming' | 'ringing' | 'connected' | 'ended'>(
     incomingMode ? 'incoming' : 'ringing'
   );
@@ -167,11 +163,38 @@ export const CallModal: React.FC<CallModalProps> = ({
     }
   }, [callType]);
 
-  // Outgoing call setup + WebRTC signaling subscription
+  const emitCallSignal = useCallback(
+    (signalBody: Record<string, any>) => {
+      const enriched = {
+        ...signalBody,
+        signalId: `sig_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      };
+      realtimeSocket.sendCallSignal(peerUser.id, enriched);
+      sendFirestoreCallSignal(peerUser.id, enriched).catch(() => {});
+    },
+    [peerUser.id]
+  );
+
+  // Ringtone management for incoming calls
+  useEffect(() => {
+    if (!isOpen) {
+      sounds.stopCallRing();
+      return;
+    }
+    if (callState === 'incoming') {
+      sounds.startCallRing();
+    } else {
+      sounds.stopCallRing();
+    }
+    return () => {
+      sounds.stopCallRing();
+    };
+  }, [isOpen, callState]);
+
+  // Outgoing call setup + WebRTC signaling subscription (Socket + Firestore relay)
   useEffect(() => {
     if (!isOpen) return;
     globalRadioPlayer.pauseForCall();
-    if (isGuest) return;
 
     let cancelled = false;
     setDuration(0);
@@ -179,20 +202,27 @@ export const CallModal: React.FC<CallModalProps> = ({
     setIsVideoEnabled(callType === 'video');
     setCallState(incomingMode ? 'incoming' : 'ringing');
     pendingIceRef.current = [];
+    const processedSignals = new Set<string>();
 
-    const unsubSignals = realtimeSocket.subscribeToCallSignals(async (signal) => {
+    const handleIncomingSignal = async (signal: any) => {
       if (cancelled || !signal) return;
       if (signal.targetUserId && signal.targetUserId !== currentUser.id) return;
       if (signal.fromUserId && signal.fromUserId !== peerUser.id) return;
+      if (signal.signalId) {
+        if (processedSignals.has(signal.signalId)) return;
+        processedSignals.add(signal.signalId);
+      }
 
       if (signal.type === 'call_end' || signal.type === 'call_reject') {
+        sounds.stopCallRing();
         cleanupMediaAndPeer();
         setCallState('ended');
-        setTimeout(() => onClose(), 700);
+        setTimeout(() => onClose(), 650);
         return;
       }
 
       if (signal.type === 'call_accept') {
+        sounds.stopCallRing();
         sounds.playMessageReceived();
         setCallState('connected');
         return;
@@ -205,6 +235,7 @@ export const CallModal: React.FC<CallModalProps> = ({
             await pcRef.current.addIceCandidate(new RTCIceCandidate(candidate)).catch(() => {});
           }
           pendingIceRef.current = [];
+          sounds.stopCallRing();
           sounds.playMessageReceived();
           setCallState('connected');
         } catch {
@@ -220,7 +251,10 @@ export const CallModal: React.FC<CallModalProps> = ({
           pendingIceRef.current.push(signal.candidate);
         }
       }
-    });
+    };
+
+    const unsubSignals = realtimeSocket.subscribeToCallSignals(handleIncomingSignal);
+    const unsubFirestoreSignals = subscribeToFirestoreCallSignals(currentUser.id, handleIncomingSignal);
 
     let ringTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -229,13 +263,22 @@ export const CallModal: React.FC<CallModalProps> = ({
         const stream = await acquireUserMedia();
         if (cancelled) return;
         const pc = createPeerConnection(stream);
+        pc.onicecandidate = (event) => {
+          if (event.candidate) {
+            emitCallSignal({
+              type: 'ice_candidate',
+              fromUserId: currentUser.id,
+              candidate: event.candidate.toJSON(),
+            });
+          }
+        };
         try {
           const offer = await pc.createOffer({
             offerToReceiveAudio: true,
             offerToReceiveVideo: callType === 'video',
           });
           await pc.setLocalDescription(offer);
-          realtimeSocket.sendCallSignal(peerUser.id, {
+          emitCallSignal({
             type: 'call_offer',
             fromUserId: currentUser.id,
             callerName: currentUser.name,
@@ -245,7 +288,7 @@ export const CallModal: React.FC<CallModalProps> = ({
             sdp: offer,
           });
         } catch {
-          realtimeSocket.sendCallSignal(peerUser.id, {
+          emitCallSignal({
             type: 'call_offer',
             fromUserId: currentUser.id,
             callerName: currentUser.name,
@@ -255,25 +298,32 @@ export const CallModal: React.FC<CallModalProps> = ({
           });
         }
 
-        // Graceful fallback timer for simulated / bot peers so call UX never hangs
+        // End unanswered outgoing call cleanly after 45s
         ringTimer = setTimeout(() => {
           if (!cancelled) {
-            sounds.playMessageReceived();
-            setCallState((prev) => (prev === 'ringing' ? 'connected' : prev));
+            setCallState((prev) => {
+              if (prev === 'ringing') {
+                cleanupMediaAndPeer();
+                setTimeout(() => onClose(), 700);
+                return 'ended';
+              }
+              return prev;
+            });
           }
-        }, 2500);
+        }, 45000);
       })();
     }
 
     return () => {
       cancelled = true;
+      sounds.stopCallRing();
       if (ringTimer) clearTimeout(ringTimer);
       unsubSignals();
+      unsubFirestoreSignals();
       cleanupMediaAndPeer();
     };
   }, [
     isOpen,
-    isGuest,
     incomingMode,
     callType,
     currentUser.id,
@@ -284,6 +334,7 @@ export const CallModal: React.FC<CallModalProps> = ({
     acquireUserMedia,
     createPeerConnection,
     cleanupMediaAndPeer,
+    emitCallSignal,
     onClose,
   ]);
 
@@ -335,9 +386,19 @@ export const CallModal: React.FC<CallModalProps> = ({
   };
 
   const handleAcceptIncomingCall = async () => {
+    sounds.stopCallRing();
     sounds.playMessageReceived();
     const stream = await acquireUserMedia();
     const pc = createPeerConnection(stream);
+    pc.onicecandidate = (event) => {
+      if (event.candidate) {
+        emitCallSignal({
+          type: 'ice_candidate',
+          fromUserId: currentUser.id,
+          candidate: event.candidate.toJSON(),
+        });
+      }
+    };
 
     if (incomingSignal?.sdp) {
       try {
@@ -348,19 +409,19 @@ export const CallModal: React.FC<CallModalProps> = ({
         pendingIceRef.current = [];
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
-        realtimeSocket.sendCallSignal(peerUser.id, {
+        emitCallSignal({
           type: 'call_answer',
           fromUserId: currentUser.id,
           sdp: answer,
         });
       } catch {
-        realtimeSocket.sendCallSignal(peerUser.id, {
+        emitCallSignal({
           type: 'call_accept',
           fromUserId: currentUser.id,
         });
       }
     } else {
-      realtimeSocket.sendCallSignal(peerUser.id, {
+      emitCallSignal({
         type: 'call_accept',
         fromUserId: currentUser.id,
       });
@@ -369,7 +430,8 @@ export const CallModal: React.FC<CallModalProps> = ({
   };
 
   const handleEndCall = () => {
-    realtimeSocket.sendCallSignal(peerUser.id, {
+    sounds.stopCallRing();
+    emitCallSignal({
       type: callState === 'incoming' ? 'call_reject' : 'call_end',
       fromUserId: currentUser.id,
     });
@@ -379,43 +441,6 @@ export const CallModal: React.FC<CallModalProps> = ({
       onClose();
     }, 650);
   };
-
-  // Guest Restriction Modal (Light Theme)
-  if (isGuest) {
-    return (
-      <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-slate-900/45 backdrop-blur-sm animate-in fade-in" dir="rtl">
-        <div className="w-full max-w-sm bg-white border border-amber-200 rounded-3xl p-6 text-center space-y-4 shadow-2xl">
-          <div className="w-16 h-16 rounded-3xl bg-amber-50 border border-amber-200 flex items-center justify-center mx-auto text-amber-600">
-            <AlertCircle className="w-8 h-8" />
-          </div>
-          <div className="space-y-2">
-            <h3 className="text-base font-black text-slate-900">المكالمات مخصصة للأعضاء المسجلين</h3>
-            <p className="text-xs text-slate-600 leading-relaxed">
-              عفواً يا طيب! ميزات المكالمات الصوتية والمرئية فائقة الجودة والمشفرة متاحة فقط للحسابات المسجلة لضمان الخصوصية والأمان.
-            </p>
-          </div>
-
-          <div className="space-y-2 pt-2">
-            <button
-              onClick={() => {
-                onClose();
-                if (onPromptRegister) onPromptRegister();
-              }}
-              className="w-full py-3 rounded-2xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-white font-black text-xs shadow-lg active:scale-95 transition"
-            >
-              تسجيل حساب مجاناً الآن 🚀
-            </button>
-            <button
-              onClick={onClose}
-              className="w-full py-2.5 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs active:scale-95 transition"
-            >
-              إلغاء وإغلاق
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className="fixed inset-0 z-[200] flex items-center justify-center bg-slate-900/45 backdrop-blur-md animate-in fade-in select-none sm:p-4" dir="rtl">

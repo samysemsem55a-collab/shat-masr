@@ -40,7 +40,6 @@ import {
   Bot,
   Lock,
   Flag,
-  RotateCcw,
   Share2,
   Sticker,
   Unlock,
@@ -50,7 +49,10 @@ import {
   Languages,
   Hand,
   WifiOff,
-  Ban
+  Ban,
+  Image as ImageIcon,
+  Loader2,
+  Maximize2
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { toast } from 'sonner';
@@ -65,6 +67,7 @@ import { getRankDisplayMeta, hasPrivilegedRank } from '../utils/userRanks';
 import { ANIMATED_INLINE_EMOJIS, InlineRichText } from './InlineRichText';
 import { offlineQueue } from '../services/offlineQueue';
 import { translateChatMessage, buildSmartAssistantReply } from '../utils/translateMessage';
+import { compressImageFileToBlob } from '../utils/imageCompression';
 import { 
   getWallpaperStyleById, 
   ROOM_BACKGROUND_THEMES, 
@@ -89,7 +92,8 @@ import {
   purgeRoomMessages,
   submitUserReport,
   adminUpdateUser,
-  sendFriendRequest
+  sendFriendRequest,
+  uploadPrivateChatMedia
 } from '../services/firebase';
 import { realtimeSocket } from '../services/realtimeSocket';
 import { sounds } from '../utils/soundEffects';
@@ -259,8 +263,11 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
   onUpdateUser,
   onOpenWallet,
 }) => {
-  // Chat Wallpapers Modal State (Select & Purchase)
+  // Chat Wallpapers Modal State (Select & Purchase) + Image Upload & Lightbox
   const [isWallpapersModalOpen, setIsWallpapersModalOpen] = useState(false);
+  const roomImageInputRef = useRef<HTMLInputElement>(null);
+  const [isUploadingRoomImage, setIsUploadingRoomImage] = useState(false);
+  const [lightboxImageUrl, setLightboxImageUrl] = useState<string | null>(null);
 
   // Top Message Type Filter State & Message Search & Join Mute & Live Audio Stage
   const [messageFilter, setMessageFilter] = useState<'all' | 'messages' | 'images' | 'gifts'>('all');
@@ -515,8 +522,6 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
   // Moderator, Pin & Custom Room Background state
   const isModerator = room.ownerId === currentUser.id || room.moderators?.includes(currentUser.id) || currentUser.role === 'owner' || currentUser.role === 'admin' || currentUser.role === 'super_admin';
   const [isModeratorPanelOpen, setIsModeratorPanelOpen] = useState(false);
-  const [isRoomBgModalOpen, setIsRoomBgModalOpen] = useState(false);
-  const [roomBgCategoryFilter, setRoomBgCategoryFilter] = useState<'all' | 'nature' | 'gradient' | 'solid'>('all');
   const [liveRoomBackgroundTheme, setLiveRoomBackgroundTheme] = useState<string>(room.backgroundTheme || 'default');
   const [liveIsLocked, setLiveIsLocked] = useState<boolean>(Boolean(room.isLocked));
   const [newPinText, setNewPinText] = useState('');
@@ -916,6 +921,66 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
     lastTypingEmitRef.current = 0;
     setRoomTyping(room.id, currentUser, false);
     setIsEmojiPickerOpen(false);
+  };
+
+  // Unrestricted Room Image Upload Handler
+  const handleRoomImageSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    if (currentUser.isBanned || currentUser.isMuted) {
+      toast.warning('غير مسموح بإرسال صور أثناء الكتم أو الحظر');
+      return;
+    }
+    if (!file.type.startsWith('image/')) {
+      toast.error('يرجى اختيار ملف صورة صالح');
+      return;
+    }
+    if (file.size > 15 * 1024 * 1024) {
+      toast.error('حجم الصورة كبير جداً (الحد الأقصى 15 ميجابايت)');
+      return;
+    }
+
+    setIsUploadingRoomImage(true);
+    try {
+      const { blob } = await compressImageFileToBlob(file, {
+        maxWidth: 960,
+        maxBytes: 220 * 1024,
+      });
+      const baseName = file.name.replace(/\.[^.]+$/, '') || 'room_photo';
+      const uploadFile = new File([blob], `${baseName}.jpg`, { type: 'image/jpeg' });
+      const { url } = await uploadPrivateChatMedia(uploadFile, `room_${room.id}`);
+      sounds.playMessageSent();
+      onSendMessage({
+        roomId: room.id,
+        senderId: currentUser.id,
+        senderName: currentUser.name,
+        senderAvatar: currentUser.avatar,
+        senderRole: currentUser.role,
+        senderVipBadge: currentUser.vipBadge,
+        badges: currentUser.badges || ['عضو نشط'],
+        type: 'image',
+        mediaUrl: url,
+        imageUrl: url,
+        mediaType: 'image',
+        content: '🖼️ صورة مرفقة',
+        text: '🖼️ صورة مرفقة',
+        replyTo: replyingTo ? {
+          id: replyingTo.id,
+          senderName: replyingTo.senderName,
+          content: replyingTo.content || replyingTo.text || '',
+          type: replyingTo.type
+        } : undefined,
+        timestamp: Date.now(),
+        status: 'read',
+      });
+      updateReplyingTo(null);
+      toast.success('تم إرسال الصورة في الغرفة بنجاح 🖼️');
+    } catch (err: any) {
+      toast.error(err?.message || 'تعذر رفع الصورة، حاول مرة أخرى');
+    } finally {
+      setIsUploadingRoomImage(false);
+    }
   };
 
   const handleInsertEmoji = (emoji: string) => {
@@ -1350,7 +1415,7 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
     (effectiveRoomBackground === 'default' && Boolean(currentUser.chatWallpaper && DARK_PERSONAL_WALLPAPERS.has(currentUser.chatWallpaper)));
 
   return (
-    <div style={getRoomContainerStyle(room.id, currentUser.chatWallpaper, effectiveRoomBackground)} className={`relative flex flex-col h-screen w-full bg-[#f6f8fc] overflow-hidden select-none transition-all duration-500 ${isDarkRoomBg ? 'text-white' : 'text-slate-900'}`}>
+    <div style={getRoomContainerStyle(room.id, currentUser.chatWallpaper, effectiveRoomBackground)} className={`relative flex flex-col h-[100dvh] w-full bg-[#f6f8fc] overflow-hidden select-none transition-all duration-500 ${isDarkRoomBg ? 'text-white' : 'text-slate-900'}`}>
       
       {/* 1. COMPACT SINGLE-ROW SLIM HEADER (Maximizes Message Viewport) */}
       <header className={`backdrop-blur-md border-b px-2 sm:px-3 py-1.5 pt-[calc(env(safe-area-inset-top,0px)+0.35rem)] flex items-center justify-between gap-1.5 shrink-0 shadow-xs z-20 ${
@@ -1422,15 +1487,15 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
           </div>
         </div>
 
-        {/* Left (RTL): Compact Integrated Icon Toolbar */}
-        <div className="flex items-center gap-1 overflow-x-auto scrollbar-none shrink-0">
+        {/* Left (RTL): Compact Integrated Icon Toolbar (Non-overlapping) */}
+        <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none shrink-0 whitespace-nowrap max-w-[60vw] sm:max-w-none">
           <button
             type="button"
             onClick={() => {
               setIsSearchOpen(prev => !prev);
               setSearchQuery('');
             }}
-            className={`h-8 w-8 rounded-xl border flex items-center justify-center active:scale-95 shrink-0 transition cursor-pointer ${
+            className={`h-8 w-8 rounded-xl border flex items-center justify-center active:scale-95 shrink-0 whitespace-nowrap transition cursor-pointer ${
               isSearchOpen
                 ? 'bg-indigo-600 text-white border-indigo-600'
                 : 'bg-slate-100 hover:bg-slate-200 border-slate-200 text-slate-700'
@@ -1450,7 +1515,7 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
               }
               toast.info(nextMuted ? 'تم كتم إشعارات دخول الأعضاء 🔕' : 'تم تفعيل إشعارات دخول الأعضاء 🔔');
             }}
-            className={`h-8 w-8 rounded-xl border flex items-center justify-center active:scale-95 shrink-0 transition cursor-pointer ${
+            className={`h-8 w-8 rounded-xl border flex items-center justify-center active:scale-95 shrink-0 whitespace-nowrap transition cursor-pointer ${
               muteJoinNotices
                 ? 'bg-rose-50 border-rose-200 text-rose-600'
                 : 'bg-slate-100 hover:bg-slate-200 border-slate-200 text-slate-700'
@@ -1465,7 +1530,7 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
             onClick={() => {
               onOpenOnlineUsers();
             }}
-            className="h-8 px-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-[10.5px] font-black flex items-center gap-1 active:scale-95 shrink-0"
+            className="h-8 px-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-[10.5px] font-black flex items-center gap-1 active:scale-95 shrink-0 whitespace-nowrap"
             title="المتصلون والدعوة"
           >
             <Users className="w-3.5 h-3.5" />
@@ -1475,7 +1540,7 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
           <button
             type="button"
             onClick={handleShareRoom}
-            className="h-8 w-8 sm:w-auto sm:px-2 rounded-xl bg-sky-50 hover:bg-sky-100 border border-sky-200 text-sky-700 text-[10.5px] font-black flex items-center justify-center gap-1 active:scale-95 shrink-0"
+            className="h-8 w-8 sm:w-auto sm:px-2 rounded-xl bg-sky-50 hover:bg-sky-100 border border-sky-200 text-sky-700 text-[10.5px] font-black flex items-center justify-center gap-1 active:scale-95 shrink-0 whitespace-nowrap"
             title="مشاركة رابط الغرفة"
           >
             <Share2 className="w-3.5 h-3.5" />
@@ -1485,7 +1550,7 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
           <button
             type="button"
             onClick={() => setIsMusicModalOpen(true)}
-            className="h-8 w-8 sm:w-auto sm:px-2 rounded-xl bg-purple-50 hover:bg-purple-100 border border-purple-200 text-purple-700 text-[10.5px] font-black flex items-center justify-center gap-1 active:scale-95 shrink-0"
+            className="h-8 w-8 sm:w-auto sm:px-2 rounded-xl bg-purple-50 hover:bg-purple-100 border border-purple-200 text-purple-700 text-[10.5px] font-black flex items-center justify-center gap-1 active:scale-95 shrink-0 whitespace-nowrap"
             title="راديو FM ومكتبة الأغاني"
           >
             <Music className="w-3.5 h-3.5" />
@@ -1495,8 +1560,8 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
           <button
             type="button"
             onClick={() => setIsWallpapersModalOpen(true)}
-            className="h-8 w-8 sm:w-auto sm:px-2 rounded-xl bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-700 text-[10.5px] font-black flex items-center justify-center gap-1 active:scale-95 shrink-0"
-            title="خلفيات طبيعية وجمالية"
+            className="h-8 w-8 sm:w-auto sm:px-2 rounded-xl bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-700 text-[10.5px] font-black flex items-center justify-center gap-1 active:scale-95 shrink-0 whitespace-nowrap"
+            title="الخلفيات والألوان"
           >
             <Palette className="w-3.5 h-3.5" />
             <span className="hidden md:inline">خلفيات</span>
@@ -1506,7 +1571,7 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
             <button
               type="button"
               onClick={() => setIsJoinRequestsOpen(true)}
-              className="h-8 px-2 rounded-xl bg-indigo-50 border border-indigo-200 text-indigo-700 text-[10.5px] font-bold flex items-center gap-1 shrink-0"
+              className="h-8 px-2 rounded-xl bg-indigo-50 border border-indigo-200 text-indigo-700 text-[10.5px] font-bold flex items-center gap-1 shrink-0 whitespace-nowrap"
               title="طلبات الانضمام"
             >
               <span>طلبات ({pendingJoinRequests.length})</span>
@@ -1516,20 +1581,8 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
           {isModerator && (
             <button
               type="button"
-              onClick={() => setIsRoomBgModalOpen(true)}
-              className="h-8 w-8 sm:w-auto sm:px-2 rounded-xl bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 text-[10.5px] font-black flex items-center justify-center gap-1 active:scale-95 shrink-0"
-              title="تغيير لون/خلفية الغرفة"
-            >
-              <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
-              <span className="hidden lg:inline">لون الغرفة</span>
-            </button>
-          )}
-
-          {isModerator && (
-            <button
-              type="button"
               onClick={() => setIsModeratorPanelOpen(true)}
-              className={`relative h-8 w-8 sm:w-auto sm:px-2 rounded-xl border text-[10.5px] font-black flex items-center justify-center gap-1 active:scale-95 shrink-0 cursor-pointer ${
+              className={`relative h-8 w-8 sm:w-auto sm:px-2 rounded-xl border text-[10.5px] font-black flex items-center justify-center gap-1 active:scale-95 shrink-0 whitespace-nowrap cursor-pointer ${
                 liveIsLocked
                   ? 'bg-rose-50 border-rose-300 text-rose-800 hover:bg-rose-100'
                   : 'bg-amber-50 border-amber-300 text-amber-800 hover:bg-amber-100'
@@ -1943,7 +1996,7 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
                 <ShieldAlert className="w-3.5 h-3.5" />
               </span>
               <p className="text-[11px] sm:text-xs font-bold text-amber-950 leading-snug line-clamp-2">
-                تنبيه إداري: نرحب بكم في شات مصر — يُرجى الالتزام بقواعد الآداب العامة واحترام جميع الأعضاء.
+                أهلاً بك يا {currentUser.name} في {room.title} — نرجو الالتزام بقواعد الآداب العامة واحترام جميع الأعضاء ✨
               </p>
             </div>
             <button
@@ -1993,9 +2046,9 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
             );
           }
 
-          // Suppress duplicate chat-feed entry banners if sequential gray join notice handles them
+          // System Welcome / Join Pills
           if (msg.type === 'system_welcome') {
-            if (msg.content?.includes('انضم') && msg.senderId !== 'system_bot') {
+            if (msg.content?.includes('انضم') && msg.senderId !== 'system_bot' && muteJoinNotices) {
               return null;
             }
             if (dismissedSystemMsgIds.includes(msg.id)) return null;
@@ -2121,17 +2174,17 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
               transition={{ duration: 0.18, ease: 'easeOut' }}
               data-preserve-light={!isDarkRoomBg ? 'true' : undefined}
               className={`chat-msg-row flex items-start gap-2 justify-start group rounded-xl transition-colors ${msgTextOutlineClass} ${
-                vipBorderClass ? `${vipBorderClass} py-1.5 px-2.5` : 'py-1 px-1.5'
+                vipBorderClass
+                  ? `${vipBorderClass} py-1.5 px-2.5`
+                  : `${isDarkRoomBg ? 'chat-msg-contrast-dark' : 'chat-msg-contrast-light'} py-1.5 px-2`
               } ${
                 highlightedMsgId === msg.id
                   ? (isDarkRoomBg
                       ? 'bg-amber-400/20 ring-1 ring-amber-400'
                       : 'bg-amber-100/60 ring-1 ring-amber-400')
                   : isPrivateMsg
-                  ? `bg-transparent ${vipBorderClass ? '' : 'border-r-2 border-amber-500 pr-2'}`
-                  : isDarkRoomBg
-                  ? 'bg-transparent hover:bg-white/[0.06]'
-                  : 'bg-transparent hover:bg-slate-900/[0.04]'
+                  ? `border-r-2 border-amber-500 pr-2`
+                  : ''
               }`}
             >
               {/* Circular Avatar (Animated Gradient Ring strictly for VIP/Admin/Owner; plain for regular members/guests) */}
@@ -2221,8 +2274,45 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
                   </div>
                 )}
 
-                {/* Voice Note Player OR Inline Sticker OR Classic Inline [Rank Icon] [Colored Name] : [Message Text with 1em Animated Emojis] [Flag] */}
-                {msg.type === 'sticker' ? (
+                {/* Image / Sticker / Voice Note OR Classic Inline Message */}
+                {msg.type === 'image' && (msg.mediaUrl || msg.imageUrl) ? (
+                  <div className="space-y-1.5">
+                    <div className="flex items-center gap-1 text-[13px] font-black">
+                      {isVipSender && senderStyle.badge && (
+                        <span className="ml-0.5 text-xs align-middle select-none">{senderStyle.badge}</span>
+                      )}
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openUserQuickMenu(msg, e);
+                        }}
+                        className={`font-black cursor-pointer hover:underline rounded inline ${senderStyle.name}`}
+                      >
+                        {msg.senderName}
+                      </button>
+                      <span className={`font-black mx-0.5 ${isDarkRoomBg ? 'text-slate-100 chat-text-outline-dark' : 'text-slate-950 chat-text-outline-light'}`}>:</span>
+                      <span className={`text-xs font-bold ${isDarkRoomBg ? 'text-white/90' : 'text-slate-700'}`}>أرسل صورة 🖼️</span>
+                    </div>
+                    <div
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setLightboxImageUrl(msg.mediaUrl || msg.imageUrl || null);
+                      }}
+                      className="relative max-w-[240px] sm:max-w-[280px] rounded-xl overflow-hidden border border-slate-200/80 shadow-sm cursor-zoom-in group/img bg-slate-100"
+                    >
+                      <img
+                        src={msg.mediaUrl || msg.imageUrl}
+                        alt="صورة مرسلة في الغرفة"
+                        className="max-h-56 w-full object-cover rounded-xl"
+                        loading="lazy"
+                      />
+                      <span className="absolute bottom-1.5 left-1.5 p-1 rounded-lg bg-slate-900/65 text-white opacity-85 group-hover/img:opacity-100">
+                        <Maximize2 className="w-3.5 h-3.5" />
+                      </span>
+                    </div>
+                  </div>
+                ) : msg.type === 'sticker' ? (
                   <p className={`text-[13.5px] sm:text-sm leading-relaxed font-bold whitespace-pre-wrap break-words ${
                     isDarkRoomBg
                       ? 'text-white chat-text-outline-dark'
@@ -2647,9 +2737,17 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
 
       {/* 9. BOTTOM INPUT BAR (Modern Light Theme) */}
       <div className="relative bg-white border-t border-slate-200 p-1.5 sm:p-2 pb-[calc(env(safe-area-inset-bottom,0px)+0.4rem)] flex items-center gap-1.5 shrink-0 z-20">
-        
+        <input
+          ref={roomImageInputRef}
+          type="file"
+          accept="image/*"
+          onChange={handleRoomImageSelected}
+          className="hidden"
+        />
+
         {/* Luxury Gift Button Shortcut */}
         <button
+          type="button"
           onClick={handleOpenGiftWithReminder}
           className="p-2 rounded-xl bg-gradient-to-tr from-pink-500 to-rose-500 text-white hover:scale-105 active:scale-95 transition-transform shrink-0 shadow-sm min-h-[38px] min-w-[38px] flex items-center justify-center"
           title="إرسال هدية فاخرة"
@@ -2657,11 +2755,34 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
           <Gift className="w-4 h-4" />
         </button>
 
-        {/* Text Input with Form */}
+        {/* Unrestricted Room Image Upload Button */}
+        <button
+          type="button"
+          onClick={() => roomImageInputRef.current?.click()}
+          disabled={isUploadingRoomImage || currentUser.isBanned || currentUser.isMuted}
+          className="p-2 rounded-xl bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-600 active:scale-95 transition-all shrink-0 min-h-[38px] min-w-[38px] flex items-center justify-center disabled:opacity-45 cursor-pointer"
+          title="رفع وإرسال صورة"
+        >
+          {isUploadingRoomImage ? (
+            <Loader2 className="w-4 h-4 animate-spin" />
+          ) : (
+            <ImageIcon className="w-4 h-4" />
+          )}
+        </button>
+
+        {/* Text Input with Form (Autofill suppressed) */}
         <form onSubmit={handleSendText} className="flex-1 flex items-center">
           <input
             ref={inputRef}
             type="text"
+            name="room_chat_message"
+            id="room_chat_message"
+            autoComplete="off"
+            autoCorrect="off"
+            autoCapitalize="off"
+            spellCheck={false}
+            data-lpignore="true"
+            data-form-type="other"
             value={inputText}
             disabled={currentUser.isBanned || currentUser.isMuted}
             onChange={(e) => handleInputChange(e.target.value)}
@@ -2953,7 +3074,7 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
                   type="button"
                   onClick={() => {
                     setIsModeratorPanelOpen(false);
-                    setIsRoomBgModalOpen(true);
+                    setIsWallpapersModalOpen(true);
                   }}
                   className="text-[10.5px] font-black text-indigo-700 hover:text-indigo-900 bg-white px-2 py-0.5 rounded-lg border border-indigo-200 shadow-2xs"
                 >
@@ -3028,161 +3149,7 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
         </div>
       )}
 
-      {/* Room Background Selector Modal (Room Managers Only) */}
-      {isRoomBgModalOpen && isModerator && (
-        <div
-          className="fixed inset-0 z-[200] flex items-end sm:items-center justify-center bg-slate-900/50 backdrop-blur-sm p-0 sm:p-4 animate-in fade-in"
-          dir="rtl"
-          onClick={() => setIsRoomBgModalOpen(false)}
-        >
-          <div
-            className="w-full sm:max-w-lg bg-white border border-slate-200 rounded-t-3xl sm:rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[88vh] text-slate-900"
-            onClick={(e) => e.stopPropagation()}
-          >
-            {/* Modal Header */}
-            <div className="p-3.5 sm:p-4 bg-gradient-to-r from-indigo-50 via-white to-fuchsia-50 border-b border-slate-200 flex items-center justify-between shrink-0">
-              <div className="flex items-center gap-2.5">
-                <div className="w-9 h-9 rounded-xl bg-indigo-100 border border-indigo-200 text-indigo-700 flex items-center justify-center shrink-0">
-                  <Palette className="w-5 h-5" />
-                </div>
-                <div>
-                  <h3 className="text-sm font-black text-slate-900 flex items-center gap-1.5">
-                    <span>تخصيص خلفية الغرفة</span>
-                    <Sparkles className="w-4 h-4 text-amber-500" />
-                  </h3>
-                  <p className="text-[11px] text-slate-500">
-                    اختر لوناً جذاباً أو تدرجاً لونياً يظهر لجميع المتواجدين في {room.title}
-                  </p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setIsRoomBgModalOpen(false)}
-                className="p-1.5 rounded-full text-slate-500 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 transition"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            {/* Live Room Preview Banner */}
-            <div className="p-3 bg-slate-50 border-b border-slate-200 shrink-0">
-              <div
-                style={getRoomContainerStyle(room.id, currentUser.chatWallpaper, effectiveRoomBackground)}
-                className="rounded-2xl border border-slate-200 p-3 shadow-inner transition-all duration-300 space-y-1.5"
-              >
-                <div className="flex items-center justify-between">
-                  <span className={`text-[10px] font-black px-2 py-0.5 rounded-lg border ${
-                    isDarkRoomBg
-                      ? 'bg-white/15 border-white/25 text-white'
-                      : 'bg-white/85 border-slate-200 text-slate-700'
-                  }`}>
-                    معاينة مباشرة: {activeRoomBgThemeObj?.name || 'الخلفية الرسمية الافتراضية'}
-                  </span>
-                  {effectiveRoomBackground !== 'default' && (
-                    <button
-                      type="button"
-                      onClick={() => handleSelectRoomBackground('default')}
-                      className="text-[10.5px] font-black px-2 py-0.5 rounded-lg bg-white/95 hover:bg-white text-slate-700 border border-slate-300 flex items-center gap-1 shadow-2xs active:scale-95 transition"
-                    >
-                      <RotateCcw className="w-3 h-3" />
-                      <span>استعادة الافتراضي</span>
-                    </button>
-                  )}
-                </div>
-                <p className={`text-xs font-semibold ${isDarkRoomBg ? 'text-white/95' : 'text-slate-900'}`}>
-                  <span className={`font-black ${isDarkRoomBg ? 'text-amber-300' : 'text-indigo-600'}`}>💎 {currentUser.name}</span>
-                  <span className={`mx-1 ${isDarkRoomBg ? 'text-slate-300' : 'text-slate-700'}`}>:</span>
-                  <span>أهلاً بكم جميعاً في {room.title}! أجواء رائعة ومميزة ✨</span>
-                </p>
-              </div>
-            </div>
-
-            {/* Category Tabs */}
-            <div className="px-3.5 py-2.5 bg-white border-b border-slate-200 flex items-center gap-1.5 overflow-x-auto scrollbar-none shrink-0">
-              {[
-                { id: 'all', label: `الكل (${ROOM_BACKGROUND_THEMES.length})` },
-                { id: 'nature', label: 'مناظر طبيعية 🌿' },
-                { id: 'gradient', label: 'تدرجات لونية ✨' },
-                { id: 'solid', label: 'ألوان جذابة 🎨' }
-              ].map((tab) => (
-                <button
-                  key={tab.id}
-                  type="button"
-                  onClick={() => setRoomBgCategoryFilter(tab.id as 'all' | 'nature' | 'gradient' | 'solid')}
-                  className={`px-3 py-1.5 rounded-xl text-[11px] font-black whitespace-nowrap shrink-0 transition-all ${
-                    roomBgCategoryFilter === tab.id
-                      ? 'bg-indigo-600 text-white shadow-xs'
-                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200 hover:text-slate-900'
-                  }`}
-                >
-                  {tab.label}
-                </button>
-              ))}
-            </div>
-
-            {/* Swatches Grid */}
-            <div className="p-3.5 overflow-y-auto flex-1 grid grid-cols-2 sm:grid-cols-3 gap-2.5">
-              {ROOM_BACKGROUND_THEMES.filter((t) =>
-                roomBgCategoryFilter === 'all' ? true : t.category === roomBgCategoryFilter
-              ).map((theme) => {
-                const isSelected = effectiveRoomBackground === theme.id;
-                const previewStyle: React.CSSProperties =
-                  theme.id === 'default'
-                    ? {
-                        backgroundImage:
-                          "linear-gradient(to bottom, rgba(255,255,255,0.75), rgba(241,245,249,0.88)), url('/assets/wallpapers/egypt_chat_bg.jpg')",
-                        backgroundSize: 'cover',
-                        backgroundPosition: 'center'
-                      }
-                    : theme.style;
-
-                return (
-                  <button
-                    key={theme.id}
-                    type="button"
-                    onClick={() => handleSelectRoomBackground(theme.id)}
-                    className={`group rounded-2xl border-2 overflow-hidden text-right transition-all active:scale-95 flex flex-col bg-white ${
-                      isSelected
-                        ? 'border-indigo-600 ring-2 ring-indigo-200 shadow-md'
-                        : 'border-slate-200 hover:border-indigo-300 shadow-2xs'
-                    }`}
-                  >
-                    <div
-                      style={previewStyle}
-                      className="h-20 w-full relative p-2 flex flex-col justify-between"
-                    >
-                      <div className="flex items-center justify-between">
-                        <span className={`text-[9.5px] font-black px-1.5 py-0.5 rounded-md ${
-                          theme.isDark
-                            ? 'bg-white/15 text-white border border-white/20'
-                            : 'bg-white/90 text-slate-700 border border-slate-200/80'
-                        }`}>
-                          {theme.previewLabel}
-                        </span>
-                        {isSelected && (
-                          <span className="w-5 h-5 rounded-full bg-indigo-600 text-white flex items-center justify-center shadow">
-                            <Check className="w-3 h-3" />
-                          </span>
-                        )}
-                      </div>
-                      <span className={`text-[10px] font-bold truncate ${
-                        theme.isDark ? 'text-white/90' : 'text-slate-800'
-                      }`}>
-                        مرحباً بكم ✨
-                      </span>
-                    </div>
-                    <div className="px-2.5 py-2 bg-white border-t border-slate-100 w-full">
-                      <p className="text-[11px] font-black text-slate-900 truncate">
-                        {theme.name}
-                      </p>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Unified ChatWallpapersModal handles both personal wallpapers & room backgrounds */}
 
       {/* Join Requests Manager Modal */}
       <JoinRequestsManagerModal
@@ -3430,13 +3397,39 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
 
       {/* Unified UserProfileModal handles all member quick interactions via App */}
 
-      {/* Chat Wallpaper Customization & Purchasing Modal */}
+      {/* Room Image Lightbox Modal */}
+      {lightboxImageUrl && (
+        <div
+          onClick={() => setLightboxImageUrl(null)}
+          className="fixed inset-0 z-[220] bg-slate-900/90 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in"
+        >
+          <button
+            type="button"
+            onClick={() => setLightboxImageUrl(null)}
+            className="absolute top-4 left-4 p-2 rounded-full bg-white/15 hover:bg-white/25 text-white transition cursor-pointer"
+          >
+            <X className="w-5 h-5" />
+          </button>
+          <img
+            src={lightboxImageUrl}
+            alt="معاينة الصورة"
+            onClick={(e) => e.stopPropagation()}
+            className="max-w-full max-h-[88vh] rounded-2xl shadow-2xl object-contain"
+          />
+        </div>
+      )}
+
+      {/* Unified Chat Wallpaper & Room Background Modal */}
       <ChatWallpapersModal
         isOpen={isWallpapersModalOpen}
         onClose={() => setIsWallpapersModalOpen(false)}
         currentUser={currentUser}
         onUpdateUser={onUpdateUser}
         onOpenWallet={onOpenWallet}
+        isModerator={isModerator}
+        roomTitle={room.title}
+        activeRoomBackground={effectiveRoomBackground}
+        onSelectRoomBackground={handleSelectRoomBackground}
       />
 
     </div>

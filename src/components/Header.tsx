@@ -139,16 +139,16 @@ export const Header: React.FC<HeaderProps> = React.memo(({
 
   return (
     <header dir="rtl" className="sticky top-0 z-[50] bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-slate-200/90 dark:border-slate-800 px-2 sm:px-5 py-2 pt-[calc(env(safe-area-inset-top,0px)+0.5rem)] shadow-sm transition-colors duration-300">
-      <div className="max-w-7xl mx-auto flex items-center justify-between gap-1.5 sm:gap-2">
+      <div className="max-w-7xl mx-auto flex items-center justify-between gap-1 sm:gap-2">
 
         {/* Primary Header Row: Profile + Desktop Brand/Pills + Symmetrical Icon Toolbar */}
-        <div className="flex items-center justify-between gap-1.5 sm:gap-2 min-w-0 w-full flex-1">
+        <div className="flex items-center justify-between gap-1 sm:gap-2 min-w-0 w-full flex-1">
           
           {/* Right Side (in RTL): Integrated Profile Card + Brand + Desktop Economy Pills */}
-          <div className="flex items-center gap-1.5 sm:gap-2 min-w-0 flex-1 md:flex-initial">
+          <div className="flex items-center gap-1 sm:gap-2 min-w-0 flex-1 md:flex-initial">
             
             {/* Integrated User Profile Card */}
-            <div className="flex items-center gap-1.5 sm:gap-2 p-1 pl-2 sm:pl-2.5 rounded-2xl bg-slate-50 hover:bg-slate-100/80 border border-slate-200 transition min-w-0 max-w-full sm:max-w-[240px] md:max-w-none shrink">
+            <div className="flex items-center gap-1.5 sm:gap-2 p-1 pl-2 sm:pl-2.5 rounded-2xl bg-slate-50 hover:bg-slate-100/80 border border-slate-200 transition min-w-0 max-w-[148px] sm:max-w-[235px] md:max-w-none shrink">
               {/* Avatar Wrapper with Status Dot (Camera upload lives exclusively in ProfileView) */}
               <div className="relative shrink-0">
                 <AvatarWithFrame

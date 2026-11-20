@@ -938,27 +938,27 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
     <div className="pb-24 pt-2 px-2.5 sm:px-4 max-w-6xl mx-auto space-y-2" dir="rtl">
       {/* 1. Compact Live Stats Strip */}
       <div className="grid grid-cols-2 gap-2">
-        {/* Total Registered Members + Live Online Indicator */}
+        {/* Live Online Users Count Only */}
         <div
           onClick={onOpenOnlineUsers}
           className="px-2.5 py-1.5 rounded-xl bg-gradient-to-br from-teal-100 via-emerald-100 to-cyan-100 border border-teal-300/90 text-teal-950 shadow-xs flex items-center justify-between cursor-pointer hover:brightness-[0.98] active:scale-[0.98] transition-all"
         >
           <div className="text-right min-w-0">
             <div className="flex items-center gap-1 text-[10px] font-black text-teal-800">
-              <span className="truncate">إجمالي الأعضاء</span>
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-pulse shrink-0"></span>
+              <span className="truncate">المتصلون الآن</span>
               {typeof navigator !== 'undefined' && navigator.onLine === false && socketState !== 'connected' && (
                 <span className="px-1.5 py-0.2 rounded-full bg-amber-100 border border-amber-300 text-amber-800 text-[9px] font-bold shrink-0">
                   جاري التحديث...
                 </span>
               )}
             </div>
-            <div className="flex items-center gap-1.5 flex-wrap leading-tight">
+            <div className="flex items-center gap-1 leading-tight">
               <span className="text-sm font-black text-teal-950 tabular-nums">
-                {Math.max(registeredUsersCount, totalActiveUsersCount, 1).toLocaleString()} <span className="text-[9.5px] font-bold text-teal-800">عضو</span>
+                {Math.max(1, totalActiveUsersCount).toLocaleString()}
               </span>
-              <span className="inline-flex items-center gap-1 text-[9.5px] font-bold text-emerald-800">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-pulse shrink-0"></span>
-                <span>{totalActiveUsersCount} متصل الآن</span>
+              <span className="text-[10px] font-bold text-emerald-800 whitespace-nowrap">
+                متصل الآن
               </span>
             </div>
           </div>
@@ -1049,10 +1049,10 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
           </h2>
         </div>
 
-        {/* Filter Row with Inline Room Missions — Fits cleanly on 360px+ without horizontal scroll */}
+        {/* Filter Row with Inline Room Missions — Fits cleanly on ONE single row without wrapping */}
         <div
           dir="rtl"
-          className="w-full flex flex-wrap gap-[6px] justify-center overflow-visible mb-2"
+          className="w-full flex flex-nowrap items-center gap-1 sm:gap-1.5 justify-between mb-2"
         >
           {[
             { id: 'all', label: 'الكل' },
@@ -1063,7 +1063,7 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
               key={pill.id}
               type="button"
               onClick={() => setRoomCategoryFilter(pill.id as any)}
-              className={`text-[12px] px-[10px] py-[5px] rounded-[20px] shrink whitespace-nowrap font-bold flex items-center transition cursor-pointer ${
+              className={`flex-1 min-w-0 justify-center text-[11px] sm:text-xs px-1.5 sm:px-3 py-1.5 rounded-[18px] whitespace-nowrap font-bold flex items-center transition cursor-pointer ${
                 roomCategoryFilter === pill.id
                   ? 'bg-indigo-600 text-white shadow-2xs'
                   : 'bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200'
@@ -1076,7 +1076,7 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
           <button
             type="button"
             onClick={() => setShowMobileMissions(prev => !prev)}
-            className="lg:hidden text-[12px] px-[10px] py-[5px] rounded-[20px] shrink whitespace-nowrap font-bold bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-800 flex items-center gap-1 cursor-pointer"
+            className="lg:hidden flex-1 min-w-0 justify-center text-[11px] px-1.5 py-1.5 rounded-[18px] whitespace-nowrap font-bold bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-800 flex items-center gap-1 cursor-pointer"
           >
             <Target className="w-3 h-3 text-amber-600 shrink-0" />
             <span>مهام الغرف</span>

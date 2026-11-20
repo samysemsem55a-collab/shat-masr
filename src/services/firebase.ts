@@ -7196,3 +7196,87 @@ export function subscribeToAppUpdateNotices(
   };
 }
 
+// ==========================================
+// 20. CROSS-DEVICE RELIABLE WEBRTC CALL SIGNALING (Firestore + RTDB Relay)
+// ==========================================
+export async function sendFirestoreCallSignal(targetUserId: string, signal: any): Promise<void> {
+  if (!targetUserId || !signal) return;
+  const signalId = signal.signalId || `sig_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+  const payload = {
+    ...signal,
+    signalId,
+    targetUserId,
+    createdAt: Date.now(),
+    expiresAt: Date.now() + 90_000,
+  };
+
+  if (db) {
+    try {
+      await setDoc(doc(db, 'users', targetUserId, 'call_signals', signalId), payload);
+    } catch {}
+  }
+  if (rtdb) {
+    try {
+      await set(ref(rtdb, `call_signals/${targetUserId}/${signalId}`), payload);
+    } catch {}
+  }
+}
+
+export function subscribeToFirestoreCallSignals(
+  userId: string,
+  onSignal: (signal: any) => void
+): () => void {
+  if (!userId) return () => {};
+  const mountTs = Date.now() - 12_000;
+  const seenIds = new Set<string>();
+
+  const deliver = (raw: any, fallbackId?: string) => {
+    if (!raw || typeof raw !== 'object') return;
+    const id = String(raw.signalId || fallbackId || '');
+    if (!id || seenIds.has(id)) return;
+    const createdAt = typeof raw.createdAt === 'number' ? raw.createdAt : 0;
+    if (createdAt > 0 && createdAt < mountTs) return;
+    if (typeof raw.expiresAt === 'number' && raw.expiresAt < Date.now()) return;
+    seenIds.add(id);
+    onSignal({ ...raw, signalId: id });
+  };
+
+  let unsubFirestore: (() => void) | null = null;
+  if (db) {
+    try {
+      const colRef = collection(db, 'users', userId, 'call_signals');
+      unsubFirestore = onSnapshot(
+        colRef,
+        (snap) => {
+          snap.docChanges().forEach((change) => {
+            if (change.type === 'added' || change.type === 'modified') {
+              deliver(change.doc.data(), change.doc.id);
+            }
+          });
+        },
+        () => {}
+      );
+    } catch {}
+  }
+
+  let unsubRtdb: (() => void) | null = null;
+  if (rtdb) {
+    try {
+      const rtdbRef = ref(rtdb, `call_signals/${userId}`);
+      unsubRtdb = onValue(rtdbRef, (snap) => {
+        const val = snap.val();
+        if (!val || typeof val !== 'object') return;
+        Object.entries(val).forEach(([key, data]) => {
+          deliver(data, key);
+        });
+      });
+    } catch {}
+  }
+
+  return () => {
+    if (unsubFirestore) unsubFirestore();
+    if (unsubRtdb) unsubRtdb();
+  };
+}
+
+

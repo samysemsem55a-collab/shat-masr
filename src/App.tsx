@@ -84,6 +84,7 @@ import {
   subscribeToRegisteredUsersCount,
   createDailyBackupSnapshot,
   grantUserXp,
+  subscribeToFirestoreCallSignals,
   AppUpdateNotice
 } from './services/firebase';
 import { isUserTrulyOnline } from './utils/presenceStatus';
@@ -796,7 +797,7 @@ export default function App() {
       if (req && req.receiverId === me.id && req.status === 'pending') {
         if (!seenFriendBannerIdsRef.current.has(req.id)) {
           seenFriendBannerIdsRef.current.add(req.id);
-          sounds.playMessageReceived();
+          sounds.playNotificationChime();
           setFriendReqBanner(req);
           if (friendReqBannerTimerRef.current) clearTimeout(friendReqBannerTimerRef.current);
           friendReqBannerTimerRef.current = setTimeout(() => {
@@ -891,11 +892,20 @@ export default function App() {
       });
     });
 
-    // Listen to incoming WebRTC calls targeting current user (and clear on call_end / call_reject)
-    const unsubCalls = realtimeSocket.subscribeToCallSignals((signal) => {
+    // Listen to incoming WebRTC calls targeting current user (WebSocket + Firestore/RTDB relay)
+    const processedCallSignals = new Set<string>();
+    const handleIncomingCallSignal = (signal: any) => {
       const me = currentUserRef.current;
       if (!signal) return;
       if (signal.targetUserId && signal.targetUserId !== me.id) return;
+      if (signal.signalId) {
+        if (processedCallSignals.has(signal.signalId)) return;
+        processedCallSignals.add(signal.signalId);
+        if (processedCallSignals.size > 200) {
+          const oldest = processedCallSignals.values().next().value;
+          if (oldest) processedCallSignals.delete(oldest);
+        }
+      }
 
       if (signal.type === 'call_end' || signal.type === 'call_reject') {
         setIncomingCall((prev) => {
@@ -911,7 +921,7 @@ export default function App() {
       if (signal.type !== 'call_offer') return;
       if (!signal.fromUserId || signal.fromUserId === me.id) return;
 
-      sounds.playMessageReceived();
+      sounds.playNotificationChime();
       setIncomingCall({
         peer: {
           id: signal.fromUserId,
@@ -941,7 +951,10 @@ export default function App() {
         callType: signal.callType === 'video' ? 'video' : 'audio',
         signal,
       });
-    });
+    };
+
+    const unsubCalls = realtimeSocket.subscribeToCallSignals(handleIncomingCallSignal);
+    const unsubFirestoreCalls = subscribeToFirestoreCallSignals(activeUser.id, handleIncomingCallSignal);
 
     // Real-time total registered members counter (users collection) + cached against transient drops
     const unsubRegisteredUsers = subscribeToRegisteredUsersCount((count, users) => {
@@ -981,6 +994,7 @@ export default function App() {
       unsubRoomBgs();
       unsubRoomLocks();
       unsubCalls();
+      unsubFirestoreCalls();
     };
   }, [currentUser.id, currentUser.sessionId, isProfileReady]);
 
@@ -1157,7 +1171,7 @@ export default function App() {
               const firstKey = processedBannerDmIdsRef.current.values().next().value;
               if (firstKey) processedBannerDmIdsRef.current.delete(firstKey);
             }
-            sounds.playMessageReceived();
+            sounds.playNotificationChime();
             const previewText = rawMsg.content || rawMsg.text || 'رسالة جديدة';
             setDmTopBanner({
               id: bannerId,
@@ -1227,7 +1241,7 @@ export default function App() {
                 processedBannerDmIdsRef.current.add(rec.lastMessageId);
                 const dmNotifsEnabled = currentUser.notificationPrefs?.directMessages !== false;
                 if (dmNotifsEnabled) {
-                  sounds.playMessageReceived();
+                  sounds.playNotificationChime();
                   setDmTopBanner({
                     id: rec.lastMessageId,
                     senderId: rec.senderId,
@@ -1694,7 +1708,7 @@ export default function App() {
     }
 
     const content = (msgData.content || msgData.text || '').trim();
-    if (!content && !msgData.audioUrl && !msgData.gift && msgData.type !== 'sticker') return;
+    if (!content && !msgData.audioUrl && !msgData.gift && !msgData.mediaUrl && !msgData.imageUrl && msgData.type !== 'sticker') return;
 
     try {
       sounds.playMessageSent();
@@ -1717,6 +1731,9 @@ export default function App() {
         audioDuration: msgData.audioDuration,
         audioUrl: msgData.audioUrl,
         voiceUrl: msgData.voiceUrl,
+        mediaUrl: msgData.mediaUrl || msgData.imageUrl,
+        imageUrl: msgData.imageUrl || msgData.mediaUrl,
+        mediaType: msgData.mediaType,
         stickerId: msgData.stickerId,
         stickerEmoji: msgData.stickerEmoji,
         stickerLabel: msgData.stickerLabel,
@@ -2159,12 +2176,26 @@ export default function App() {
     setIsLogoutModalOpen(false);
     closeAllModals();
     globalRadioPlayer.stop();
+    sounds.stopCallRing();
+    setIncomingCall(null);
+    setActiveRoom(null);
+    setTargetChatUser(null);
+    setIsInsidePrivateChat(false);
+    setIsPrivateChatDrawerOpen(false);
+    setCurrentTab('home');
+
     try {
-      await markUserPresenceOffline(currentUser.id);
-      await logOutUser();
+      await Promise.race([
+        Promise.allSettled([
+          markUserPresenceOffline(currentUser.id),
+          logOutUser(),
+        ]),
+        new Promise((resolve) => setTimeout(resolve, 1200)),
+      ]);
     } catch (e) {
       console.warn('Logout notice:', e);
     }
+
     localStorage.removeItem('arab_chat_userId');
     localStorage.removeItem('arab_chat_user');
     localStorage.removeItem('arab_chat_guest_id');

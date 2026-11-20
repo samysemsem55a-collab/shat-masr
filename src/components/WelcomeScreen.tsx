@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { X, CheckCircle2, User as UserIcon } from 'lucide-react';
 import { User } from '../types/chat';
 import { signInWithGoogle, syncUserProfileToFirebase } from '../services/firebase';
 import officialBrandIcon from '../assets/images/shat_masr_official_icon.png';
@@ -16,39 +17,79 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
   const [googleLoading, setGoogleLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  const handleInstantEnter = async () => {
+  // Guest Form Modal State (Name + Gender + Age required before entering)
+  const [isGuestModalOpen, setIsGuestModalOpen] = useState(false);
+  const [guestName, setGuestName] = useState<string>(() => {
+    const existing = (currentUser.name || '').trim();
+    if (!existing || existing.startsWith('زائر_') || existing === 'ضيف عربي') return '';
+    return existing;
+  });
+  const [guestGender, setGuestGender] = useState<'male' | 'female' | ''>(() =>
+    currentUser.gender === 'male' || currentUser.gender === 'female' ? currentUser.gender : ''
+  );
+  const [guestAge, setGuestAge] = useState<string>(() =>
+    typeof currentUser.age === 'number' && currentUser.age >= 13 && currentUser.age <= 99
+      ? String(currentUser.age)
+      : ''
+  );
+  const [guestFormError, setGuestFormError] = useState<string | null>(null);
+
+  const trimmedGuestName = guestName.trim();
+  const parsedGuestAge = guestAge.trim() === '' ? NaN : parseInt(guestAge.trim(), 10);
+  const isGuestNameValid = trimmedGuestName.length >= 2;
+  const isGuestGenderValid = guestGender === 'male' || guestGender === 'female';
+  const isGuestAgeValid = !isNaN(parsedGuestAge) && parsedGuestAge >= 13 && parsedGuestAge <= 99;
+  const isGuestFormValid = isGuestNameValid && isGuestGenderValid && isGuestAgeValid;
+
+  const handleOpenGuestModal = () => {
+    if (entering || googleLoading) return;
+    setGuestFormError(null);
+    setErrorMsg(null);
+    setIsGuestModalOpen(true);
+  };
+
+  const handleGuestSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!isGuestFormValid) {
+      setGuestFormError('يرجى كتابة الاسم واختيار النوع وتحديد السن (من 13 إلى 99) أولاً.');
+      return;
+    }
     if (entering || googleLoading) return;
     setEntering(true);
-    setErrorMsg(null);
+    setGuestFormError(null);
 
     try {
       let memberId =
-        currentUser.id && currentUser.id !== 'usr_me'
+        currentUser.id && currentUser.id !== 'usr_me' && !currentUser.id.startsWith('guest_')
           ? currentUser.id
           : localStorage.getItem('arab_chat_userId') || '';
 
-      if (!memberId) {
+      if (!memberId || memberId.startsWith('guest_')) {
         memberId = `usr_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
       }
 
-      const suffix = memberId.slice(-4).toUpperCase();
-      const existingName = (currentUser.name || '').trim();
-      const displayName =
-        existingName && existingName !== 'ضيف عربي' ? existingName : `مصري_${suffix}`;
+      const suffix = memberId.slice(-4).toLowerCase();
+      const genderAvatar =
+        guestGender === 'female'
+          ? `https://api.dicebear.com/9.x/avataaars/svg?seed=fem_${encodeURIComponent(memberId)}`
+          : `https://api.dicebear.com/9.x/avataaars/svg?seed=male_${encodeURIComponent(memberId)}`;
 
       const nextUser: User = {
         ...currentUser,
         id: memberId,
-        name: displayName,
-        username: currentUser.username || `egy_${suffix.toLowerCase()}`,
+        name: trimmedGuestName,
+        username: `egy_${suffix}`,
+        gender: guestGender as 'male' | 'female',
+        age: parsedGuestAge,
         avatar:
-          currentUser.avatar ||
-          `https://api.dicebear.com/9.x/avataaars/svg?seed=${encodeURIComponent(memberId)}`,
-        bio: currentUser.bio || 'عضو في مجتمع شات مصر 🇪🇬',
+          currentUser.avatar && !currentUser.avatar.includes('dicebear')
+            ? currentUser.avatar
+            : genderAvatar,
+        bio: `عضو في مجتمع شات مصر • ${parsedGuestAge} سنة 🇪🇬`,
         country: currentUser.country || 'مصر',
         countryFlag: currentUser.countryFlag || '🇪🇬',
         role: currentUser.role === 'guest' ? 'member' : currentUser.role || 'member',
-        isGuest: currentUser.email || currentUser.isEmailVerified || currentUser.isPhoneVerified ? false : true,
+        isGuest: true,
         isOnline: true,
         status: 'online',
       };
@@ -57,8 +98,8 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
       localStorage.setItem('shat_masr_has_entered', 'true');
       localStorage.setItem('arab_chat_user', JSON.stringify(nextUser));
 
-      // Non-blocking sync so entry into the main chat screen happens immediately
       syncUserProfileToFirebase(nextUser).catch(() => {});
+      setIsGuestModalOpen(false);
       onEnterApp(nextUser);
     } finally {
       setEntering(false);
@@ -116,13 +157,11 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
             <stop offset="100%" stopColor="#120922" stopOpacity="0.96" />
           </linearGradient>
         </defs>
-        {/* Great Pyramid & Khafre & Menkaure Silhouettes */}
         <polygon points="105,310 290,115 475,310" fill="url(#pyramidGrad)" />
         <polygon points="290,115 475,310 355,310" fill="#180d2c" opacity="0.55" />
         <polygon points="365,310 515,155 665,310" fill="url(#pyramidGrad)" />
         <polygon points="515,155 665,310 570,310" fill="#180d2c" opacity="0.5" />
         <polygon points="620,310 705,220 790,310" fill="url(#pyramidGrad)" />
-        {/* Nile Reflection Horizon */}
         <rect x="0" y="308" width="1200" height="112" fill="#0d0719" opacity="0.6" />
       </svg>
 
@@ -165,7 +204,7 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
           ))}
         </div>
 
-        {/* Bottom Section: Prominent Large Golden CTA Button + Optional Google Sign-In */}
+        {/* Bottom Section: Prominent Golden Guest Login Button + Google Sign-In */}
         <div className="w-full space-y-3 mb-2">
           {errorMsg && (
             <div className="p-2.5 rounded-2xl bg-rose-950/85 border border-rose-400/50 text-rose-100 text-xs font-bold">
@@ -175,11 +214,11 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
 
           <button
             type="button"
-            onClick={handleInstantEnter}
+            onClick={handleOpenGuestModal}
             disabled={entering || googleLoading}
             className="w-full py-4 px-6 rounded-2xl bg-gradient-to-r from-[#F9D678] via-[#EAB338] to-[#C98515] hover:from-[#FDE08D] hover:to-[#D8931E] text-[#2A1700] font-black text-lg sm:text-xl shadow-[0_10px_28px_rgba(234,179,56,0.45)] border border-[#FFF2BE]/70 active:scale-[0.98] transition-all cursor-pointer disabled:opacity-60"
           >
-            {entering ? 'جاري الدخول...' : 'دخول فوري بدون تسجيل'}
+            الدخول كزائر
           </button>
 
           <button
@@ -198,6 +237,135 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Clear Guest Login Form Modal (Name + Gender + Age Required) */}
+      {isGuestModalOpen && (
+        <div
+          dir="rtl"
+          onClick={() => setIsGuestModalOpen(false)}
+          className="fixed inset-0 z-[220] flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm animate-in fade-in"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="relative w-full max-w-md rounded-3xl bg-white text-slate-900 border border-slate-200 shadow-2xl p-5 sm:p-6 text-right space-y-4"
+          >
+            <button
+              type="button"
+              onClick={() => setIsGuestModalOpen(false)}
+              aria-label="إغلاق"
+              className="absolute top-4 left-4 w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-600 flex items-center justify-center transition cursor-pointer"
+            >
+              <X className="w-4 h-4" />
+            </button>
+
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 rounded-2xl bg-amber-50 border border-amber-200 flex items-center justify-center shrink-0">
+                <img src={officialBrandIcon} alt="شات مصر" className="w-9 h-9 object-contain" />
+              </div>
+              <div>
+                <h2 className="text-base sm:text-lg font-black text-slate-900">الدخول كزائر إلى شات مصر</h2>
+                <p className="text-xs text-slate-500 font-semibold">أدخل اسمك ونوعك وسنّك للدخول المباشر</p>
+              </div>
+            </div>
+
+            {guestFormError && (
+              <div className="p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs font-bold">
+                ⚠️ {guestFormError}
+              </div>
+            )}
+
+            <form onSubmit={handleGuestSubmit} autoComplete="off" className="space-y-3.5">
+              <div>
+                <label className="text-xs font-black text-slate-800 block mb-1.5">
+                  الاسم <span className="text-rose-600">*</span>
+                </label>
+                <input
+                  type="text"
+                  name="shat_guest_nickname"
+                  autoComplete="off"
+                  autoCorrect="off"
+                  autoCapitalize="off"
+                  spellCheck={false}
+                  data-lpignore="true"
+                  data-form-type="other"
+                  maxLength={24}
+                  placeholder="اكتب اسمك كما سيظهر في الشات..."
+                  value={guestName}
+                  onChange={(e) => setGuestName(e.target.value)}
+                  autoFocus
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-slate-900 text-sm font-bold placeholder:text-slate-400 focus:outline-none focus:border-amber-500 focus:bg-white transition-colors"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-black text-slate-800 block mb-1.5">
+                    النوع <span className="text-rose-600">*</span>
+                  </label>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setGuestGender('male')}
+                      className={`py-2.5 rounded-xl text-xs font-black border transition-all cursor-pointer ${
+                        guestGender === 'male'
+                          ? 'bg-emerald-600 border-emerald-600 text-white shadow-sm'
+                          : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100'
+                      }`}
+                    >
+                      ذكر 👨
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setGuestGender('female')}
+                      className={`py-2.5 rounded-xl text-xs font-black border transition-all cursor-pointer ${
+                        guestGender === 'female'
+                          ? 'bg-purple-600 border-purple-600 text-white shadow-sm'
+                          : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100'
+                      }`}
+                    >
+                      أنثى 👩
+                    </button>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-xs font-black text-slate-800 block mb-1.5">
+                    السن <span className="text-rose-600">*</span>
+                  </label>
+                  <input
+                    type="number"
+                    name="shat_guest_age"
+                    autoComplete="off"
+                    data-lpignore="true"
+                    min={13}
+                    max={99}
+                    placeholder="مثال: 24"
+                    value={guestAge}
+                    onChange={(e) => setGuestAge(e.target.value)}
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-slate-900 text-sm font-bold placeholder:text-slate-400 focus:outline-none focus:border-amber-500 focus:bg-white transition-colors"
+                  />
+                </div>
+              </div>
+
+              {!isGuestFormValid && (
+                <div className="flex items-center gap-1.5 text-[11px] text-slate-600 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2">
+                  <UserIcon className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                  <span>يُرجى إدخال الاسم واختيار النوع والسن (13–99) لتفعيل زر الدخول</span>
+                </div>
+              )}
+
+              <button
+                type="submit"
+                disabled={!isGuestFormValid || entering}
+                className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-[#F9D678] via-[#EAB338] to-[#C98515] hover:from-[#FDE08D] hover:to-[#D8931E] disabled:from-slate-200 disabled:to-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed text-[#2A1700] font-black text-sm shadow-md disabled:shadow-none active:scale-[0.98] transition-all flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <CheckCircle2 className="w-4 h-4" />
+                <span>{entering ? 'جاري الدخول...' : 'دخول إلى شات مصر 🚀'}</span>
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

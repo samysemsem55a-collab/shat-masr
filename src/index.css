@@ -406,7 +406,7 @@ html.dark {
   animation-duration: 0.3s;
 }
 
-/* Ultra-Crisp High-Contrast 12-Point Text Outline / Stroke for Public Chat (Regular Users & VIP) */
+/* Ultra-Crisp High-Contrast Text Outline & Subtle Backdrop for Public Chat Across All Backgrounds */
 .chat-text-outline-light,
 .chat-text-outline-strong,
 .chat-msg-row .chat-text-outline-light,
@@ -414,20 +414,15 @@ html.dark {
 .vip-msg-border .chat-text-outline-light,
 .vip-msg-border .chat-text-outline-strong {
   text-shadow:
-    -2px  0     0 rgba(255, 255, 255, 0.99),
-     2px  0     0 rgba(255, 255, 255, 0.99),
-     0   -2px   0 rgba(255, 255, 255, 0.99),
-     0    2px   0 rgba(255, 255, 255, 0.99),
-    -1.45px -1.45px 0 rgba(255, 255, 255, 0.99),
-     1.45px -1.45px 0 rgba(255, 255, 255, 0.99),
-    -1.45px  1.45px 0 rgba(255, 255, 255, 0.99),
-     1.45px  1.45px 0 rgba(255, 255, 255, 0.99),
-    -1px     0      0 rgba(255, 255, 255, 0.98),
-     1px     0      0 rgba(255, 255, 255, 0.98),
-     0      -1px    0 rgba(255, 255, 255, 0.98),
-     0       1px    0 rgba(255, 255, 255, 0.98),
-     0       0      7px rgba(255, 255, 255, 0.96),
-     0       1.5px  10px rgba(255, 255, 255, 0.9);
+    -1.5px  0     0 rgba(255, 255, 255, 0.96),
+     1.5px  0     0 rgba(255, 255, 255, 0.96),
+     0   -1.5px   0 rgba(255, 255, 255, 0.96),
+     0    1.5px   0 rgba(255, 255, 255, 0.96),
+    -1px -1px     0 rgba(255, 255, 255, 0.94),
+     1px -1px     0 rgba(255, 255, 255, 0.94),
+    -1px  1px     0 rgba(255, 255, 255, 0.94),
+     1px  1px     0 rgba(255, 255, 255, 0.94),
+     0    1px     4px rgba(255, 255, 255, 0.92);
 }
 
 .chat-text-outline-dark,
@@ -438,20 +433,23 @@ html.dark {
 .vip-msg-border .chat-text-outline-strong-dark,
 html.dark .chat-msg-row:not([data-preserve-light="true"]) .chat-text-outline-strong {
   text-shadow:
-    -2px  0     0 rgba(2, 6, 23, 0.99),
-     2px  0     0 rgba(2, 6, 23, 0.99),
-     0   -2px   0 rgba(2, 6, 23, 0.99),
-     0    2px   0 rgba(2, 6, 23, 0.99),
-    -1.45px -1.45px 0 rgba(2, 6, 23, 0.99),
-     1.45px -1.45px 0 rgba(2, 6, 23, 0.99),
-    -1.45px  1.45px 0 rgba(2, 6, 23, 0.99),
-     1.45px  1.45px 0 rgba(2, 6, 23, 0.99),
-    -1px     0      0 rgba(2, 6, 23, 0.98),
-     1px     0      0 rgba(2, 6, 23, 0.98),
-     0      -1px    0 rgba(2, 6, 23, 0.98),
-     0       1px    0 rgba(2, 6, 23, 0.98),
-     0       0      7px rgba(2, 6, 23, 0.96),
-     0       1.5px  9px rgba(0, 0, 0, 0.95);
+    -1.5px  0     0 rgba(2, 6, 23, 0.96),
+     1.5px  0     0 rgba(2, 6, 23, 0.96),
+     0   -1.5px   0 rgba(2, 6, 23, 0.96),
+     0    1.5px   0 rgba(2, 6, 23, 0.96),
+    -1px -1px     0 rgba(2, 6, 23, 0.94),
+     1px -1px     0 rgba(2, 6, 23, 0.94),
+    -1px  1px     0 rgba(2, 6, 23, 0.94),
+     1px  1px     0 rgba(2, 6, 23, 0.94),
+     0    1px     5px rgba(0, 0, 0, 0.95);
+}
+
+.chat-msg-contrast-light {
+  background-color: rgba(255, 255, 255, 0.72);
+}
+
+.chat-msg-contrast-dark {
+  background-color: rgba(2, 6, 23, 0.56);
 }
 
 

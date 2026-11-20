@@ -33,7 +33,8 @@ import {
   MoreVertical,
   Flag,
   Languages,
-  WifiOff
+  WifiOff,
+  Reply
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { User, Message, Friend, GiftItem, UnreadSenderSummary } from '../types/chat';
@@ -50,7 +51,6 @@ import {
   subscribeToPrivateTyping,
   submitUserReport
 } from '../services/firebase';
-import { isGuestUser } from '../data/seedData';
 import { FriendsList } from './FriendsList';
 import { LuxuryGiftModal } from './LuxuryGiftModal';
 import { CallModal } from './CallModal';
@@ -68,13 +68,6 @@ import { offlineQueue } from '../services/offlineQueue';
 import { translateChatMessage } from '../utils/translateMessage';
 import { globalRadioPlayer } from '../services/radioPlayer';
 import { formatLastSeenArabic, isUserTrulyOnline } from '../utils/presenceStatus';
-import {
-  ConsentRequestType,
-  formatCooldownRemaining,
-  getConsentCooldownRemaining,
-  hasPeerMediaApproval,
-  requestUserConsent,
-} from '../services/consentService';
 
 interface PrivateChatViewProps {
   currentUser: User;
@@ -131,7 +124,6 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
 }) => {
   // Navigation tabs when in list view
   const [activeTab, setActiveTab] = useState<'chats' | 'friends' | 'online'>('chats');
-  const isGuest = isGuestUser(currentUser);
   
   // Contacts and recent chats state (strictly from database, zero mock data)
   const [recentChats, setRecentChats] = useState<any[]>([]);
@@ -151,27 +143,47 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
   });
   const [isCoinsTransferOpen, setIsCoinsTransferOpen] = useState(false);
 
-  // Emoji & Animated Emojis Picker + Media Upload + Lightbox + Consent States
+  // Emoji & Animated Emojis Picker + Media Upload + Lightbox + Swipe-to-Reply States
   const [isEmojiStickerOpen, setIsEmojiStickerOpen] = useState(false);
   const [emojiStickerTab, setEmojiStickerTab] = useState<'emojis' | 'animated'>('emojis');
   const [isUploadingMedia, setIsUploadingMedia] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
-  const [requestingConsentType, setRequestingConsentType] = useState<ConsentRequestType | null>(null);
-  const [callWaitingState, setCallWaitingState] = useState<{
-    type: ConsentRequestType;
-    peerName: string;
-    remainingSec: number;
-    cancel: () => void;
-  } | null>(null);
   const [lightboxImageUrl, setLightboxImageUrl] = useState<string | null>(null);
   const [isActionsMenuOpen, setIsActionsMenuOpen] = useState(false);
   const [isMessageSearchOpen, setIsMessageSearchOpen] = useState(false);
   const [messageSearchQuery, setMessageSearchQuery] = useState('');
   const [translatedMap, setTranslatedMap] = useState<Record<string, { translated: string; targetLang: string; show: boolean }>>({});
+  const [replyingTo, setReplyingTo] = useState<Message | null>(null);
+  const [highlightedMsgId, setHighlightedMsgId] = useState<string | null>(null);
+  const [swipeState, setSwipeState] = useState<{ msgId: string; offsetX: number } | null>(null);
+  const swipeStartRef = useRef<{ msgId: string; startX: number; startY: number } | null>(null);
+  const swipeMovedRef = useRef(false);
+  const messageRefs = useRef<{ [msgId: string]: HTMLDivElement | null }>({});
   const mediaFileInputRef = useRef<HTMLInputElement>(null);
   const chatInputRef = useRef<HTMLInputElement>(null);
   const emojiStickerPanelRef = useRef<HTMLDivElement>(null);
   const actionsMenuRef = useRef<HTMLDivElement>(null);
+
+  const scrollToMessage = (msgId?: string) => {
+    if (!msgId) return;
+    const el = messageRefs.current[msgId];
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      setHighlightedMsgId(msgId);
+      setTimeout(() => setHighlightedMsgId(null), 2200);
+    }
+  };
+
+  const triggerReplyTo = (msg: Message) => {
+    sounds.playMessageSent();
+    try {
+      if (typeof navigator !== 'undefined' && navigator.vibrate) {
+        navigator.vibrate(25);
+      }
+    } catch {}
+    setReplyingTo(msg);
+    requestAnimationFrame(() => chatInputRef.current?.focus());
+  };
 
   // Real Voice Recording States & Refs
   const [isRecordingVoice, setIsRecordingVoice] = useState(false);
@@ -182,22 +194,13 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
   const recordingSecondsRef = useRef<number>(0);
   const activeAudioRef = useRef<HTMLAudioElement | null>(null);
 
-  // 1-second countdown ticker for bottom Call/Media Waiting Toast
-  useEffect(() => {
-    if (!callWaitingState) return;
-    const interval = setInterval(() => {
-      setCallWaitingState((prev) =>
-        prev ? { ...prev, remainingSec: Math.max(0, prev.remainingSec - 1) } : null
-      );
-    }, 1000);
-    return () => clearInterval(interval);
-  }, [Boolean(callWaitingState)]);
-
-  // Close actions menu on outside click & reset search when switching contact
+  // Close actions menu on outside click & reset search/reply when switching contact
   useEffect(() => {
     setIsActionsMenuOpen(false);
     setIsMessageSearchOpen(false);
     setMessageSearchQuery('');
+    setReplyingTo(null);
+    setSwipeState(null);
   }, [activeContact?.id]);
 
   useEffect(() => {
@@ -489,72 +492,14 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
     }
   };
 
-  // Pre-approved Audio / Video Call Launcher with 5-minute Rejection Cooldown + Bottom Waiting Toast
-  const handleRequestCall = async (callType: 'audio' | 'video') => {
+  // Direct Audio / Video Call Launcher for all entered users
+  const handleRequestCall = (callType: 'audio' | 'video') => {
     if (!activeContact) return;
-    if (isGuest) {
-      toast.warning('المكالمات مخصصة للأعضاء المسجلين — يمكنك التسجيل بحساب جوجل أو الهاتف مجاناً!');
-      if (onPromptRegister) {
-        onPromptRegister();
-      } else {
-        globalRadioPlayer.pauseForCall();
-        setCallModalState({ isOpen: true, callType });
-      }
-      return;
-    }
-    const consentType: ConsentRequestType = callType === 'video' ? 'video_call' : 'audio_call';
-    const remainingMs = getConsentCooldownRemaining(currentUser.id, activeContact.id, consentType);
-    if (remainingMs > 0) {
-      toast.warning(
-        `تم حظر إعادة طلب ${callType === 'video' ? 'مكالمة الفيديو' : 'المكالمة الصوتية'} مؤقتاً — متبقي ${formatCooldownRemaining(remainingMs)} ⏳`
-      );
-      return;
-    }
-    if (requestingConsentType) return;
-
-    setRequestingConsentType(consentType);
-    try {
-      const res = await requestUserConsent(
-        currentUser,
-        activeContact.id,
-        activeContact.name,
-        consentType,
-        undefined,
-        30000,
-        ({ cancel }) => {
-          setCallWaitingState({
-            type: consentType,
-            peerName: activeContact.name,
-            remainingSec: 30,
-            cancel,
-          });
-        }
-      );
-      setCallWaitingState(null);
-      if (res.approved) {
-        globalRadioPlayer.pauseForCall();
-        toast.success(`وافق ${activeContact.name} على المكالمة ✅`);
-        setCallModalState({ isOpen: true, callType });
-      } else if (res.reason === 'cancelled') {
-        toast.info('تم إلغاء طلب المكالمة');
-      } else if (res.reason === 'rejected') {
-        toast.error(
-          `رفض ${activeContact.name} طلب المكالمة ❌ (ممنوع إعادة الطلب لمدة 5 دقائق)`
-        );
-      } else if (res.reason === 'cooldown') {
-        toast.warning(
-          `يرجى الانتظار ${formatCooldownRemaining(res.remainingMs || 0)} قبل إعادة الطلب`
-        );
-      } else {
-        toast.info(`لم يرد ${activeContact.name} على طلب المكالمة في الوقت المحدد`);
-      }
-    } finally {
-      setCallWaitingState(null);
-      setRequestingConsentType(null);
-    }
+    globalRadioPlayer.pauseForCall();
+    setCallModalState({ isOpen: true, callType });
   };
 
-  // Media file picker & consent-gated upload handler (One-time approval + <200KB image compression)
+  // Unrestricted Media file picker & upload handler (<200KB image compression)
   const handleMediaFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = '';
@@ -569,57 +514,6 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
     if (file.size > 15 * 1024 * 1024) {
       toast.error('حجم الملف كبير جداً! الحد الأقصى المسموح هو 15 ميجابايت.');
       return;
-    }
-
-    // One-time peer media approval check
-    if (!hasPeerMediaApproval(currentUser.id, activeContact.id)) {
-      const cooldownRemaining = getConsentCooldownRemaining(currentUser.id, activeContact.id, 'send_image');
-      if (cooldownRemaining > 0) {
-        toast.warning(
-          `لا يمكنك إرسال وسائط لـ ${activeContact.name} الآن — متبقي ${formatCooldownRemaining(cooldownRemaining)} ⏳`
-        );
-        return;
-      }
-
-      setRequestingConsentType('send_image');
-      try {
-        const consentRes = await requestUserConsent(
-          currentUser,
-          activeContact.id,
-          activeContact.name,
-          'send_image',
-          isVideo ? 'يرغب في إرسال مقطع فيديو إليك' : 'يرغب في إرسال صورة إليك',
-          30000,
-          ({ cancel }) => {
-            setCallWaitingState({
-              type: 'send_image',
-              peerName: activeContact.name,
-              remainingSec: 30,
-              cancel,
-            });
-          }
-        );
-        setCallWaitingState(null);
-        if (!consentRes.approved) {
-          if (consentRes.reason === 'cancelled') {
-            toast.info('تم إلغاء طلب إرسال الوسائط');
-          } else if (consentRes.reason === 'rejected') {
-            toast.error(
-              `رفض ${activeContact.name} استقبال الصور ❌ (تم تفعيل منع الإزعاج لمدة 5 دقائق)`
-            );
-          } else if (consentRes.reason === 'cooldown') {
-            toast.warning(
-              `يرجى الانتظار ${formatCooldownRemaining(consentRes.remainingMs || 0)}`
-            );
-          } else {
-            toast.info(`لم يوافق ${activeContact.name} في الوقت المحدد — لم يتم إرسال الملف`);
-          }
-          return;
-        }
-      } finally {
-        setCallWaitingState(null);
-        setRequestingConsentType(null);
-      }
     }
 
     const convId = [currentUser.id, activeContact.id].sort().join('_');
@@ -677,9 +571,19 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
     lastPrivateTypingEmitRef.current = 0;
     setPrivateTyping(currentUser.id, activeContact.id, currentUser.name, false, getActivePeerSessionId());
 
+    const activeReply = replyingTo
+      ? {
+          id: replyingTo.id,
+          senderName: replyingTo.senderName,
+          content: replyingTo.content || replyingTo.text || (replyingTo.type === 'image' ? '🖼️ صورة' : 'رسالة'),
+          type: replyingTo.type,
+        }
+      : undefined;
+
     sounds.playMessageSent();
     const content = inputText.trim();
     setInputText('');
+    setReplyingTo(null);
     if (prefilledDraft) {
       onClearPrefilledDraft?.();
     }
@@ -697,6 +601,7 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
       type: 'private',
       content: content,
       text: content,
+      replyTo: activeReply,
       timestamp: Date.now(),
       status: 'sent'
     };
@@ -1386,15 +1291,10 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                   <button 
                     type="button"
                     onClick={() => handleRequestCall('audio')}
-                    disabled={Boolean(requestingConsentType)}
-                    className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-emerald-50 hover:bg-emerald-100 disabled:opacity-50 text-emerald-700 border border-emerald-200 flex items-center justify-center transition active:scale-95 shrink-0 cursor-pointer"
-                    title="طلب مكالمة صوتية"
+                    className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 flex items-center justify-center transition active:scale-95 shrink-0 cursor-pointer"
+                    title="بدء مكالمة صوتية"
                   >
-                    {requestingConsentType === 'audio_call' ? (
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                    ) : (
-                      <Phone className="w-4 h-4" />
-                    )}
+                    <Phone className="w-4 h-4" />
                   </button>
 
                   <div className="relative">
@@ -1624,38 +1524,119 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                   );
                 }
 
+                const isSwipingThis = swipeState?.msgId === msg.id;
+                const dragOffset = isSwipingThis ? swipeState.offsetX : 0;
+
                 return (
                   <motion.div
                     key={`${msg.id || 'pm'}_${idx}`}
+                    ref={(el) => {
+                      if (msg.id) messageRefs.current[msg.id] = el;
+                    }}
                     initial={{ opacity: 0, y: 8, scale: 0.98 }}
                     animate={{ opacity: 1, y: 0, scale: 1 }}
                     transition={{ duration: 0.18, ease: 'easeOut' }}
-                    className={`flex ${isMe ? 'justify-start' : 'justify-end'}`}
+                    className={`relative flex items-center ${isMe ? 'justify-start' : 'justify-end'} ${
+                      highlightedMsgId === msg.id ? 'bg-amber-200/45 rounded-2xl ring-2 ring-amber-400 p-1 transition-all' : ''
+                    }`}
                   >
+                    {dragOffset > 12 && (
+                      <div
+                        className="absolute left-2 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-indigo-600 text-white flex items-center justify-center shadow-md pointer-events-none z-10 transition-transform"
+                        style={{
+                          opacity: Math.min(1, dragOffset / 44),
+                          transform: `translateY(-50%) scale(${Math.min(1.08, 0.7 + dragOffset / 90)})`,
+                        }}
+                      >
+                        <Reply className="w-4 h-4" />
+                      </div>
+                    )}
+
                   <div 
+                    style={
+                      dragOffset > 0
+                        ? { transform: `translateX(${dragOffset}px)`, transition: 'none' }
+                        : { transform: 'translateX(0px)', transition: 'transform 0.2s cubic-bezier(0.22, 1, 0.36, 1)' }
+                    }
                     onMouseDown={(e) => {
+                      if (e.button !== 0) return;
+                      swipeStartRef.current = { msgId: msg.id, startX: e.clientX, startY: e.clientY };
+                      swipeMovedRef.current = false;
                       longPressTimerRef.current = setTimeout(() => {
-                        setActiveContextMenu({ msg, x: e.clientX, y: e.clientY });
-                      }, 750);
+                        if (!swipeMovedRef.current) {
+                          setActiveContextMenu({ msg, x: e.clientX, y: e.clientY });
+                        }
+                      }, 700);
+                    }}
+                    onMouseMove={(e) => {
+                      const st = swipeStartRef.current;
+                      if (!st || st.msgId !== msg.id) return;
+                      const dx = e.clientX - st.startX;
+                      const dy = Math.abs(e.clientY - st.startY);
+                      if (Math.abs(dx) > 10 || dy > 10) {
+                        swipeMovedRef.current = true;
+                        if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
+                      }
+                      if (dx > 8 && Math.abs(dx) > dy) {
+                        setSwipeState({ msgId: msg.id, offsetX: Math.min(72, dx) });
+                      }
                     }}
                     onMouseUp={() => {
                       if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
+                      if (swipeStartRef.current?.msgId === msg.id) {
+                        if (swipeState?.msgId === msg.id && swipeState.offsetX >= 48) {
+                          triggerReplyTo(msg);
+                        }
+                        swipeStartRef.current = null;
+                        setSwipeState(null);
+                      }
                     }}
                     onMouseLeave={() => {
                       if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
+                      if (swipeStartRef.current?.msgId === msg.id) {
+                        swipeStartRef.current = null;
+                        setSwipeState(null);
+                      }
                     }}
                     onTouchStart={(e) => {
                       const touch = e.touches[0];
+                      swipeStartRef.current = { msgId: msg.id, startX: touch.clientX, startY: touch.clientY };
+                      swipeMovedRef.current = false;
                       longPressTimerRef.current = setTimeout(() => {
-                        if (navigator.vibrate) navigator.vibrate(50);
-                        setActiveContextMenu({ msg, x: touch.clientX, y: touch.clientY });
-                      }, 750);
+                        if (!swipeMovedRef.current) {
+                          if (navigator.vibrate) navigator.vibrate(50);
+                          setActiveContextMenu({ msg, x: touch.clientX, y: touch.clientY });
+                        }
+                      }, 700);
+                    }}
+                    onTouchMove={(e) => {
+                      const st = swipeStartRef.current;
+                      if (!st || st.msgId !== msg.id) return;
+                      const touch = e.touches[0];
+                      const dx = touch.clientX - st.startX;
+                      const dy = Math.abs(touch.clientY - st.startY);
+                      if (Math.abs(dx) > 8 || dy > 8) {
+                        swipeMovedRef.current = true;
+                        if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
+                      }
+                      if (dx > 6 && Math.abs(dx) > dy) {
+                        setSwipeState({ msgId: msg.id, offsetX: Math.min(72, dx) });
+                      } else if (swipeState?.msgId === msg.id && dx <= 0) {
+                        setSwipeState(null);
+                      }
                     }}
                     onTouchEnd={() => {
                       if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
+                      if (swipeState?.msgId === msg.id && swipeState.offsetX >= 48) {
+                        triggerReplyTo(msg);
+                      }
+                      swipeStartRef.current = null;
+                      setSwipeState(null);
                     }}
-                    onTouchMove={() => {
+                    onTouchCancel={() => {
                       if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
+                      swipeStartRef.current = null;
+                      setSwipeState(null);
                     }}
                     onContextMenu={(e) => {
                       e.preventDefault();
@@ -1668,8 +1649,27 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                       ? 'bg-gradient-to-l from-indigo-600 via-blue-600 to-purple-600 text-white border border-indigo-500/40 rounded-tr-none shadow-sm'
                       : 'bg-white/88 backdrop-blur-md text-slate-900 border border-slate-200/85 rounded-tl-none shadow-sm'
                   }`}
-                    title="اضغط مطولاً لخيارات الرسالة (حذف / نسخ)"
+                    title="اسحب يميناً للرد السريع أو اضغط مطولاً للخيارات"
                   >
+                    {msg.replyTo && (
+                      <div
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          scrollToMessage(msg.replyTo?.id);
+                        }}
+                        className={`px-2.5 py-1.5 rounded-xl border-r-2 text-[11px] cursor-pointer mb-1 ${
+                          isMe
+                            ? 'bg-white/15 border-amber-300 text-white/95 hover:bg-white/25'
+                            : 'bg-indigo-50/90 border-indigo-500 text-slate-700 hover:bg-indigo-100'
+                        }`}
+                        title="اضغط للانتقال إلى الرسالة الأصلية"
+                      >
+                        <div className={`font-black text-[10px] ${isMe ? 'text-amber-200' : 'text-indigo-700'}`}>
+                          رد على {msg.replyTo.senderName}
+                        </div>
+                        <div className="truncate opacity-90">{msg.replyTo.content || msg.replyTo.text}</div>
+                      </div>
+                    )}
                     {msg.type === 'sticker' ? (
                       <p className="leading-relaxed whitespace-pre-wrap font-medium text-slate-900">
                         <InlineRichText text={msg.stickerEmoji || msg.content || '✨'} />
@@ -1862,6 +1862,31 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
             </div>
           )}
 
+          {/* Reply Preview Bar above Composer */}
+          {replyingTo && (
+            <div className="w-full px-3 py-1.5 bg-indigo-50/95 border-t border-indigo-200 flex items-center justify-between gap-2 shrink-0 animate-in slide-in-from-bottom-2">
+              <div className="flex items-center gap-2 min-w-0 flex-1 border-r-2 border-indigo-600 pr-2">
+                <Reply className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                <div className="min-w-0 flex-1 text-right">
+                  <div className="text-[10.5px] font-black text-indigo-800 truncate">
+                    الرد على {replyingTo.senderName}
+                  </div>
+                  <div className="text-[11px] text-slate-600 truncate">
+                    {replyingTo.content || replyingTo.text || (replyingTo.type === 'image' ? '🖼️ صورة مرفقة' : 'رسالة')}
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setReplyingTo(null)}
+                className="p-1 rounded-full text-slate-500 hover:text-slate-900 hover:bg-indigo-100 shrink-0 cursor-pointer"
+                title="إلغاء الرد"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
+
           {/* Bottom Chat Bar: Full-Width Mobile + Emoji/Sticker Drawer + Media Picker */}
           <div ref={emojiStickerPanelRef} className="relative w-full p-2 sm:p-3 bg-white/98 backdrop-blur-md border-t border-slate-200/90 flex items-center gap-1 sm:gap-2 shrink-0 pb-[calc(env(safe-area-inset-bottom,0px)+10px)] sm:pb-3 shadow-[0_-4px_20px_rgba(0,0,0,0.06)]">
             {/* Compact Circular Telegram/WhatsApp-Style Emoji & Animated Emoji Picker */}
@@ -1989,25 +2014,18 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
               </div>
             ) : (
               <>
-                {/* Media Sharing Button (Image / Video) — Kept in exact slot, gated by consent */}
+                {/* Media Sharing Button (Unrestricted Image / Video) */}
                 <button
                   type="button"
                   onClick={() => {
                     if (!activeContact) return;
-                    const cd = getConsentCooldownRemaining(currentUser.id, activeContact.id, 'send_image');
-                    if (cd > 0) {
-                      toast.warning(
-                        `لا يمكنك إرسال صور لـ ${activeContact.name} الآن — متبقي ${formatCooldownRemaining(cd)} ⏳`
-                      );
-                      return;
-                    }
                     mediaFileInputRef.current?.click();
                   }}
-                  disabled={isUploadingMedia || requestingConsentType === 'send_image'}
+                  disabled={isUploadingMedia}
                   className="p-2 rounded-2xl bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-600 min-h-[42px] min-w-[40px] flex items-center justify-center active:scale-95 transition-all shadow-xs shrink-0 disabled:opacity-50 cursor-pointer"
-                  title="إرسال صورة أو فيديو (يتطلب موافقة الطرف الثاني)"
+                  title="إرسال صورة أو فيديو"
                 >
-                  {requestingConsentType === 'send_image' ? (
+                  {isUploadingMedia ? (
                     <Loader2 className="w-4 h-4 sm:w-5 sm:h-5 animate-spin" />
                   ) : (
                     <ImageIcon className="w-4 h-4 sm:w-5 sm:h-5" />
@@ -2038,11 +2056,19 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                   <Mic className="w-4 h-4 sm:w-5 sm:h-5" />
                 </button>
 
-                {/* Message Input Field */}
+                {/* Message Input Field (Autofill suppressed) */}
                 <form onSubmit={handleSendMessage} className="flex-1 min-w-0 flex items-center">
                   <input
                     ref={chatInputRef}
                     type="text"
+                    name="private_chat_message"
+                    id="private_chat_message"
+                    autoComplete="off"
+                    autoCorrect="off"
+                    autoCapitalize="off"
+                    spellCheck={false}
+                    data-lpignore="true"
+                    data-form-type="other"
                     value={inputText}
                     onChange={(e) => handleInputChange(e.target.value)}
                     placeholder="اكتب رسالة خاصة هنا..."
@@ -2080,6 +2106,20 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                     <X className="w-3.5 h-3.5" />
                   </button>
                 </div>
+
+                {/* Reply Option */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    const targetMsg = activeContextMenu.msg;
+                    setActiveContextMenu(null);
+                    triggerReplyTo(targetMsg);
+                  }}
+                  className="w-full px-3 py-2 rounded-xl bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-800 text-xs font-bold flex items-center gap-2 transition min-h-[40px]"
+                >
+                  <Reply className="w-4 h-4 text-indigo-600" />
+                  <span>رد على هذه الرسالة</span>
+                </button>
 
                 {/* Copy Text Option */}
                 {activeContextMenu.msg.content && (
@@ -2236,40 +2276,7 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
         </div>
       )}
 
-      {/* Call / Media Consent Waiting Toast (z-[300]) with X Cancel */}
-      {callWaitingState && (
-        <div
-          className="fixed bottom-20 left-1/2 -translate-x-1/2 z-[300] w-[92vw] max-w-sm bg-slate-900/95 text-white border border-indigo-400/50 rounded-2xl px-3.5 py-2.5 shadow-2xl flex items-center justify-between gap-2.5 animate-in slide-in-from-bottom-3"
-          dir="rtl"
-        >
-          <div className="flex items-center gap-2.5 min-w-0">
-            <span className="w-8 h-8 rounded-xl bg-indigo-500/25 border border-indigo-400/40 flex items-center justify-center shrink-0">
-              <Loader2 className="w-4 h-4 animate-spin text-indigo-300" />
-            </span>
-            <div className="min-w-0 text-right">
-              <p className="text-xs font-black truncate">
-                {callWaitingState.type === 'video_call'
-                  ? `طلب مكالمة فيديو مع ${callWaitingState.peerName}`
-                  : callWaitingState.type === 'audio_call'
-                  ? `طلب مكالمة صوتية مع ${callWaitingState.peerName}`
-                  : `طلب إرسال وسائط إلى ${callWaitingState.peerName}`}
-              </p>
-              <p className="text-[10.5px] text-slate-300 font-bold tabular-nums">
-                في انتظار الرد... ({callWaitingState.remainingSec} ثانية)
-              </p>
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={() => callWaitingState.cancel()}
-            className="px-2.5 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-[11px] font-black flex items-center gap-1 shrink-0 cursor-pointer active:scale-95 transition"
-            title="إلغاء الطلب"
-          >
-            <X className="w-3.5 h-3.5" />
-            <span>إلغاء</span>
-          </button>
-        </div>
-      )}
+      {/* Direct Call & Media modals ready */}
 
       {/* Natural & Custom Chat Wallpapers Modal */}
       <ChatWallpapersModal
