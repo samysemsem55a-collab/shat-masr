@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { X, CheckCircle2, User as UserIcon } from 'lucide-react';
 import { User } from '../types/chat';
 import { signInWithGoogle, syncUserProfileToFirebase } from '../services/firebase';
+import { HumanVerificationWidget } from './HumanVerificationWidget';
+import { toast } from '../utils/appToast';
 import officialBrandIcon from '../assets/images/shat_masr_official_icon.png';
 
 interface WelcomeScreenProps {
@@ -16,6 +18,7 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
   const [entering, setEntering] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [isHumanVerified, setIsHumanVerified] = useState(false);
 
   // Guest Form Modal State (Name + Gender + Age required before entering)
   const [isGuestModalOpen, setIsGuestModalOpen] = useState(false);
@@ -41,8 +44,17 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
   const isGuestAgeValid = !isNaN(parsedGuestAge) && parsedGuestAge >= 13 && parsedGuestAge <= 99;
   const isGuestFormValid = isGuestNameValid && isGuestGenderValid && isGuestAgeValid;
 
+  const ensureHumanVerified = (): boolean => {
+    if (isHumanVerified) return true;
+    const notice = 'يرجى إتمام التحقق البشري البسيط أولاً قبل الدخول إلى الغرف 🛡️';
+    setErrorMsg(notice);
+    toast.info(notice);
+    return false;
+  };
+
   const handleOpenGuestModal = () => {
     if (entering || googleLoading) return;
+    if (!ensureHumanVerified()) return;
     setGuestFormError(null);
     setErrorMsg(null);
     setIsGuestModalOpen(true);
@@ -50,6 +62,11 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
 
   const handleGuestSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!isHumanVerified) {
+      setGuestFormError('يرجى إتمام التحقق البشري البسيط أولاً للمتابعة.');
+      toast.info('يرجى إتمام التحقق البشري البسيط أولاً 🛡️');
+      return;
+    }
     if (!isGuestFormValid) {
       setGuestFormError('يرجى كتابة الاسم واختيار النوع وتحديد السن (من 13 إلى 99) أولاً.');
       return;
@@ -108,6 +125,7 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
 
   const handleGoogleLogin = async () => {
     if (entering || googleLoading) return;
+    if (!ensureHumanVerified()) return;
     setGoogleLoading(true);
     setErrorMsg(null);
     try {
@@ -166,10 +184,10 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
       </svg>
 
       {/* Main Content Container */}
-      <div className="relative z-10 w-full max-w-md mx-auto flex-1 flex flex-col items-center justify-between px-6 pt-10 pb-8 sm:py-12 text-center">
+      <div className="relative z-10 w-full max-w-md mx-auto flex-1 flex flex-col items-center justify-between px-6 pt-8 pb-7 sm:py-10 text-center">
         {/* Upper Section: Official Logo + Golden Title + Description */}
-        <div className="flex flex-col items-center space-y-3 mt-2">
-          <div className="w-32 h-32 sm:w-36 sm:h-36 flex items-center justify-center drop-shadow-[0_14px_30px_rgba(0,0,0,0.55)]">
+        <div className="flex flex-col items-center space-y-2.5 mt-1">
+          <div className="w-28 h-28 sm:w-32 sm:h-32 flex items-center justify-center drop-shadow-[0_14px_30px_rgba(0,0,0,0.55)]">
             <img
               src={officialBrandIcon}
               alt="شعار شات مصر الرسمي"
@@ -189,7 +207,7 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
         </div>
 
         {/* Middle Section: Horizontal Features Row */}
-        <div className="w-full flex flex-wrap items-center justify-center gap-2 sm:gap-3 my-5">
+        <div className="w-full flex flex-wrap items-center justify-center gap-2 sm:gap-3 my-4">
           {['دردشة فورية', 'غرف صوتية', 'سريع وآمن'].map((feature, idx) => (
             <React.Fragment key={feature}>
               {idx > 0 && (
@@ -204,11 +222,20 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
           ))}
         </div>
 
-        {/* Bottom Section: Prominent Golden Guest Login Button + Google Sign-In */}
-        <div className="w-full space-y-3 mb-2">
+        {/* Bottom Section: Human Verification + Guest Login + Google Sign-In */}
+        <div className="w-full space-y-2.5 mb-1">
+          <HumanVerificationWidget
+            verified={isHumanVerified}
+            onVerifyChange={(ok) => {
+              setIsHumanVerified(ok);
+              if (ok) setErrorMsg(null);
+            }}
+            variant="dark"
+          />
+
           {errorMsg && (
-            <div className="p-2.5 rounded-2xl bg-rose-950/85 border border-rose-400/50 text-rose-100 text-xs font-bold">
-              ⚠️ {errorMsg}
+            <div className="p-2.5 rounded-2xl bg-amber-950/85 border border-amber-400/50 text-amber-100 text-xs font-bold">
+              🛡️ {errorMsg}
             </div>
           )}
 
@@ -216,7 +243,7 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
             type="button"
             onClick={handleOpenGuestModal}
             disabled={entering || googleLoading}
-            className="w-full py-4 px-6 rounded-2xl bg-gradient-to-r from-[#F9D678] via-[#EAB338] to-[#C98515] hover:from-[#FDE08D] hover:to-[#D8931E] text-[#2A1700] font-black text-lg sm:text-xl shadow-[0_10px_28px_rgba(234,179,56,0.45)] border border-[#FFF2BE]/70 active:scale-[0.98] transition-all cursor-pointer disabled:opacity-60"
+            className="w-full py-3.5 sm:py-4 px-6 rounded-2xl bg-gradient-to-r from-[#F9D678] via-[#EAB338] to-[#C98515] hover:from-[#FDE08D] hover:to-[#D8931E] text-[#2A1700] font-black text-lg sm:text-xl shadow-[0_10px_28px_rgba(234,179,56,0.45)] border border-[#FFF2BE]/70 active:scale-[0.98] transition-all cursor-pointer disabled:opacity-60"
           >
             الدخول كزائر
           </button>

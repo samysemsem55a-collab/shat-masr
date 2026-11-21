@@ -1,32 +1,35 @@
-import React, { useState, useRef } from 'react';
-import { 
-  X, 
-  Crown, 
-  MessageCircle, 
-  Gift, 
-  Heart, 
+import React, { useState, useRef, useEffect } from 'react';
+import {
+  X,
+  MessageCircle,
+  Gift,
   Star,
   UserPlus,
   Check,
-  Camera,
   Pencil,
-  Award,
-  Sparkles,
   Flag,
   AlertTriangle,
   Loader2,
   Music,
   Play,
   Pause,
-  User as UserIcon
+  Users,
+  Calendar,
+  MapPin,
+  Info,
+  ArrowRight,
 } from 'lucide-react';
-import { User } from '../types/chat';
-import { BADGES_CATALOG } from '../data/seedData';
+import { User, Friend } from '../types/chat';
 import { getRankDisplayMeta, hasPrivilegedRank, resolveBannerStyle } from '../utils/userRanks';
 import { AvatarWithFrame } from './AvatarWithFrame';
-import { sendFriendRequest, submitUserRating, submitUserReport, recordProfileVisit } from '../services/firebase';
+import {
+  sendFriendRequest,
+  submitUserRating,
+  submitUserReport,
+  recordProfileVisit,
+  subscribeToFriendsList,
+} from '../services/firebase';
 import { realtimeSocket } from '../services/realtimeSocket';
-import { sounds } from '../utils/soundEffects';
 import { VerifiedBadge } from '../utils/verifiedBadge';
 import { formatLastSeenArabic, isUserTrulyOnline } from '../utils/presenceStatus';
 import { toast } from '../utils/appToast';
@@ -42,6 +45,14 @@ interface UserProfileModalProps {
   onAvatarChanged?: (url: string) => void;
 }
 
+const ROOM_NAME_MAP: Record<string, string> = {
+  room_egypt: 'غرفة شات مصر 1',
+  room_egypt2: 'غرفة شات مصر 2',
+  room_alex: 'إسكندرية عروس البحر',
+  room_saudi: 'غرفة السعودية والخليج',
+  room_religious: 'الركن الديني والتآخي',
+};
+
 export const UserProfileModal: React.FC<UserProfileModalProps> = ({
   user,
   currentUser,
@@ -54,7 +65,8 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
 }) => {
   const [friendRequestSent, setFriendRequestSent] = useState(false);
   const [isAlreadyFriend, setIsAlreadyFriend] = useState(false);
-  const [showFullDetails, setShowFullDetails] = useState(false);
+  const [showFriendsSection, setShowFriendsSection] = useState(false);
+  const [friendsList, setFriendsList] = useState<Friend[]>([]);
   const [hasRated, setHasRated] = useState(false);
   const [userRating, setUserRating] = useState(user?.ratingPoints || 0);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -70,18 +82,27 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
   const musicAudioRef = useRef<HTMLAudioElement | null>(null);
   const [isMusicPlaying, setIsMusicPlaying] = useState(false);
 
-  React.useEffect(() => {
+  useEffect(() => {
     if (!user) return;
     setFriendRequestSent(false);
     setHasRated(false);
     setUserRating(user.ratingPoints || 0);
-    setShowFullDetails(false);
+    setShowFriendsSection(false);
     setIsReportOpen(false);
+    setReportSentSuccess(false);
+
+    const targetUid = user.id;
+    const unsubFriends = subscribeToFriendsList(targetUid, (loaded) => {
+      setFriendsList(loaded || []);
+    });
+
     try {
       const friendsRaw = localStorage.getItem(`user_friends_${currentUser.id}`);
       if (friendsRaw) {
         const list = JSON.parse(friendsRaw);
-        const found = Array.isArray(list) && list.some((f: any) => f?.friendId === user.id || f?.id === user.id);
+        const found =
+          Array.isArray(list) &&
+          list.some((f: any) => f?.friendId === user.id || f?.id === user.id);
         setIsAlreadyFriend(Boolean(found));
       } else {
         setIsAlreadyFriend(false);
@@ -95,6 +116,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
     }
 
     return () => {
+      unsubFriends();
       if (musicAudioRef.current) {
         musicAudioRef.current.pause();
         musicAudioRef.current = null;
@@ -106,6 +128,60 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
   if (!user) return null;
 
   const isMe = user.id === currentUser.id;
+  const rankMeta = getRankDisplayMeta(user.role, user.vipBadge);
+  const isPrivileged = hasPrivilegedRank(user.role);
+  const effectiveCover =
+    user.profileBanner &&
+    (user.profileBanner.startsWith('data:image/') ||
+      user.profileBanner.startsWith('http') ||
+      user.profileBanner.startsWith('/') ||
+      isPrivileged)
+      ? user.profileBanner
+      : user.profileWallpaper;
+  const bannerStyle = resolveBannerStyle(effectiveCover);
+
+  const liveOnlineRecord = onlineUsers.find((u) => u.id === user.id);
+  const regRecord = allRegisteredUsers.find((u) => u.id === user.id);
+  const mergedUser: User = {
+    ...regRecord,
+    ...user,
+    ...liveOnlineRecord,
+  };
+
+  const isAvailable = isMe
+    ? currentUser.status !== 'offline'
+    : Boolean(liveOnlineRecord && isUserTrulyOnline(liveOnlineRecord)) || isUserTrulyOnline(user);
+
+  const effectiveStatus = isMe
+    ? currentUser.status
+    : isAvailable
+    ? liveOnlineRecord?.status || user.status || 'online'
+    : 'offline';
+
+  const effectiveLastSeen = regRecord?.lastSeen ?? liveOnlineRecord?.lastSeen ?? user.lastSeen;
+  const currentRoomId = isMe ? currentUser.currentRoom : liveOnlineRecord?.currentRoom ?? user.currentRoom;
+  const currentRoomLabel = currentRoomId
+    ? ROOM_NAME_MAP[currentRoomId] || 'متواجد في غرفة عامة'
+    : isAvailable
+    ? 'في الصفحة الرئيسية'
+    : 'غير متواجد في غرفة';
+
+  const statusLabel = !isAvailable
+    ? formatLastSeenArabic(effectiveLastSeen)
+    : effectiveStatus === 'busy'
+    ? 'مشغول'
+    : effectiveStatus === 'dnd'
+    ? 'لا تزعجني'
+    : effectiveStatus === 'in_mic'
+    ? 'في مجلس صوتي'
+    : 'متصل الآن';
+
+  const joinedLabel = mergedUser.joinedAt
+    ? (() => {
+        const d = new Date(mergedUser.joinedAt);
+        return isNaN(d.getTime()) ? 'عضو حديث' : d.toLocaleDateString('ar-EG', { year: 'numeric', month: 'short', day: 'numeric' });
+      })()
+    : 'عضو في شات مصر';
 
   const handleToggleFavoriteMusic = () => {
     if (!user.favoriteMusicUrl) return;
@@ -128,52 +204,26 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
     audio.play().then(() => setIsMusicPlaying(true)).catch(() => setIsMusicPlaying(false));
   };
 
-  const rankMeta = getRankDisplayMeta(user.role, user.vipBadge);
-  const isPrivileged = hasPrivilegedRank(user.role);
-  const effectiveCover =
-    user.profileBanner &&
-    (user.profileBanner.startsWith('data:image/') ||
-      user.profileBanner.startsWith('http') ||
-      user.profileBanner.startsWith('/') ||
-      isPrivileged)
-      ? user.profileBanner
-      : user.profileWallpaper;
-  const bannerStyle = resolveBannerStyle(effectiveCover);
-  const liveOnlineRecord = onlineUsers.find((u) => u.id === user.id);
-  const regRecord = allRegisteredUsers.find((u) => u.id === user.id);
-  const isAvailable = isMe
-    ? currentUser.status !== 'offline'
-    : Boolean(liveOnlineRecord && isUserTrulyOnline(liveOnlineRecord)) || isUserTrulyOnline(user);
-  const effectiveStatus = isMe
-    ? currentUser.status
-    : isAvailable
-    ? (liveOnlineRecord?.status || user.status || 'online')
-    : 'offline';
-  const effectiveLastSeen = regRecord?.lastSeen ?? liveOnlineRecord?.lastSeen ?? user.lastSeen;
-  const statusLabel = !isAvailable
-    ? formatLastSeenArabic(effectiveLastSeen)
-    : effectiveStatus === 'busy'
-    ? 'مشغول'
-    : effectiveStatus === 'dnd'
-    ? 'لا تزعجني'
-    : effectiveStatus === 'in_mic'
-    ? 'في مجلس صوتي'
-    : 'متصل الآن';
-
   const handleSendFriendReq = async () => {
-    if (isMe || friendRequestSent) return;
-    await sendFriendRequest(currentUser, user.id);
-    realtimeSocket.sendFriendRequest({
-      id: `req_${Date.now()}`,
-      senderId: currentUser.id,
-      senderName: currentUser.name,
-      senderAvatar: currentUser.avatar,
-      receiverId: user.id,
-      createdAt: Date.now(),
-      status: 'pending'
-    });
+    if (isMe || friendRequestSent || isAlreadyFriend) return;
+    // Optimistic UI update
     setFriendRequestSent(true);
     toast.social(`تم إرسال طلب صداقة إلى ${user.name} بنجاح 🤝`);
+    try {
+      await sendFriendRequest(currentUser, user.id);
+      realtimeSocket.sendFriendRequest({
+        id: `req_${Date.now()}`,
+        senderId: currentUser.id,
+        senderName: currentUser.name,
+        senderAvatar: currentUser.avatar,
+        receiverId: user.id,
+        createdAt: Date.now(),
+        status: 'pending',
+      });
+    } catch {
+      setFriendRequestSent(false);
+      toast.error('تعذر إرسال طلب الصداقة حالياً');
+    }
   };
 
   const handleSubmitReport = async (e: React.FormEvent) => {
@@ -197,9 +247,8 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
       setTimeout(() => {
         setReportSentSuccess(false);
         setIsReportOpen(false);
-      }, 2000);
-    } catch (err) {
-      console.error('Failed to submit report:', err);
+      }, 1800);
+    } catch {
       toast.error('تعذر إرسال البلاغ حالياً، حاول مرة أخرى.');
     } finally {
       setIsSubmittingReport(false);
@@ -208,10 +257,13 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
 
   const handleGiveRating = async () => {
     if (isMe || hasRated) return;
-    const updated = await submitUserRating(currentUser.id, user.id, 10);
-    setUserRating(updated);
     setHasRated(true);
+    setUserRating((prev) => prev + 10);
     toast.success(`تم منح ${user.name} +10 نقاط تقييم ⭐`);
+    try {
+      const updated = await submitUserRating(currentUser.id, user.id, 10);
+      if (typeof updated === 'number') setUserRating(updated);
+    } catch {}
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -227,395 +279,471 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
     }
   };
 
-  // Badges list
-  const userBadges = user.badges && user.badges.length > 0 ? user.badges : ['عضو نشط'];
-
   return (
     <div
       dir="rtl"
-      onClick={onClose}
-      className="fixed inset-0 z-[200] flex items-center justify-center bg-slate-900/45 backdrop-blur-sm p-4 animate-in fade-in"
+      className="fixed inset-0 z-[220] w-full h-[100dvh] bg-[#F2F8FD] dark:bg-slate-950 flex flex-col overflow-hidden animate-in fade-in"
     >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-sm bg-white border border-slate-200 rounded-3xl overflow-hidden shadow-2xl relative text-slate-900 max-h-[92vh] overflow-y-auto"
-      >
-        
-        {/* Hidden Avatar Uploader */}
-        <input 
-          type="file" 
-          ref={fileInputRef} 
-          accept="image/*" 
-          className="hidden" 
-          onChange={handleFileChange} 
-        />
+      {/* Hidden Avatar Uploader */}
+      <input
+        type="file"
+        ref={fileInputRef}
+        accept="image/*"
+        className="hidden"
+        onChange={handleFileChange}
+      />
 
-        {/* Cover Header (Custom VIP Banner or Clean Default Gradient) */}
-        <div
-          className="h-24 bg-gradient-to-r from-[#0f172a] via-[#1e3a8a] to-[#0f766e] relative"
-          style={bannerStyle}
+      {/* Pinned Top Sky-Blue Header */}
+      <header className="w-full px-3 sm:px-5 py-2.5 pt-[calc(env(safe-area-inset-top,0px)+0.6rem)] bg-[#EAF5FD]/95 dark:bg-slate-900/95 border-b border-sky-200/80 dark:border-slate-800 flex items-center justify-between gap-2 shrink-0">
+        <button
+          type="button"
+          onClick={onClose}
+          className="h-9 px-3 rounded-xl bg-white/80 hover:bg-white border border-sky-200 text-slate-700 text-xs font-black flex items-center gap-1.5 active:scale-95 transition cursor-pointer"
         >
-          <button 
-            onClick={onClose}
-            className="absolute top-2.5 left-2.5 p-1.5 rounded-full bg-white/90 text-slate-700 hover:bg-white shadow active:scale-90 transition-transform"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        </div>
+          <ArrowRight className="w-4 h-4 text-[#1E96E8]" />
+          <span>رجوع</span>
+        </button>
 
-        {/* Content */}
-        <div className="p-4 pt-0 -mt-12 text-center space-y-3">
-          
-          {/* Avatar with Live Indicator & Direct Edit for Owner */}
-          <div className="relative inline-block">
-            <AvatarWithFrame user={{ ...user, isOnline: isAvailable, status: effectiveStatus }} size="lg" showOnlineDot={isAvailable} />
+        <h2 className="text-sm sm:text-base font-black text-slate-900 dark:text-white truncate">
+          الملف الشخصي
+        </h2>
 
-            {/* If Current User, Show Quick Photo Change Button (Pencil Icon) */}
-            {isMe && (
-              <button
-                onClick={() => fileInputRef.current?.click()}
-                title="تغيير الصورة الشخصية وتحديثها فوراً"
-                className="absolute top-0 right-0 p-1.5 rounded-full bg-gradient-to-tr from-indigo-600 to-pink-600 hover:from-indigo-500 hover:to-pink-500 text-white shadow-lg border-2 border-white active:scale-90 transition-transform flex items-center justify-center z-20"
-              >
-                <Pencil className="w-3.5 h-3.5" />
-              </button>
-            )}
-          </div>
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="إغلاق"
+          className="w-9 h-9 rounded-xl bg-white/80 hover:bg-white border border-sky-200 text-slate-600 hover:text-slate-900 flex items-center justify-center active:scale-95 transition cursor-pointer"
+        >
+          <X className="w-4 h-4" />
+        </button>
+      </header>
 
-          {/* Name & Country */}
-          <div>
-            <div className="flex items-center justify-center gap-1.5">
-              <h3 className={`text-base ${rankMeta.nameColorClass}`}>{user.name}</h3>
-              <VerifiedBadge verified={user.verified} size="sm" />
-              <span className="text-lg">{user.countryFlag || '🇪🇬'}</span>
-            </div>
+      {/* Scrollable Body */}
+      <div className="flex-1 overflow-y-auto overscroll-contain">
+        <div className="max-w-xl mx-auto pb-8">
+          {/* Top Banner */}
+          <div
+            className="h-28 sm:h-36 bg-gradient-to-l from-[#1E96E8] via-[#38BDF8] to-[#0284C7] relative"
+            style={bannerStyle}
+          />
 
-            {/* Strict Rank-Gated VIP Tier Badge */}
-            <div className="flex items-center justify-center gap-1.5 mt-1">
-              {rankMeta.isPrivileged ? (
-                <span className={`px-2.5 py-0.5 rounded-full text-xs font-black border flex items-center gap-1 ${rankMeta.badgeClass}`}>
-                  <span>{rankMeta.label}</span>
-                </span>
-              ) : (
-                <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-slate-100 border border-slate-200 text-slate-600">
-                  {rankMeta.label}
-                </span>
-              )}
-              <span className="text-xs text-slate-500 font-normal">(@{user.username || 'user'})</span>
-            </div>
-
-            <div className="flex items-center justify-center gap-2 text-xs text-slate-500 mt-1 flex-wrap">
-              <span className={isAvailable ? 'text-emerald-600 font-bold inline-flex items-center gap-1' : 'text-slate-500 font-semibold'}>
-                {isAvailable && <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse inline-block" />}
-                <span>{statusLabel}</span>
-              </span>
-              <span>•</span>
-              <span>{user.country || 'مصر'}</span>
-              {(user.gender || typeof user.age === 'number') && (
-                <>
-                  <span>•</span>
-                  <span className="font-semibold text-slate-600">
-                    {user.gender === 'female' ? 'أنثى' : 'ذكر'}{typeof user.age === 'number' ? `، ${user.age} سنة` : ''}
-                  </span>
-                </>
-              )}
-              {user.zodiacSign && (
-                <>
-                  <span>•</span>
-                  <span className="font-bold text-indigo-700">{user.zodiacSign}</span>
-                </>
-              )}
-            </div>
-          </div>
-
-          {/* Privileged User's Favorite Profile Music Mini-Player */}
-          {isPrivileged && user.favoriteMusicUrl && (
-            <div className="p-2.5 rounded-2xl bg-gradient-to-r from-purple-50 via-indigo-50 to-amber-50 border border-purple-200 flex items-center justify-between gap-2 text-right">
-              <div className="flex items-center gap-2 min-w-0">
-                <div className="w-8 h-8 rounded-xl bg-purple-600 text-white flex items-center justify-center shrink-0 shadow-xs">
-                  <Music className={`w-4 h-4 ${isMusicPlaying ? 'animate-pulse' : ''}`} />
-                </div>
-                <div className="min-w-0">
-                  <p className="text-[11px] font-black text-purple-900 truncate">النغمة المفضلة للبروفايل 🎶</p>
-                  <p className="text-[10px] text-purple-700 truncate">
-                    {isMusicPlaying ? 'جاري التشغيل الآن...' : 'اضغط للاستماع'}
-                  </p>
-                </div>
+          {/* Main Profile Card Content */}
+          <div className="px-4 -mt-12 space-y-4 text-center">
+            {/* Circular Avatar */}
+            <div className="relative inline-block">
+              <div className="rounded-full p-1 bg-white dark:bg-slate-900 shadow-md">
+                <AvatarWithFrame
+                  user={{ ...mergedUser, isOnline: isAvailable, status: effectiveStatus }}
+                  size="lg"
+                  showOnlineDot={isAvailable}
+                />
               </div>
-              <button
-                type="button"
-                onClick={handleToggleFavoriteMusic}
-                className="px-3 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-black flex items-center gap-1 shrink-0 shadow-xs cursor-pointer"
-              >
-                {isMusicPlaying ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
-                <span>{isMusicPlaying ? 'إيقاف' : 'تشغيل'}</span>
-              </button>
-            </div>
-          )}
-
-          {/* Earned Badges Section */}
-          <div className="p-2.5 rounded-2xl bg-slate-50 border border-slate-200 text-right space-y-1.5">
-            <div className="flex items-center justify-between text-xs text-slate-500">
-              <span className="font-bold flex items-center gap-1 text-slate-700">
-                <Award className="w-3.5 h-3.5 text-amber-500" />
-                <span>شارات الإنجاز المكتسبة</span>
-              </span>
-              <span className="text-[10px] text-indigo-600 font-black">{userBadges.length} شارات</span>
-            </div>
-
-            <div className="flex flex-wrap gap-1.5 justify-end">
-              {userBadges.map((badgeName, idx) => {
-                const catalogItem = BADGES_CATALOG.find(b => b.name === badgeName);
-                return (
-                  <div 
-                    key={idx}
-                    className="flex items-center gap-1 px-2.5 py-1 rounded-xl bg-white border border-slate-200 text-xs text-amber-700 shadow-sm"
-                    title={catalogItem?.description || badgeName}
-                  >
-                    <span>{catalogItem?.icon || '🏅'}</span>
-                    <span className="font-bold">{badgeName}</span>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* User Bio */}
-          {user.bio && (
-            <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-700">
-              {user.bio}
-            </div>
-          )}
-
-          {/* Stats Bar */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center text-xs">
-            <div className="p-2 rounded-xl bg-amber-50/70 border border-amber-200">
-              <span className="text-[10px] text-slate-500 block">نقاط التقييم ⭐</span>
-              <span className="font-black text-amber-700">{userRating}</span>
-            </div>
-            <div className="p-2 rounded-xl bg-pink-50/70 border border-pink-200">
-              <span className="text-[10px] text-slate-500 block">الهدايا 🎁</span>
-              <span className="font-black text-pink-700">{user.giftsReceivedCount || 0}</span>
-            </div>
-            <div className="p-2 rounded-xl bg-rose-50/70 border border-rose-200">
-              <span className="text-[10px] text-slate-500 block">الإعجابات ❤️</span>
-              <span className="font-black text-rose-700">{user.likesReceived || 0}</span>
-            </div>
-            <div className="p-2 rounded-xl bg-indigo-50/70 border border-indigo-200">
-              <span className="text-[10px] text-slate-500 block">الزيارات 👁️</span>
-              <span className="font-black text-indigo-700">{user.profileVisitsCount || 0}</span>
-            </div>
-          </div>
-
-          {/* Social Interactions (Unified Modal Actions Across Entire App) */}
-          {!isMe && (
-            <div className="space-y-2 pt-1">
-              {showFullDetails && (
-                <div className="p-2.5 rounded-2xl bg-indigo-50/70 border border-indigo-200 text-right text-[11px] text-slate-700 space-y-1 animate-in fade-in">
-                  <div className="font-black text-indigo-800">تفاصيل الملف الشخصي الكاملة:</div>
-                  <div>الرتبة: <span className="font-bold text-slate-900">{rankMeta.label}</span></div>
-                  <div>الدولة: <span className="font-bold text-slate-900">{user.country || 'مصر'} {user.countryFlag || '🇪🇬'}</span></div>
-                  <div>المستوى: <span className="font-bold text-slate-900">Lv.{user.level || 1}</span></div>
-                  {user.joinedAt && (
-                    <div>تاريخ الانضمام: <span className="font-mono">{new Date(user.joinedAt).toLocaleDateString('ar-EG')}</span></div>
-                  )}
-                </div>
-              )}
-
-              {/* Primary 2x2 Action Grid */}
-              <div className="grid grid-cols-2 gap-2">
+              {isMe && onAvatarChanged && (
                 <button
                   type="button"
-                  onClick={() => {
-                    onClose();
-                    onOpenPrivateChatWith(user);
-                  }}
-                  className="py-2.5 px-3 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-sm active:scale-95 transition-all cursor-pointer"
+                  onClick={() => fileInputRef.current?.click()}
+                  title="تغيير الصورة الشخصية"
+                  className="absolute top-0 right-0 p-1.5 rounded-full bg-[#1E96E8] hover:bg-[#1982CC] text-white shadow border-2 border-white active:scale-90 transition cursor-pointer z-20"
                 >
-                  <MessageCircle className="w-3.5 h-3.5" />
-                  <span>مراسلة</span>
+                  <Pencil className="w-3.5 h-3.5" />
                 </button>
+              )}
+            </div>
 
-                <button
-                  type="button"
-                  onClick={() => setShowFullDetails((v) => !v)}
-                  className={`py-2.5 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 border transition-all active:scale-95 cursor-pointer ${
-                    showFullDetails
-                      ? 'bg-indigo-50 border-indigo-300 text-indigo-700'
-                      : 'bg-slate-100 hover:bg-slate-200 border-slate-200 text-slate-800'
+            {/* Name + Privileged-only shimmer/badge + Status */}
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-center gap-1.5 flex-wrap">
+                <h3
+                  className={`text-lg font-black inline-flex items-center gap-1 ${
+                    rankMeta.isPrivileged ? rankMeta.namePillClass : 'text-slate-900 dark:text-white'
                   }`}
                 >
-                  <UserIcon className="w-3.5 h-3.5" />
-                  <span>عرض الملف الشخصي</span>
-                </button>
+                  <span>{mergedUser.name}</span>
+                </h3>
+                <VerifiedBadge verified={mergedUser.verified} role={mergedUser.role} size="sm" />
+                <span className="text-lg">{mergedUser.countryFlag || '🇪🇬'}</span>
+              </div>
 
+              <div className="flex items-center justify-center gap-2 flex-wrap">
+                {rankMeta.isPrivileged ? (
+                  <span className={`px-2.5 py-0.5 rounded-full text-xs font-black border ${rankMeta.badgeClass}`}>
+                    {rankMeta.label}
+                  </span>
+                ) : (
+                  <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-sky-50 border border-sky-200 text-sky-800">
+                    {rankMeta.label}
+                  </span>
+                )}
+
+                <span
+                  className={`text-xs font-bold inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full border ${
+                    isAvailable
+                      ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
+                      : 'bg-slate-100 border-slate-200 text-slate-600'
+                  }`}
+                >
+                  {isAvailable && <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />}
+                  <span>{statusLabel}</span>
+                </span>
+              </div>
+            </div>
+
+            {/* Favorite Profile Music Mini-Player (Privileged users with song) */}
+            {isPrivileged && mergedUser.favoriteMusicUrl && (
+              <div className="p-3 rounded-2xl bg-white dark:bg-slate-900 border border-sky-200/80 flex items-center justify-between gap-2 text-right shadow-2xs">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="w-9 h-9 rounded-xl bg-[#1E96E8] text-white flex items-center justify-center shrink-0">
+                    <Music className={`w-4 h-4 ${isMusicPlaying ? 'animate-pulse' : ''}`} />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-xs font-black text-slate-900 dark:text-white truncate">النغمة المفضلة</p>
+                    <p className="text-[11px] text-slate-500 truncate">
+                      {isMusicPlaying ? 'جاري التشغيل الآن...' : 'اضغط للاستماع'}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleToggleFavoriteMusic}
+                  className="px-3 py-1.5 rounded-xl bg-[#1E96E8] hover:bg-[#1982CC] text-white text-xs font-black flex items-center gap-1 shrink-0 cursor-pointer"
+                >
+                  {isMusicPlaying ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
+                  <span>{isMusicPlaying ? 'إيقاف' : 'تشغيل'}</span>
+                </button>
+              </div>
+            )}
+
+            {/* Primary Call-To-Action Buttons (Instant Response) */}
+            <div className="flex flex-wrap items-center gap-2">
+              {!isMe && (
                 <button
                   type="button"
                   onClick={() => {
                     onClose();
-                    onSendGiftToUser(user);
+                    onOpenPrivateChatWith(mergedUser);
                   }}
-                  className="py-2.5 px-3 rounded-xl bg-gradient-to-r from-pink-600 to-rose-600 hover:from-pink-500 hover:to-rose-500 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-sm active:scale-95 transition-all cursor-pointer"
+                  className="flex-1 min-w-[140px] py-3 px-4 rounded-2xl bg-[#1E96E8] hover:bg-[#1982CC] text-white font-black text-sm flex items-center justify-center gap-2 shadow-sm active:scale-95 transition cursor-pointer"
                 >
-                  <Gift className="w-3.5 h-3.5" />
-                  <span>إرسال هدية</span>
+                  <MessageCircle className="w-4 h-4" />
+                  <span>فتح الخاص</span>
                 </button>
+              )}
 
+              {!isMe && (
                 <button
                   type="button"
                   onClick={handleSendFriendReq}
                   disabled={friendRequestSent || isAlreadyFriend}
-                  className={`py-2.5 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 shadow-sm active:scale-95 transition-all cursor-pointer ${
+                  className={`py-3 px-4 rounded-2xl font-black text-xs flex items-center justify-center gap-1.5 border transition active:scale-95 cursor-pointer ${
                     isAlreadyFriend || friendRequestSent
-                      ? 'bg-emerald-50 border border-emerald-300 text-emerald-700'
-                      : 'bg-indigo-600 hover:bg-indigo-500 text-white'
+                      ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
+                      : 'bg-white hover:bg-sky-50 border-sky-200 text-sky-800'
                   }`}
                 >
                   {isAlreadyFriend ? (
                     <>
-                      <Check className="w-3.5 h-3.5 text-emerald-600" />
-                      <span>أصدقاء بالفعل ✓</span>
+                      <Check className="w-4 h-4 text-emerald-600" />
+                      <span>أصدقاء</span>
                     </>
                   ) : friendRequestSent ? (
                     <>
-                      <Check className="w-3.5 h-3.5 text-emerald-600" />
-                      <span>تم إرسال الطلب ✓</span>
+                      <Check className="w-4 h-4 text-emerald-600" />
+                      <span>تم الطلب</span>
                     </>
                   ) : (
                     <>
-                      <UserPlus className="w-3.5 h-3.5" />
+                      <UserPlus className="w-4 h-4 text-[#1E96E8]" />
                       <span>إضافة صديق</span>
                     </>
                   )}
                 </button>
+              )}
+
+              <button
+                type="button"
+                onClick={onClose}
+                className="py-3 px-4 rounded-2xl bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 font-black text-xs active:scale-95 transition cursor-pointer"
+              >
+                إغلاق
+              </button>
+            </div>
+
+            {/* Structured Organized Info Rows */}
+            <div className="bg-white dark:bg-slate-900 border border-sky-100 dark:border-slate-800 rounded-2xl divide-y divide-sky-100/80 dark:divide-slate-800 text-right shadow-2xs overflow-hidden">
+              <div className="px-4 py-3 flex items-center justify-between gap-2 text-xs">
+                <span className="text-slate-500 font-bold flex items-center gap-1.5">
+                  <Users className="w-3.5 h-3.5 text-[#1E96E8]" />
+                  <span>النوع / الجنس</span>
+                </span>
+                <span className="font-black text-slate-900 dark:text-white">
+                  {mergedUser.gender === 'female' ? 'أنثى 👩' : 'ذكر 👨'}
+                  {typeof mergedUser.age === 'number' ? ` • ${mergedUser.age} سنة` : ''}
+                </span>
               </div>
 
-              {/* Secondary Row: Member Rating & Report */}
-              <div className="grid grid-cols-2 gap-2">
+              <div className="px-4 py-3 flex items-center justify-between gap-2 text-xs">
+                <span className="text-slate-500 font-bold flex items-center gap-1.5">
+                  <Calendar className="w-3.5 h-3.5 text-[#1E96E8]" />
+                  <span>تاريخ الانضمام</span>
+                </span>
+                <span className="font-black text-slate-900 dark:text-white">{joinedLabel}</span>
+              </div>
+
+              <div className="px-4 py-3 flex items-center justify-between gap-2 text-xs">
+                <span className="text-slate-500 font-bold flex items-center gap-1.5">
+                  <MapPin className="w-3.5 h-3.5 text-[#1E96E8]" />
+                  <span>الحالة / الغرفة الحالية</span>
+                </span>
+                <span className="font-black text-slate-900 dark:text-white truncate max-w-[60%]">
+                  {statusLabel} • {currentRoomLabel}
+                </span>
+              </div>
+
+              <div className="px-4 py-3 space-y-1 text-xs">
+                <span className="text-slate-500 font-bold flex items-center gap-1.5">
+                  <Info className="w-3.5 h-3.5 text-[#1E96E8]" />
+                  <span>معلوماتي</span>
+                </span>
+                <p className="text-slate-800 dark:text-slate-200 font-semibold leading-relaxed">
+                  {mergedUser.bio?.trim() || 'عضو في مجتمع شات مصر'}
+                </p>
+              </div>
+            </div>
+
+            {/* Quick Friends List Toggle (If Friends Exist) */}
+            {friendsList.length > 0 && (
+              <div className="bg-white dark:bg-slate-900 border border-sky-100 dark:border-slate-800 rounded-2xl overflow-hidden text-right shadow-2xs">
+                <button
+                  type="button"
+                  onClick={() => setShowFriendsSection((prev) => !prev)}
+                  className="w-full px-4 py-3 flex items-center justify-between gap-2 text-xs font-black text-slate-900 dark:text-white hover:bg-sky-50/70 transition cursor-pointer"
+                >
+                  <span className="flex items-center gap-2">
+                    <Users className="w-4 h-4 text-[#1E96E8]" />
+                    <span>قائمة الأصدقاء ({friendsList.length})</span>
+                  </span>
+                  <span className="text-[11px] text-[#1E96E8]">
+                    {showFriendsSection ? 'إخفاء ▲' : 'عرض سريع ▼'}
+                  </span>
+                </button>
+
+                {showFriendsSection && (
+                  <div className="px-3 pb-3 pt-1 max-h-52 overflow-y-auto space-y-1.5 border-t border-sky-100">
+                    {friendsList.map((f) => {
+                      const fId = f.friendId || f.id;
+                      return (
+                        <div
+                          key={fId}
+                          className="flex items-center justify-between gap-2 p-2 rounded-xl bg-sky-50/60 border border-sky-100 text-xs"
+                        >
+                          <div className="flex items-center gap-2 min-w-0">
+                            <AvatarWithFrame
+                              user={{ id: fId, name: f.name, avatar: f.avatar, isOnline: f.isOnline }}
+                              size="xs"
+                              showOnlineDot={Boolean(f.isOnline)}
+                            />
+                            <span className="font-bold text-slate-900 truncate">{f.name}</span>
+                          </div>
+                          {fId !== currentUser.id && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                onClose();
+                                onOpenPrivateChatWith({
+                                  id: fId,
+                                  name: f.name,
+                                  username: f.name.toLowerCase().replace(/\s+/g, '_'),
+                                  avatar: f.avatar || '',
+                                  bio: f.bio || '',
+                                  country: 'مصر',
+                                  countryFlag: f.countryFlag || '🇪🇬',
+                                  role: (f.role as any) || 'member',
+                                  coins: 0,
+                                  earningsEgp: 0,
+                                  earningsUsd: 0,
+                                  vipBadge: f.vipBadge || '',
+                                  frameStyle: 'border-slate-300',
+                                  profileWallpaper: '',
+                                  fontPreference: 'cairo',
+                                  isOnline: Boolean(f.isOnline),
+                                  status: f.status || (f.isOnline ? 'online' : 'offline'),
+                                  joinedAt: '',
+                                  gender: 'male',
+                                  level: 1,
+                                  likesReceived: 0,
+                                  giftsReceivedCount: 0,
+                                });
+                              }}
+                              className="px-2.5 py-1 rounded-lg bg-[#1E96E8] text-white text-[10.5px] font-black shrink-0 cursor-pointer"
+                            >
+                              خاص
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Quick Stats + Secondary Actions */}
+            <div className="grid grid-cols-4 gap-2 text-center text-xs">
+              <div className="p-2 rounded-xl bg-white border border-sky-100">
+                <span className="text-[10px] text-slate-500 block">التقييم ⭐</span>
+                <span className="font-black text-amber-600 tabular-nums">{userRating}</span>
+              </div>
+              <div className="p-2 rounded-xl bg-white border border-sky-100">
+                <span className="text-[10px] text-slate-500 block">الهدايا 🎁</span>
+                <span className="font-black text-pink-600 tabular-nums">{mergedUser.giftsReceivedCount || 0}</span>
+              </div>
+              <div className="p-2 rounded-xl bg-white border border-sky-100">
+                <span className="text-[10px] text-slate-500 block">الإعجابات ❤️</span>
+                <span className="font-black text-rose-600 tabular-nums">{mergedUser.likesReceived || 0}</span>
+              </div>
+              <div className="p-2 rounded-xl bg-white border border-sky-100">
+                <span className="text-[10px] text-slate-500 block">الزيارات 👁️</span>
+                <span className="font-black text-[#1E96E8] tabular-nums">{mergedUser.profileVisitsCount || 0}</span>
+              </div>
+            </div>
+
+            {!isMe && (
+              <div className="grid grid-cols-3 gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    onClose();
+                    onSendGiftToUser(mergedUser);
+                  }}
+                  className="py-2.5 px-2 rounded-xl bg-white hover:bg-pink-50 border border-pink-200 text-pink-700 font-black text-xs flex items-center justify-center gap-1 active:scale-95 transition cursor-pointer"
+                >
+                  <Gift className="w-3.5 h-3.5" />
+                  <span>هدية</span>
+                </button>
+
                 <button
                   type="button"
                   onClick={handleGiveRating}
                   disabled={hasRated}
-                  className={`py-2 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 border transition-all cursor-pointer ${
+                  className={`py-2.5 px-2 rounded-xl font-black text-xs flex items-center justify-center gap-1 border active:scale-95 transition cursor-pointer ${
                     hasRated
-                      ? 'bg-amber-50 border-amber-300 text-amber-700'
-                      : 'bg-slate-100 hover:bg-slate-200 border-slate-200 text-amber-700'
+                      ? 'bg-amber-50 border-amber-200 text-amber-700'
+                      : 'bg-white hover:bg-amber-50 border-amber-200 text-amber-700'
                   }`}
                 >
                   <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-500" />
-                  <span>{hasRated ? 'تم التقييم (+10)' : 'تقييم العضو'}</span>
+                  <span>{hasRated ? 'تم (+10)' : 'تقييم'}</span>
                 </button>
 
                 <button
                   type="button"
                   onClick={() => setIsReportOpen(true)}
-                  className="py-2 px-3 rounded-xl bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 font-bold text-xs flex items-center justify-center gap-1.5 transition-all active:scale-95 cursor-pointer"
+                  className="py-2.5 px-2 rounded-xl bg-white hover:bg-rose-50 border border-rose-200 text-rose-700 font-black text-xs flex items-center justify-center gap-1 active:scale-95 transition cursor-pointer"
                 >
-                  <Flag className="w-3.5 h-3.5 text-rose-600" />
-                  <span>إبلاغ عن مخالفة</span>
+                  <Flag className="w-3.5 h-3.5" />
+                  <span>إبلاغ</span>
                 </button>
               </div>
-            </div>
-          )}
-
-        </div>
-
-        {/* Report User Modal Overlay */}
-        {isReportOpen && (
-          <div className="absolute inset-0 bg-white/95 backdrop-blur-md z-[210] p-4 flex flex-col justify-between text-right animate-in fade-in">
-            <div className="space-y-3">
-              <div className="flex items-center justify-between border-b border-slate-200 pb-2">
-                <div className="flex items-center gap-2 text-rose-600">
-                  <AlertTriangle className="w-5 h-5 text-rose-600" />
-                  <h4 className="font-black text-sm text-slate-900">إبلاغ عن مخالفة</h4>
-                </div>
-                <button 
-                  onClick={() => setIsReportOpen(false)}
-                  className="p-1 rounded-full bg-slate-100 text-slate-500 hover:text-slate-900"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-
-              {reportSentSuccess ? (
-                <div className="py-8 text-center space-y-2 animate-in zoom-in-95">
-                  <div className="w-12 h-12 rounded-full bg-emerald-50 border border-emerald-300 text-emerald-600 flex items-center justify-center mx-auto">
-                    <Check className="w-6 h-6" />
-                  </div>
-                  <h5 className="text-sm font-black text-slate-900">تم استلام بلاغك بنجاح!</h5>
-                  <p className="text-xs text-slate-600">
-                    تم إرسال إشعار فوري إلى لوحة تحكم الإدارة لاتخاذ الإجراء المناسب.
-                  </p>
-                </div>
-              ) : (
-                <form onSubmit={handleSubmitReport} className="space-y-3">
-                  <div className="text-xs text-slate-600">
-                    المستخدم المشتكى منه: <span className="font-bold text-amber-700">{user.name}</span>
-                  </div>
-
-                  <div>
-                    <label className="block text-[11px] font-bold text-slate-600 mb-1">
-                      سبب البلاغ:
-                    </label>
-                    <select
-                      value={reportReason}
-                      onChange={(e) => setReportReason(e.target.value)}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-2 text-xs text-slate-900 outline-none focus:border-rose-400"
-                    >
-                      <option value="ألفاظ مسيئة أو سب وقذف">ألفاظ مسيئة أو سب وقذف 🚫</option>
-                      <option value="إزعاج ومضايقات متكررة (Spam)">إزعاج ومضايقات متكررة (Spam) 📩</option>
-                      <option value="انتحال شخصية أو حساب وهمي">انتحال شخصية أو حساب وهمي 👤</option>
-                      <option value="محتوى غير لائق ومخالف للآداب">محتوى غير لائق ومخالف للآداب ⚠️</option>
-                      <option value="طلب بيانات شخصية أو احتيال">طلب بيانات شخصية أو احتيال 💳</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-[11px] font-bold text-slate-600 mb-1">
-                      تفاصيل إضافية (اختياري):
-                    </label>
-                    <textarea
-                      rows={2}
-                      value={reportNotes}
-                      onChange={(e) => setReportNotes(e.target.value)}
-                      placeholder="اذكر تفاصيل ما حدث باختصار..."
-                      className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2 text-xs text-slate-900 outline-none focus:border-rose-400 placeholder:text-slate-400 resize-none"
-                    />
-                  </div>
-
-                  <div className="flex items-center gap-2 pt-2">
-                    <button
-                      type="submit"
-                      disabled={isSubmittingReport}
-                      className="flex-1 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-black text-xs flex items-center justify-center gap-1.5 shadow-sm active:scale-95 transition-all disabled:opacity-50"
-                    >
-                      {isSubmittingReport ? (
-                        <>
-                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                          <span>جارٍ إرسال البلاغ...</span>
-                        </>
-                      ) : (
-                        <>
-                          <Flag className="w-3.5 h-3.5" />
-                          <span>إرسال البلاغ للإدارة فوراً 🛡️</span>
-                        </>
-                      )}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setIsReportOpen(false)}
-                      className="px-3 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold"
-                    >
-                      إلغاء
-                    </button>
-                  </div>
-                </form>
-              )}
-            </div>
+            )}
           </div>
-        )}
-
+        </div>
       </div>
+
+      {/* Report User Modal Overlay */}
+      {isReportOpen && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs z-[230] p-4 flex items-center justify-center animate-in fade-in">
+          <div className="w-full max-w-sm bg-white border border-slate-200 rounded-3xl p-4 shadow-2xl text-right space-y-3">
+            <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+              <div className="flex items-center gap-2 text-rose-600">
+                <AlertTriangle className="w-5 h-5 text-rose-600" />
+                <h4 className="font-black text-sm text-slate-900">إبلاغ عن مخالفة</h4>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsReportOpen(false)}
+                className="p-1 rounded-full bg-slate-100 text-slate-500 hover:text-slate-900 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {reportSentSuccess ? (
+              <div className="py-8 text-center space-y-2 animate-in zoom-in-95">
+                <div className="w-12 h-12 rounded-full bg-emerald-50 border border-emerald-300 text-emerald-600 flex items-center justify-center mx-auto">
+                  <Check className="w-6 h-6" />
+                </div>
+                <h5 className="text-sm font-black text-slate-900">تم استلام بلاغك بنجاح!</h5>
+                <p className="text-xs text-slate-600">
+                  تم إرسال إشعار فوري إلى لوحة تحكم الإدارة لاتخاذ الإجراء المناسب.
+                </p>
+              </div>
+            ) : (
+              <form onSubmit={handleSubmitReport} className="space-y-3">
+                <div className="text-xs text-slate-600">
+                  المستخدم: <span className="font-bold text-slate-900">{user.name}</span>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                    سبب البلاغ:
+                  </label>
+                  <select
+                    value={reportReason}
+                    onChange={(e) => setReportReason(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-2 text-xs text-slate-900 outline-none focus:border-rose-400"
+                  >
+                    <option value="ألفاظ مسيئة أو سب وقذف">ألفاظ مسيئة أو سب وقذف 🚫</option>
+                    <option value="إزعاج ومضايقات متكررة (Spam)">إزعاج ومضايقات متكررة (Spam) 📩</option>
+                    <option value="انتحال شخصية أو حساب وهمي">انتحال شخصية أو حساب وهمي 👤</option>
+                    <option value="محتوى غير لائق ومخالف للآداب">محتوى غير لائق ومخالف للآداب ⚠️</option>
+                    <option value="طلب بيانات شخصية أو احتيال">طلب بيانات شخصية أو احتيال 💳</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                    تفاصيل إضافية (اختياري):
+                  </label>
+                  <textarea
+                    rows={2}
+                    value={reportNotes}
+                    onChange={(e) => setReportNotes(e.target.value)}
+                    placeholder="اذكر تفاصيل ما حدث باختصار..."
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2 text-xs text-slate-900 outline-none focus:border-rose-400 placeholder:text-slate-400 resize-none"
+                  />
+                </div>
+
+                <div className="flex items-center gap-2 pt-2">
+                  <button
+                    type="submit"
+                    disabled={isSubmittingReport}
+                    className="flex-1 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-black text-xs flex items-center justify-center gap-1.5 shadow-sm active:scale-95 transition-all disabled:opacity-50 cursor-pointer"
+                  >
+                    {isSubmittingReport ? (
+                      <>
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        <span>جارٍ إرسال البلاغ...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Flag className="w-3.5 h-3.5" />
+                        <span>إرسال البلاغ للإدارة</span>
+                      </>
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsReportOpen(false)}
+                    className="px-3 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold cursor-pointer"
+                  >
+                    إلغاء
+                  </button>
+                </div>
+              </form>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 };

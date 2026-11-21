@@ -7,7 +7,6 @@ import {
   Mic, 
   ArrowRight, 
   ArrowUp,
-  Check, 
   CheckCheck, 
   Play, 
   Pause, 
@@ -32,8 +31,6 @@ import {
   Maximize2,
   MoreVertical,
   Flag,
-  Languages,
-  WifiOff,
   Reply
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
@@ -60,12 +57,12 @@ import { STICKERS_CATALOG, CURATED_EMOJIS } from '../data/stickers';
 import { toast } from '../utils/appToast';
 import { getWallpaperStyleById } from '../data/wallpapers';
 import { AvatarWithFrame } from './AvatarWithFrame';
+import { MessageStatusIcon } from './MessageStatusIcon';
 import { getRankDisplayMeta } from '../utils/userRanks';
 import { ANIMATED_INLINE_EMOJIS, InlineRichText } from './InlineRichText';
 import { VerifiedBadge } from '../utils/verifiedBadge';
 import { compressImageFileToBlob } from '../utils/imageCompression';
 import { offlineQueue } from '../services/offlineQueue';
-import { translateChatMessage } from '../utils/translateMessage';
 import { globalRadioPlayer } from '../services/radioPlayer';
 import { realtimeSocket } from '../services/realtimeSocket';
 import { formatLastSeenArabic, isUserTrulyOnline } from '../utils/presenceStatus';
@@ -153,7 +150,6 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
   const [isActionsMenuOpen, setIsActionsMenuOpen] = useState(false);
   const [isMessageSearchOpen, setIsMessageSearchOpen] = useState(false);
   const [messageSearchQuery, setMessageSearchQuery] = useState('');
-  const [translatedMap, setTranslatedMap] = useState<Record<string, { translated: string; targetLang: string; show: boolean }>>({});
   const [replyingTo, setReplyingTo] = useState<Message | null>(null);
   const [highlightedMsgId, setHighlightedMsgId] = useState<string | null>(null);
   const [swipeState, setSwipeState] = useState<{ msgId: string; offsetX: number } | null>(null);
@@ -164,6 +160,10 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
   const chatInputRef = useRef<HTMLTextAreaElement>(null);
   const emojiStickerPanelRef = useRef<HTMLDivElement>(null);
   const actionsMenuRef = useRef<HTMLDivElement>(null);
+  const messagesScrollRef = useRef<HTMLDivElement>(null);
+  const isNearBottomRef = useRef<boolean>(true);
+  const hasInitialScrolledRef = useRef<boolean>(false);
+  const prevLastDmIdRef = useRef<string | null>(null);
 
   const scrollToMessage = (msgId?: string) => {
     if (!msgId) return;
@@ -195,13 +195,16 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
   const recordingSecondsRef = useRef<number>(0);
   const activeAudioRef = useRef<HTMLAudioElement | null>(null);
 
-  // Close actions menu on outside click & reset search/reply when switching contact
+  // Close actions menu on outside click & reset search/reply/scroll tracking when switching contact
   useEffect(() => {
     setIsActionsMenuOpen(false);
     setIsMessageSearchOpen(false);
     setMessageSearchQuery('');
     setReplyingTo(null);
     setSwipeState(null);
+    isNearBottomRef.current = true;
+    hasInitialScrolledRef.current = false;
+    prevLastDmIdRef.current = null;
   }, [activeContact?.id]);
 
   useEffect(() => {
@@ -423,7 +426,9 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
         peerTypingSafetyTimerRef.current = setTimeout(() => {
           setIsPeerTyping(false);
         }, 6000);
-        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+        if (isNearBottomRef.current) {
+          messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+        }
       }
     };
 
@@ -532,9 +537,33 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
     await deleteDirectMessage(currentUser.id, activeContact.id, msgId);
   };
 
+  const handleMessagesScroll = () => {
+    const el = messagesScrollRef.current;
+    if (!el) return;
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    isNearBottomRef.current = distanceFromBottom <= 140;
+  };
+
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, activeContact, isPeerTyping]);
+    if (!activeContact || messages.length === 0) return;
+    const lastMsg = messages[messages.length - 1];
+    const lastId = lastMsg?.id || null;
+    const isOwnLastMsg = lastMsg?.senderId === currentUser.id;
+    if (!hasInitialScrolledRef.current) {
+      hasInitialScrolledRef.current = true;
+      prevLastDmIdRef.current = lastId;
+      requestAnimationFrame(() => {
+        messagesEndRef.current?.scrollIntoView({ behavior: 'auto' });
+      });
+      return;
+    }
+    if (lastId && lastId !== prevLastDmIdRef.current) {
+      prevLastDmIdRef.current = lastId;
+      if (isNearBottomRef.current || isOwnLastMsg) {
+        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+      }
+    }
+  }, [messages, activeContact?.id, currentUser.id]);
 
   // Close Emoji/Sticker drawer when clicking outside
   useEffect(() => {
@@ -595,6 +624,8 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
     const convId = [currentUser.id, activeContact.id].sort().join('_');
     setIsUploadingMedia(true);
     setUploadProgress(5);
+    const tempId = `dm_media_opt_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    let localPreviewUrl: string | null = null;
     try {
       let uploadFile: File = file;
       if (isImage) {
@@ -605,6 +636,30 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
         const cleanBase = file.name.replace(/\.[^.]+$/, '') || 'photo';
         uploadFile = new File([compressedBlob], `${cleanBase}.jpg`, { type: 'image/jpeg' });
       }
+      localPreviewUrl = URL.createObjectURL(uploadFile);
+      const optimisticType: 'image' | 'video' = isVideo ? 'video' : 'image';
+      const optimisticMsg: Message = {
+        id: tempId,
+        roomId: convId,
+        senderId: currentUser.id,
+        senderName: currentUser.name,
+        senderAvatar: currentUser.avatar,
+        senderRole: currentUser.role,
+        senderVipBadge: currentUser.vipBadge,
+        recipientId: activeContact.id,
+        type: optimisticType,
+        mediaUrl: localPreviewUrl,
+        mediaType: optimisticType,
+        imageUrl: optimisticType === 'image' ? localPreviewUrl : undefined,
+        content: optimisticType === 'video' ? '🎥 مقطع فيديو' : '🖼️ صورة مرفقة',
+        text: optimisticType === 'video' ? '🎥 مقطع فيديو' : '🖼️ صورة مرفقة',
+        createdAt: Date.now(),
+        timestamp: Date.now(),
+        status: 'sent'
+      };
+      isNearBottomRef.current = true;
+      setMessages(prev => [...prev, optimisticMsg]);
+
       const { url, mediaType } = await uploadPrivateChatMedia(uploadFile, convId, (pct) => {
         setUploadProgress(pct);
       });
@@ -629,11 +684,19 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
         status: 'sent'
       };
       const sent = await sendDirectMessage(currentUser.id, activeContact.id, newMsg);
-      setMessages(prev => (prev.some(m => m.id === sent.id) ? prev : [...prev, sent]));
+      setMessages(prev => {
+        const exists = prev.some(m => m.id === sent.id);
+        if (exists) return prev.filter(m => m.id !== tempId);
+        return prev.map(m => (m.id === tempId ? { ...sent, status: sent.status === 'read' ? 'read' : 'delivered' } : m));
+      });
       toast.success(mediaType === 'video' ? 'تم إرسال الفيديو بنجاح 🎬' : 'تم إرسال الصورة بنجاح 🖼️');
     } catch (err: any) {
+      setMessages(prev => prev.filter(m => m.id !== tempId));
       toast.error(err?.message || 'حدث خطأ أثناء رفع الوسائط.');
     } finally {
+      if (localPreviewUrl) {
+        try { URL.revokeObjectURL(localPreviewUrl); } catch {}
+      }
       setIsUploadingMedia(false);
       setUploadProgress(0);
     }
@@ -682,9 +745,10 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
       status: 'sent'
     };
 
+    const convId = [currentUser.id, activeContact.id].sort().join('_');
+
     if (typeof navigator !== 'undefined' && navigator.onLine === false) {
       const pendingId = `offline_dm_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-      const convId = [currentUser.id, activeContact.id].sort().join('_');
       const offlineMsg: Message = {
         ...(newMsg as Message),
         id: pendingId,
@@ -705,14 +769,33 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
       return;
     }
 
+    const tempId = `dm_opt_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    const optimisticMsg: Message = {
+      ...(newMsg as Message),
+      id: tempId,
+      roomId: convId,
+      status: 'sent',
+    };
+    isNearBottomRef.current = true;
+    setMessages(prev => [...prev, optimisticMsg]);
+
     try {
       const sent = await sendDirectMessage(currentUser.id, activeContact.id, newMsg);
       setMessages(prev => {
-        if (prev.some(m => m.id === sent.id)) return prev;
-        return [...prev, sent];
+        const alreadyPersisted = prev.some(m => m.id === sent.id);
+        if (alreadyPersisted) {
+          return prev.filter(m => m.id !== tempId);
+        }
+        return prev.map(m =>
+          m.id === tempId
+            ? { ...sent, status: sent.status === 'read' ? 'read' : 'delivered' }
+            : m
+        );
       });
     } catch (err) {
       console.warn("Direct message send fallback:", err);
+      toast.error('تعذر إرسال الرسالة، حاول مجدداً');
+      setMessages(prev => prev.filter(m => m.id !== tempId));
     }
   };
 
@@ -895,23 +978,23 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
   };
 
   return (
-    <div className={isDrawer ? "h-full w-full max-w-full flex flex-col bg-white overflow-x-hidden overflow-y-hidden" : "w-full sm:px-3 max-w-4xl mx-auto h-[calc(100dvh-54px-50px)] sm:h-[calc(100dvh-56px-52px)] flex flex-col overflow-x-hidden"}>
+    <div className={isDrawer ? "h-full w-full max-w-full flex flex-col bg-white overflow-x-hidden overflow-y-hidden overscroll-none" : "w-full sm:px-3 max-w-4xl mx-auto h-[calc(100dvh-54px-50px)] sm:h-[calc(100dvh-56px-52px)] flex flex-col overflow-x-hidden overscroll-none"}>
 
-      {/* If No Contact Selected: Show Inbox & Friends Navigation (Modern Light Theme) */}
+      {/* If No Contact Selected: Show Inbox & Friends Navigation (Calm Sky-Blue Theme) */}
       {!activeContact ? (
         <div className={isDrawer ? "flex-1 flex flex-col overflow-hidden" : "space-y-3 flex-1 flex flex-col overflow-hidden pt-2 px-2.5 sm:px-0"}>
           
           {/* Header */}
           {isDrawer ? (
-            <div className="p-3.5 pt-[calc(env(safe-area-inset-top,0px)+0.875rem)] bg-gradient-to-l from-indigo-600 via-violet-600 to-purple-700 text-white border-b border-indigo-500/40 flex items-center justify-between gap-2 shrink-0">
+            <div className="p-3.5 pt-[calc(env(safe-area-inset-top,0px)+0.875rem)] bg-[#EAF5FD]/95 text-slate-900 border-b border-sky-200/80 flex items-center justify-between gap-2 shrink-0">
               <div className="flex items-center gap-2 min-w-0">
-                <div className="w-8 h-8 rounded-xl bg-white/20 border border-white/30 text-white flex items-center justify-center shrink-0">
+                <div className="w-8 h-8 rounded-xl bg-sky-100 border border-sky-200 text-[#1E96E8] flex items-center justify-center shrink-0">
                   <MessageCircle className="w-4 h-4" />
                 </div>
                 <div className="min-w-0">
-                  <h2 className="text-sm font-black text-white truncate">الرسائل الخاصة والأصدقاء</h2>
-                  <p className="text-[10px] text-indigo-100 flex items-center gap-1 truncate">
-                    <Lock className="w-2.5 h-2.5 shrink-0" />
+                  <h2 className="text-sm font-black text-slate-900 truncate">الرسائل الخاصة والأصدقاء</h2>
+                  <p className="text-[10px] text-slate-600 flex items-center gap-1 truncate">
+                    <Lock className="w-2.5 h-2.5 text-[#1E96E8] shrink-0" />
                     <span>مشفرة وآمنة بين الطرفين</span>
                   </p>
                 </div>
@@ -920,7 +1003,7 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                 <button
                   type="button"
                   onClick={onCloseDrawer}
-                  className="p-1.5 rounded-full text-white/90 hover:text-white bg-white/15 hover:bg-white/25 transition shrink-0"
+                  className="p-1.5 rounded-full text-slate-600 hover:text-slate-900 bg-white/80 hover:bg-white transition shrink-0"
                   title="إغلاق القائمة الجانبية"
                 >
                   <X className="w-4 h-4" />
@@ -928,9 +1011,9 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
               )}
             </div>
           ) : (
-            <div className="flex items-center justify-between gap-2 flex-wrap shrink-0">
+            <div className="flex items-center justify-between gap-2 flex-wrap shrink-0 px-2.5 py-2 rounded-2xl bg-[#EAF5FD]/90 border border-sky-200/70">
               <h1 className="text-base sm:text-xl font-black text-slate-900 flex items-center gap-2 min-w-0 truncate">
-                <MessageCircle className="w-5 h-5 text-indigo-600 shrink-0" />
+                <MessageCircle className="w-5 h-5 text-[#1E96E8] shrink-0" />
                 <span className="truncate">الرسائل الخاصة والأصدقاء</span>
               </h1>
               <span className="text-[10.5px] sm:text-[11px] text-emerald-700 font-bold bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-full flex items-center gap-1 shrink-0 whitespace-nowrap">
@@ -964,9 +1047,9 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
 
           {/* Incoming Unread Messages Per-Sender Highlight Strip */}
           {unreadMessagesBySender.length > 0 && (
-            <div className="rounded-xl bg-indigo-50/90 border border-indigo-200 p-2 space-y-1.5 shrink-0">
+            <div className="rounded-xl bg-[#EAF5FD]/95 border border-sky-200 p-2 space-y-1.5 shrink-0">
               <div className="flex items-center justify-between gap-2 px-1">
-                <span className="text-[11px] font-black text-indigo-800 flex items-center gap-1">
+                <span className="text-[11px] font-black text-[#1565C0] flex items-center gap-1">
                   <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse"></span>
                   <span>رسائل واردة جديدة ({unreadMessagesBySender.reduce((s, item) => s + item.count, 0)})</span>
                 </span>
@@ -974,7 +1057,7 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                   <button
                     type="button"
                     onClick={onClearAllUnreadMessages}
-                    className="text-[10px] font-bold text-indigo-600 hover:text-indigo-800 flex items-center gap-0.5 cursor-pointer"
+                    className="text-[10px] font-bold text-[#1E96E8] hover:text-[#1565C0] flex items-center gap-0.5 cursor-pointer"
                   >
                     <CheckCheck className="w-3 h-3" />
                     <span>قراءة الكل</span>
@@ -1001,7 +1084,7 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                         unreadCount: 0
                       });
                     }}
-                    className="w-full px-2.5 py-1.5 rounded-lg bg-white hover:bg-indigo-100/70 border border-indigo-100 flex items-center justify-between gap-2 text-right transition cursor-pointer"
+                    className="w-full px-2.5 py-1.5 rounded-lg bg-white hover:bg-sky-50 border border-sky-100 flex items-center justify-between gap-2 text-right transition cursor-pointer"
                   >
                     <div className="flex items-center gap-2 min-w-0 flex-1">
                       <AvatarWithFrame
@@ -1029,7 +1112,7 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
               onClick={() => setActiveTab('chats')}
               className={`py-2 px-1.5 rounded-xl transition-all flex items-center justify-center gap-1 whitespace-nowrap ${
                 activeTab === 'chats'
-                  ? 'bg-indigo-600 text-white shadow-sm'
+                  ? 'bg-[#1E96E8] text-white shadow-sm'
                   : 'text-slate-600 hover:text-slate-900'
               }`}
             >
@@ -1042,7 +1125,7 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
               onClick={() => setActiveTab('friends')}
               className={`py-2 px-1.5 rounded-xl transition-all flex items-center justify-center gap-1 whitespace-nowrap ${
                 activeTab === 'friends'
-                  ? 'bg-indigo-600 text-white shadow-sm'
+                  ? 'bg-[#1E96E8] text-white shadow-sm'
                   : 'text-slate-600 hover:text-slate-900'
               }`}
             >
@@ -1055,7 +1138,7 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
               onClick={() => setActiveTab('online')}
               className={`py-2 px-1.5 rounded-xl transition-all flex items-center justify-center gap-1 whitespace-nowrap ${
                 activeTab === 'online'
-                  ? 'bg-indigo-600 text-white shadow-sm'
+                  ? 'bg-[#1E96E8] text-white shadow-sm'
                   : 'text-slate-600 hover:text-slate-900'
               }`}
             >
@@ -1067,20 +1150,20 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
 
           {/* Tab 1: Recent Active Direct Chats */}
           {activeTab === 'chats' && (
-            <div className="space-y-2 flex-1 overflow-y-auto pb-4">
+            <div className="space-y-2 flex-1 overflow-y-auto overscroll-contain pb-4">
               {recentChats.length === 0 ? (
                 <div className="p-8 text-center rounded-3xl bg-white border border-slate-200/90 space-y-3 mt-4 shadow-sm">
-                  <div className="w-14 h-14 rounded-full bg-indigo-50 border border-indigo-200 text-indigo-600 flex items-center justify-center mx-auto text-2xl shadow-inner">
+                  <div className="w-14 h-14 rounded-full bg-sky-50 border border-sky-200 text-[#1E96E8] flex items-center justify-center mx-auto text-2xl shadow-inner">
                     💬
                   </div>
                   <h4 className="text-sm font-black text-slate-900">لا توجد محادثات نشطة حالياً</h4>
                   <p className="text-xs text-slate-600 max-w-sm mx-auto leading-relaxed">
-                    ابدأ بالتحدث مع أصدقائك أو اختر أي عضو من تبويب <span className="text-indigo-600 font-bold">"الأصدقاء"</span> أو <span className="text-emerald-600 font-bold">"المتصلون الآن"</span> لبدء محادثة خاصة مشفرة!
+                    ابدأ بالتحدث مع أصدقائك أو اختر أي عضو من تبويب <span className="text-[#1E96E8] font-bold">"الأصدقاء"</span> أو <span className="text-emerald-600 font-bold">"المتصلون الآن"</span> لبدء محادثة خاصة مشفرة!
                   </p>
                   <div className="pt-2 flex justify-center gap-2">
                     <button
                       onClick={() => setActiveTab('online')}
-                      className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold flex items-center gap-1.5 shadow-sm"
+                      className="px-4 py-2 rounded-xl bg-[#1E96E8] hover:bg-[#1982CC] text-white text-xs font-bold flex items-center gap-1.5 shadow-sm"
                     >
                       <Radio className="w-3.5 h-3.5" />
                       <span>تصفح المتصلين الآن</span>
@@ -1123,8 +1206,8 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                       }}
                       className={`p-3 rounded-2xl border cursor-pointer flex items-center justify-between transition-all hover:shadow-md shadow-xs ${
                         unreadCount > 0
-                          ? 'bg-indigo-50/40 border-indigo-300 hover:border-indigo-400'
-                          : 'bg-white border-slate-200/90 hover:border-indigo-400'
+                          ? 'bg-[#EAF5FD]/80 border-sky-300 hover:border-[#1E96E8]'
+                          : 'bg-white border-slate-200/90 hover:border-sky-300'
                       }`}
                     >
                       <div className="flex items-center gap-3 min-w-0">
@@ -1149,17 +1232,17 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                               <span className="truncate">{chat.peerName || 'عضو شات مصر'}</span>
                               <VerifiedBadge verified={globalOnlineUsers.find(u => u.id === chat.peerId)?.verified} size="xs" />
                             </h4>
-                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-50 border border-indigo-200 text-indigo-700 font-bold shrink-0">
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-sky-50 border border-sky-200 text-[#1565C0] font-bold shrink-0">
                               محادثة مباشرة
                             </span>
                           </div>
                           {typingPeersMap[chat.peerId] ? (
-                            <p className="text-xs truncate max-w-[190px] sm:max-w-xs mt-0.5 text-amber-600 font-bold flex items-center gap-1.5">
+                            <p className="text-xs truncate max-w-[190px] sm:max-w-xs mt-0.5 text-[#1E96E8] font-bold flex items-center gap-1.5">
                               <span>جاري الكتابة...</span>
                               <span className="inline-flex items-center gap-0.5 shrink-0">
-                                <span className="w-1 h-1 rounded-full bg-amber-500 animate-bounce" style={{ animationDelay: '0ms' }}></span>
-                                <span className="w-1 h-1 rounded-full bg-amber-500 animate-bounce" style={{ animationDelay: '150ms' }}></span>
-                                <span className="w-1 h-1 rounded-full bg-amber-500 animate-bounce" style={{ animationDelay: '300ms' }}></span>
+                                <span className="w-1 h-1 rounded-full bg-[#1E96E8] animate-bounce" style={{ animationDelay: '0ms' }}></span>
+                                <span className="w-1 h-1 rounded-full bg-[#1E96E8] animate-bounce" style={{ animationDelay: '150ms' }}></span>
+                                <span className="w-1 h-1 rounded-full bg-[#1E96E8] animate-bounce" style={{ animationDelay: '300ms' }}></span>
                               </span>
                             </p>
                           ) : (
@@ -1180,7 +1263,7 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                               {unreadCount}
                             </span>
                           )}
-                          <span className="text-[10px] text-indigo-600 font-bold">فتح الدردشة ←</span>
+                          <span className="text-[10px] text-[#1E96E8] font-bold">فتح الدردشة ←</span>
                         </div>
                       </div>
                     </div>
@@ -1192,7 +1275,7 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
 
           {/* Tab 2: Friends List (Connected to Firestore /users/{uid}/friends with onSnapshot) */}
           {activeTab === 'friends' && (
-            <div className="flex-1 overflow-y-auto pb-4">
+            <div className="flex-1 overflow-y-auto overscroll-contain pb-4">
               <FriendsList
                 currentUser={currentUser}
                 onStartPrivateChat={handleSelectFriendForChat}
@@ -1202,7 +1285,7 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
 
           {/* Tab 3: Online Users Available to Message */}
           {activeTab === 'online' && (
-            <div className="space-y-2 flex-1 overflow-y-auto pb-4">
+            <div className="space-y-2 flex-1 overflow-y-auto overscroll-contain pb-4">
               {globalOnlineUsers.filter(u => u.id !== currentUser.id && isUserTrulyOnline(u)).length === 0 ? (
                 <div className="p-8 text-center rounded-2xl bg-white border border-slate-200 space-y-2 shadow-xs">
                   <p className="text-xs text-slate-600">لا يوجد متصلون آخرون في هذه اللحظة.</p>
@@ -1214,14 +1297,14 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                     <div
                       key={user.id}
                       onClick={() => handleSelectOnlineUserForChat(user)}
-                      className="p-3 rounded-2xl bg-white border border-slate-200/90 hover:border-indigo-400 flex items-center justify-between cursor-pointer transition-all hover:shadow-md shadow-xs"
+                      className="p-3 rounded-2xl bg-white border border-slate-200/90 hover:border-sky-300 flex items-center justify-between cursor-pointer transition-all hover:shadow-md shadow-xs"
                     >
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
                           handleSelectOnlineUserForChat(user);
                         }}
-                        className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold flex items-center gap-1.5 shadow-sm"
+                        className="px-3 py-1.5 rounded-xl bg-[#1E96E8] hover:bg-[#1982CC] text-white text-xs font-bold flex items-center gap-1.5 shadow-sm"
                       >
                         <MessageCircle className="w-3.5 h-3.5" />
                         <span>محادثة</span>
@@ -1278,8 +1361,8 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
         <div 
           style={getWallpaperStyleById(currentUser.chatWallpaper || 'wp_white_gold_doodle')}
           className={isDrawer
-            ? "h-full w-full max-w-full flex flex-col bg-[#fafaf9] overflow-x-hidden overflow-y-hidden"
-            : "fixed inset-0 z-[60] w-screen max-w-full h-[100dvh] sm:relative sm:inset-auto sm:z-auto sm:w-full sm:h-full flex flex-col bg-[#fafaf9] border-0 sm:border border-slate-200/80 rounded-none sm:rounded-3xl overflow-x-hidden overflow-y-hidden shadow-2xl"
+            ? "h-full w-full max-w-full flex flex-col bg-[#F3F9FE] overflow-x-hidden overflow-y-hidden overscroll-none"
+            : "fixed inset-0 z-[60] w-screen max-w-full h-[100dvh] sm:relative sm:inset-auto sm:z-auto sm:w-full sm:h-full flex flex-col bg-[#F3F9FE] border-0 sm:border border-sky-200/80 rounded-none sm:rounded-3xl overflow-x-hidden overflow-y-hidden overscroll-none shadow-2xl"
           }
         >
           {/* Hidden Media File Input (Images & Videos) */}
@@ -1291,7 +1374,7 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
             className="hidden"
           />
 
-          {/* 1. Simplified 3-Zone Header: Back+User | Audio Call | Actions Dropdown */}
+          {/* 1. Simplified 3-Zone Header: Back+User | Audio & Video Call | Actions Dropdown */}
           {(() => {
             const liveOnlinePeer = globalOnlineUsers.find(u => u.id === activeContact.id);
             const registeredPeer = allRegisteredUsers.find(u => u.id === activeContact.id);
@@ -1328,7 +1411,7 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                 };
 
             return (
-              <div className="relative z-20 w-full px-2.5 sm:px-3.5 py-2 pt-[calc(env(safe-area-inset-top,0px)+0.5rem)] sm:py-2.5 bg-white/95 backdrop-blur-md border-b border-amber-200/70 shadow-xs flex items-center justify-between gap-2 shrink-0">
+              <div className="relative z-20 w-full px-2.5 sm:px-3.5 py-2 pt-[calc(env(safe-area-inset-top,0px)+0.5rem)] sm:py-2.5 bg-[#EAF5FD]/95 backdrop-blur-md border-b border-sky-200/80 shadow-xs flex items-center justify-between gap-2 shrink-0">
                 {/* Zone 1: Back + Peer Avatar & Status */}
                 <div className="flex items-center gap-2 min-w-0 flex-1">
                   <button
@@ -1337,7 +1420,7 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                       setActiveContact(null);
                       if (onClearTargetUser) onClearTargetUser();
                     }}
-                    className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 flex items-center justify-center shrink-0 active:scale-95 border border-slate-200/80 transition cursor-pointer"
+                    className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-white/80 hover:bg-white text-slate-700 flex items-center justify-center shrink-0 active:scale-95 border border-sky-200/80 transition cursor-pointer"
                     title="الرجوع إلى القائمة"
                   >
                     <ArrowRight className="w-4 h-4" />
@@ -1356,18 +1439,18 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                     />
 
                     <div className="min-w-0 flex-1 text-right">
-                      <h3 className="text-xs sm:text-sm font-black text-slate-900 flex items-center gap-1 min-w-0 group-hover:text-indigo-700 transition-colors">
+                      <h3 className="text-xs sm:text-sm font-black text-slate-900 flex items-center gap-1 min-w-0 group-hover:text-[#1E96E8] transition-colors">
                         <span className="truncate">{activeContact.name}</span>
                         <VerifiedBadge verified={resolvedPeerUser.verified} size="xs" />
                         <span className="shrink-0">{activeContact.countryFlag}</span>
                       </h3>
                       {isPeerTyping ? (
-                        <span className="text-[10px] sm:text-[11px] text-amber-600 font-bold flex items-center gap-1.5 truncate">
+                        <span className="text-[10px] sm:text-[11px] text-[#1E96E8] font-bold flex items-center gap-1.5 truncate">
                           <span>جاري الكتابة...</span>
                           <span className="flex items-center gap-0.5 shrink-0">
-                            <span className="w-1 h-1 rounded-full bg-amber-500 animate-bounce" style={{ animationDelay: '0ms' }}></span>
-                            <span className="w-1 h-1 rounded-full bg-amber-500 animate-bounce" style={{ animationDelay: '150ms' }}></span>
-                            <span className="w-1 h-1 rounded-full bg-amber-500 animate-bounce" style={{ animationDelay: '300ms' }}></span>
+                            <span className="w-1 h-1 rounded-full bg-[#1E96E8] animate-bounce" style={{ animationDelay: '0ms' }}></span>
+                            <span className="w-1 h-1 rounded-full bg-[#1E96E8] animate-bounce" style={{ animationDelay: '150ms' }}></span>
+                            <span className="w-1 h-1 rounded-full bg-[#1E96E8] animate-bounce" style={{ animationDelay: '300ms' }}></span>
                           </span>
                         </span>
                       ) : isPeerTrulyOnline ? (
@@ -1376,7 +1459,7 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                           <span className="truncate">متصل الآن • خاص مشفر</span>
                         </span>
                       ) : (
-                        <span className="text-[9.5px] sm:text-[10px] text-slate-500 font-medium block truncate">
+                        <span className="text-[9.5px] sm:text-[10px] text-slate-600 font-medium block truncate">
                           {formatLastSeenArabic(effectiveLastSeen)} • خاص مشفر
                         </span>
                       )}
@@ -1384,22 +1467,31 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                   </button>
                 </div>
 
-                {/* Zone 2 & 3: Audio Call + Actions Menu Dropdown */}
+                {/* Zone 2 & 3: Audio Call + Direct Video Call + Actions Menu Dropdown */}
                 <div className="flex items-center gap-1.5 shrink-0" ref={actionsMenuRef}>
                   <button 
                     type="button"
                     onClick={() => handleRequestCall('audio')}
-                    className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 flex items-center justify-center transition active:scale-95 shrink-0 cursor-pointer"
+                    className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-white/85 hover:bg-white text-[#1E96E8] border border-sky-200/80 flex items-center justify-center transition active:scale-95 shrink-0 cursor-pointer"
                     title="بدء مكالمة صوتية"
                   >
                     <Phone className="w-4 h-4" />
+                  </button>
+
+                  <button 
+                    type="button"
+                    onClick={() => handleRequestCall('video')}
+                    className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-[#1E96E8] hover:bg-[#1982CC] text-white border border-[#1E96E8] flex items-center justify-center transition active:scale-95 shrink-0 cursor-pointer shadow-xs"
+                    title="بدء مكالمة فيديو"
+                  >
+                    <Video className="w-4 h-4" />
                   </button>
 
                   <div className="relative">
                     <button
                       type="button"
                       onClick={() => setIsActionsMenuOpen(prev => !prev)}
-                      className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 flex items-center justify-center active:scale-95 transition cursor-pointer"
+                      className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-white/85 hover:bg-white text-slate-700 border border-sky-200/80 flex items-center justify-center active:scale-95 transition cursor-pointer"
                       title="المزيد من الخيارات"
                     >
                       <MoreVertical className="w-4 h-4" />
@@ -1414,17 +1506,6 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                           transition={{ type: 'spring', stiffness: 420, damping: 28 }}
                           className="origin-top-left absolute left-0 top-full mt-1.5 w-52 bg-white border border-slate-200 rounded-2xl shadow-2xl py-1.5 z-[100] text-right"
                         >
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setIsActionsMenuOpen(false);
-                            handleRequestCall('video');
-                          }}
-                          className="w-full px-3 py-2 text-xs font-bold text-slate-800 hover:bg-sky-50 flex items-center gap-2.5 transition cursor-pointer"
-                        >
-                          <Video className="w-4 h-4 text-sky-600 shrink-0" />
-                          <span>مكالمة فيديو 📹</span>
-                        </button>
                         <button
                           type="button"
                           onClick={() => {
@@ -1453,9 +1534,9 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                             setIsActionsMenuOpen(false);
                             setIsWallpapersModalOpen(true);
                           }}
-                          className="w-full px-3 py-2 text-xs font-bold text-slate-800 hover:bg-emerald-50 flex items-center gap-2.5 transition cursor-pointer"
+                          className="w-full px-3 py-2 text-xs font-bold text-slate-800 hover:bg-sky-50 flex items-center gap-2.5 transition cursor-pointer"
                         >
-                          <Palette className="w-4 h-4 text-emerald-600 shrink-0" />
+                          <Palette className="w-4 h-4 text-[#1E96E8] shrink-0" />
                           <span>تخصيص الخلفية 🎨</span>
                         </button>
                         <button
@@ -1465,9 +1546,9 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                             setIsMessageSearchOpen(prev => !prev);
                             setMessageSearchQuery('');
                           }}
-                          className="w-full px-3 py-2 text-xs font-bold text-slate-800 hover:bg-indigo-50 flex items-center gap-2.5 transition cursor-pointer"
+                          className="w-full px-3 py-2 text-xs font-bold text-slate-800 hover:bg-sky-50 flex items-center gap-2.5 transition cursor-pointer"
                         >
-                          <Search className="w-4 h-4 text-indigo-600 shrink-0" />
+                          <Search className="w-4 h-4 text-[#1E96E8] shrink-0" />
                           <span>بحث في الرسائل 🔍</span>
                         </button>
                         <button
@@ -1512,17 +1593,6 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                       )}
                     </AnimatePresence>
                   </div>
-
-                  {isDrawer && onCloseDrawer && (
-                    <button
-                      type="button"
-                      onClick={onCloseDrawer}
-                      className="w-8 h-8 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 hover:text-slate-900 border border-slate-200/80 flex items-center justify-center transition active:scale-95 shrink-0 cursor-pointer"
-                      title="إغلاق القائمة الجانبية"
-                    >
-                      <X className="w-4 h-4" />
-                    </button>
-                  )}
                 </div>
               </div>
             );
@@ -1530,15 +1600,15 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
 
           {/* Toggleable Message Search Strip */}
           {isMessageSearchOpen && (
-            <div className="px-3 py-2 bg-white/95 border-b border-slate-200 flex items-center gap-2 shrink-0 animate-in slide-in-from-top-1">
-              <Search className="w-4 h-4 text-indigo-500 shrink-0" />
+            <div className="px-3 py-2 bg-[#EAF5FD]/95 border-b border-sky-200 flex items-center gap-2 shrink-0 animate-in slide-in-from-top-1">
+              <Search className="w-4 h-4 text-[#1E96E8] shrink-0" />
               <input
                 type="text"
                 value={messageSearchQuery}
                 onChange={(e) => setMessageSearchQuery(e.target.value)}
                 placeholder="ابحث داخل هذه المحادثة..."
                 autoFocus
-                className="flex-1 bg-slate-100 border border-slate-200 rounded-xl px-3 py-1.5 text-xs text-slate-900 focus:outline-none focus:border-indigo-400"
+                className="flex-1 bg-white border border-sky-200 rounded-xl px-3 py-1.5 text-xs text-slate-900 focus:outline-none focus:border-[#1E96E8]"
               />
               <button
                 type="button"
@@ -1546,7 +1616,7 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                   setIsMessageSearchOpen(false);
                   setMessageSearchQuery('');
                 }}
-                className="p-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 cursor-pointer"
+                className="p-1.5 rounded-xl bg-white hover:bg-slate-100 text-slate-600 cursor-pointer"
               >
                 <X className="w-3.5 h-3.5" />
               </button>
@@ -1554,7 +1624,11 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
           )}
 
           {/* Messages Feed */}
-          <div className="flex-1 overflow-y-auto p-3 space-y-2.5">
+          <div
+            ref={messagesScrollRef}
+            onScroll={handleMessagesScroll}
+            className="flex-1 overflow-y-auto overflow-x-hidden overscroll-contain p-3 space-y-2.5"
+          >
             {(() => {
               const filteredMessages = messageSearchQuery.trim()
                 ? messages.filter(m =>
@@ -1750,10 +1824,10 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                     }}
                     className={`max-w-[85%] sm:max-w-[75%] rounded-2xl px-3.5 py-2.5 text-xs sm:text-sm space-y-1 cursor-pointer select-text transition-transform active:scale-[0.99] ${
                     msg.type === 'sticker'
-                      ? 'bg-white/90 backdrop-blur-md text-slate-900 border border-indigo-200/80 shadow-xs'
+                      ? 'bg-white/95 backdrop-blur-md text-slate-900 border border-sky-200/80 shadow-xs'
                       : isMe
-                      ? 'bg-gradient-to-l from-indigo-600 via-blue-600 to-purple-600 text-white border border-indigo-500/40 rounded-tr-none shadow-sm'
-                      : 'bg-white/88 backdrop-blur-md text-slate-900 border border-slate-200/85 rounded-tl-none shadow-sm'
+                      ? 'bg-gradient-to-l from-[#1E96E8] to-[#2196F3] text-white border border-sky-400/30 rounded-tr-none shadow-sm'
+                      : 'bg-white/95 dark:bg-slate-800/95 backdrop-blur-md text-slate-900 dark:text-slate-100 border border-sky-100 dark:border-slate-700 rounded-tl-none shadow-xs'
                   }`}
                     title="اسحب يميناً للرد السريع أو اضغط مطولاً للخيارات"
                   >
@@ -1765,12 +1839,12 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                         }}
                         className={`px-2.5 py-1.5 rounded-xl border-r-2 text-[11px] cursor-pointer mb-1 ${
                           isMe
-                            ? 'bg-white/15 border-amber-300 text-white/95 hover:bg-white/25'
-                            : 'bg-indigo-50/90 border-indigo-500 text-slate-700 hover:bg-indigo-100'
+                            ? 'bg-white/15 border-white/80 text-white/95 hover:bg-white/25'
+                            : 'bg-[#EAF5FD]/90 border-[#1E96E8] text-slate-700 hover:bg-sky-100/70'
                         }`}
                         title="اضغط للانتقال إلى الرسالة الأصلية"
                       >
-                        <div className={`font-black text-[10px] ${isMe ? 'text-amber-200' : 'text-indigo-700'}`}>
+                        <div className={`font-black text-[10px] ${isMe ? 'text-sky-100' : 'text-[#1565C0]'}`}>
                           رد على {msg.replyTo.senderName}
                         </div>
                         <div className="truncate opacity-90">{msg.replyTo.content || msg.replyTo.text}</div>
@@ -1853,7 +1927,7 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                               }
                             }
                           }}
-                          className={`p-1.5 rounded-full ${isMe ? 'bg-white text-indigo-700' : 'bg-indigo-600 text-white'}`}
+                          className={`p-1.5 rounded-full ${isMe ? 'bg-white text-[#1E96E8]' : 'bg-[#1E96E8] text-white'}`}
                         >
                           {playingVoiceId === msg.id ? <Pause className="w-3 h-3" /> : <Play className="w-3 h-3" />}
                         </button>
@@ -1862,72 +1936,21 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                         </span>
                       </div>
                     ) : (
-                      <div className="space-y-1">
-                        <p className={`leading-relaxed whitespace-pre-wrap font-medium ${isMe ? 'text-white' : 'text-slate-900'}`}>
-                          <InlineRichText text={msg.content || msg.text || ''} />
-                        </p>
-                        {translatedMap[msg.id]?.show && (
-                          <div className={`text-[11px] rounded-xl px-2.5 py-1.5 border ${
-                            isMe
-                              ? 'bg-white/15 border-white/25 text-white'
-                              : 'bg-indigo-50 border-indigo-200 text-indigo-900'
-                          }`}>
-                            <span className="font-black text-[9.5px] opacity-80 block">
-                              الترجمة ({translatedMap[msg.id].targetLang}):
-                            </span>
-                            <span>{translatedMap[msg.id].translated}</span>
-                          </div>
-                        )}
-                      </div>
+                      <p className={`leading-relaxed whitespace-pre-wrap font-medium ${isMe ? 'text-white' : 'text-slate-900 dark:text-slate-100'}`}>
+                        <InlineRichText text={msg.content || msg.text || ''} />
+                      </p>
                     )}
 
-                    <div className={`flex items-center justify-between gap-2 text-[10px] ${
-                      isMe && msg.type !== 'sticker' ? 'text-white/80' : 'text-slate-500'
+                    <div className={`flex items-center justify-end gap-1 text-[10px] ${
+                      isMe && msg.type !== 'sticker' ? 'text-white/85' : 'text-slate-500'
                     }`}>
-                      {(!msg.type || msg.type === 'private' || msg.type === 'text') && (msg.content || msg.text) ? (
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setTranslatedMap((prev) => {
-                              const current = prev[msg.id];
-                              if (current) {
-                                return { ...prev, [msg.id]: { ...current, show: !current.show } };
-                              }
-                              const res = translateChatMessage(msg.content || msg.text || '');
-                              return { ...prev, [msg.id]: { ...res, show: true } };
-                            });
-                          }}
-                          className={`inline-flex items-center gap-0.5 font-bold hover:underline cursor-pointer ${
-                            isMe ? 'text-white/90' : 'text-indigo-600'
-                          }`}
-                          title="ترجمة فورية"
-                        >
-                          <Languages className="w-2.5 h-2.5" />
-                          <span>{translatedMap[msg.id]?.show ? 'إخفاء الترجمة' : 'ترجمة 🌐'}</span>
-                        </button>
-                      ) : <span />}
-
-                      <div className="flex items-center gap-1">
-                        <span>{new Date(msg.timestamp).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })}</span>
-                        {isMe && (
-                          <span className="inline-flex items-center gap-0.5">
-                            {msg.status === 'pending_offline' ? (
-                              <span className="inline-flex items-center gap-0.5 text-amber-200 text-[9px] font-bold">
-                                <WifiOff className="w-3 h-3" />
-                                <span>⏳ جاري الإرسال...</span>
-                              </span>
-                            ) : msg.status === 'read' ? (
-                              <>
-                                <CheckCheck className={`w-3.5 h-3.5 ${msg.type === 'sticker' ? 'text-indigo-600' : 'text-sky-200'}`} />
-                                <span className={`text-[9px] font-bold ${msg.type === 'sticker' ? 'text-indigo-700' : 'text-sky-100'}`}>تم القراءة</span>
-                              </>
-                            ) : (
-                              <Check className={`w-3.5 h-3.5 ${msg.type === 'sticker' ? 'text-slate-400' : 'text-white/75'}`} />
-                            )}
-                          </span>
-                        )}
-                      </div>
+                      <span>{new Date(msg.timestamp).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })}</span>
+                      {isMe && (
+                        <MessageStatusIcon
+                          status={msg.status}
+                          variant={msg.type === 'sticker' ? 'dm-sticker' : 'dm-sent'}
+                        />
+                      )}
                     </div>
                   </div>
                 </motion.div>
@@ -1946,19 +1969,19 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                   transition={{ duration: 0.18, ease: 'easeOut' }}
                   className="flex items-center gap-2 justify-end my-1.5"
                 >
-                  <div className="bg-white/95 backdrop-blur-md border border-amber-300/80 rounded-2xl rounded-tl-none px-3.5 py-2 flex items-center gap-2 shadow-md">
+                  <div className="bg-white/95 backdrop-blur-md border border-sky-200 rounded-2xl rounded-tl-none px-3.5 py-2 flex items-center gap-2 shadow-sm">
                     <div className="flex items-center gap-1">
-                      <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-bounce" style={{ animationDelay: '0ms' }}></span>
-                      <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-bounce" style={{ animationDelay: '150ms' }}></span>
-                      <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-bounce" style={{ animationDelay: '300ms' }}></span>
+                      <span className="w-1.5 h-1.5 rounded-full bg-[#1E96E8] animate-bounce" style={{ animationDelay: '0ms' }}></span>
+                      <span className="w-1.5 h-1.5 rounded-full bg-[#1E96E8] animate-bounce" style={{ animationDelay: '150ms' }}></span>
+                      <span className="w-1.5 h-1.5 rounded-full bg-[#1E96E8] animate-bounce" style={{ animationDelay: '300ms' }}></span>
                     </div>
                     <span className="text-xs font-bold text-slate-800">
                       {activeContact.name}: جاري الكتابة...
                     </span>
                   </div>
-                  <div className="relative w-7 h-7 rounded-full overflow-hidden border border-amber-400 shrink-0 shadow-xs">
+                  <div className="relative w-7 h-7 rounded-full overflow-hidden border border-[#1E96E8]/50 shrink-0 shadow-xs">
                     <img src={activeContact.avatar} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                    <span className="absolute bottom-0 right-0 w-2 h-2 rounded-full bg-amber-400 animate-ping"></span>
+                    <span className="absolute bottom-0 right-0 w-2 h-2 rounded-full bg-[#1E96E8] animate-ping"></span>
                   </div>
                 </motion.div>
               )}
@@ -1968,22 +1991,22 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
 
           {/* Media Upload Progress Strip */}
           {isUploadingMedia && (
-            <div className="w-full px-3 py-1.5 bg-indigo-50 border-t border-indigo-200 flex items-center gap-2 text-xs text-indigo-800 font-bold shrink-0">
-              <Loader2 className="w-3.5 h-3.5 animate-spin text-indigo-600 shrink-0" />
+            <div className="w-full px-3 py-1.5 bg-[#EAF5FD] border-t border-sky-200 flex items-center gap-2 text-xs text-[#1565C0] font-bold shrink-0">
+              <Loader2 className="w-3.5 h-3.5 animate-spin text-[#1E96E8] shrink-0" />
               <span className="shrink-0">جاري رفع الوسائط... {uploadProgress}%</span>
-              <div className="flex-1 h-1.5 bg-indigo-100 rounded-full overflow-hidden">
-                <div className="h-full bg-indigo-600 transition-all" style={{ width: `${Math.max(8, uploadProgress)}%` }} />
+              <div className="flex-1 h-1.5 bg-sky-100 rounded-full overflow-hidden">
+                <div className="h-full bg-[#1E96E8] transition-all" style={{ width: `${Math.max(8, uploadProgress)}%` }} />
               </div>
             </div>
           )}
 
           {/* Reply Preview Bar above Composer */}
           {replyingTo && (
-            <div className="w-full px-3 py-1.5 bg-indigo-50/95 border-t border-indigo-200 flex items-center justify-between gap-2 shrink-0 animate-in slide-in-from-bottom-2">
-              <div className="flex items-center gap-2 min-w-0 flex-1 border-r-2 border-indigo-600 pr-2">
-                <Reply className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+            <div className="w-full px-3 py-1.5 bg-[#EAF5FD]/95 border-t border-sky-200 flex items-center justify-between gap-2 shrink-0 animate-in slide-in-from-bottom-2">
+              <div className="flex items-center gap-2 min-w-0 flex-1 border-r-2 border-[#1E96E8] pr-2">
+                <Reply className="w-3.5 h-3.5 text-[#1E96E8] shrink-0" />
                 <div className="min-w-0 flex-1 text-right">
-                  <div className="text-[10.5px] font-black text-indigo-800 truncate">
+                  <div className="text-[10.5px] font-black text-[#1565C0] truncate">
                     الرد على {replyingTo.senderName}
                   </div>
                   <div className="text-[11px] text-slate-600 truncate">
@@ -1994,7 +2017,7 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
               <button
                 type="button"
                 onClick={() => setReplyingTo(null)}
-                className="p-1 rounded-full text-slate-500 hover:text-slate-900 hover:bg-indigo-100 shrink-0 cursor-pointer"
+                className="p-1 rounded-full text-slate-500 hover:text-slate-900 hover:bg-sky-100 shrink-0 cursor-pointer"
                 title="إلغاء الرد"
               >
                 <X className="w-3.5 h-3.5" />
@@ -2137,7 +2160,7 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                     mediaFileInputRef.current?.click();
                   }}
                   disabled={isUploadingMedia}
-                  className="p-2 rounded-2xl bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-600 min-h-[42px] min-w-[40px] flex items-center justify-center active:scale-95 transition-all shadow-xs shrink-0 disabled:opacity-50 cursor-pointer"
+                  className="p-2 rounded-2xl bg-sky-50 hover:bg-sky-100 border border-sky-200 text-[#1E96E8] min-h-[42px] min-w-[40px] flex items-center justify-center active:scale-95 transition-all shadow-xs shrink-0 disabled:opacity-50 cursor-pointer"
                   title="إرسال صورة أو فيديو"
                 >
                   {isUploadingMedia ? (
@@ -2153,22 +2176,12 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                   onClick={() => setIsEmojiStickerOpen(prev => !prev)}
                   className={`p-2 rounded-2xl border min-h-[42px] min-w-[40px] flex items-center justify-center active:scale-95 transition-all shadow-xs shrink-0 ${
                     isEmojiStickerOpen
-                      ? 'bg-amber-100 border-amber-400 text-amber-700'
-                      : 'bg-amber-50 hover:bg-amber-100 border-amber-200 text-amber-600'
+                      ? 'bg-sky-100 border-[#1E96E8] text-[#1565C0]'
+                      : 'bg-slate-50 hover:bg-sky-50 border-slate-200 text-slate-600 hover:text-[#1E96E8]'
                   }`}
                   title="الرموز التعبيرية والملصقات"
                 >
                   <Smile className="w-4 h-4 sm:w-5 sm:h-5" />
-                </button>
-
-                {/* Quick Voice Note Button */}
-                <button
-                  type="button"
-                  onClick={startVoiceRecording}
-                  className="p-2 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-700 hover:text-indigo-600 border border-slate-200 min-h-[42px] min-w-[40px] flex items-center justify-center active:scale-95 transition-all shadow-xs shrink-0"
-                  title="بدء تسجيل صوتي"
-                >
-                  <Mic className="w-4 h-4 sm:w-5 sm:h-5" />
                 </button>
 
                 {/* Message Composer (No <form>/<input> so Android Chrome hides the black autofill bar) */}
@@ -2199,20 +2212,30 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                       }
                     }}
                     placeholder="اكتب رسالة خاصة هنا..."
-                    className="w-full min-w-0 bg-slate-100/90 hover:bg-slate-100 focus:bg-white text-slate-900 placeholder:text-slate-400 border border-slate-200 focus:border-amber-400 rounded-2xl px-3.5 py-2 text-xs sm:text-sm focus:outline-none min-h-[42px] max-h-24 leading-[1.45] resize-none overflow-y-auto transition-all shadow-inner"
+                    className="w-full min-w-0 bg-slate-100/90 hover:bg-slate-100 focus:bg-white text-slate-900 placeholder:text-slate-400 border border-slate-200 focus:border-[#1E96E8] rounded-2xl px-3.5 py-2 text-xs sm:text-sm focus:outline-none min-h-[42px] max-h-24 leading-[1.45] resize-none overflow-y-auto transition-all shadow-inner"
                   />
                 </div>
 
-                {/* Send Button */}
-                <button
-                  type="button"
-                  onClick={() => handleSendMessage()}
-                  disabled={!inputText.trim()}
-                  className="p-2.5 rounded-2xl bg-gradient-to-r from-amber-500 via-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 disabled:opacity-40 text-slate-950 font-black shadow-md shadow-amber-500/25 active:scale-95 min-h-[42px] min-w-[42px] flex items-center justify-center transition-all cursor-pointer shrink-0"
-                  title="إرسال الرسالة"
-                >
-                  <ArrowUp className="w-5 h-5" />
-                </button>
+                {/* Single Dynamic Mic ↔ Send Button */}
+                {inputText.trim().length > 0 ? (
+                  <button
+                    type="button"
+                    onClick={() => handleSendMessage()}
+                    className="p-2.5 rounded-2xl bg-gradient-to-r from-[#1E96E8] to-[#2196F3] hover:brightness-105 text-white font-black shadow-md shadow-sky-500/25 active:scale-95 min-h-[42px] min-w-[42px] flex items-center justify-center transition-all cursor-pointer shrink-0"
+                    title="إرسال الرسالة"
+                  >
+                    <ArrowUp className="w-5 h-5" />
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={startVoiceRecording}
+                    className="p-2.5 rounded-2xl bg-sky-50 hover:bg-sky-100 text-[#1E96E8] border border-sky-200 active:scale-95 min-h-[42px] min-w-[42px] flex items-center justify-center transition-all shadow-xs cursor-pointer shrink-0"
+                    title="بدء تسجيل صوتي"
+                  >
+                    <Mic className="w-5 h-5" />
+                  </button>
+                )}
               </>
             )}
           </div>

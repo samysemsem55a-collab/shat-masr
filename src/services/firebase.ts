@@ -46,7 +46,9 @@ import {
   remove,
   Database,
   query as rtdbQuery,
-  limitToLast
+  limitToLast,
+  orderByChild,
+  endBefore
 } from 'firebase/database';
 import { 
   getAuth, 
@@ -856,15 +858,16 @@ export function subscribeToGlobalPresence(
 // ==========================================
 export function subscribeToRoomMessages(
   roomId: string,
-  onMessages: (messages: Message[]) => void
+  onMessages: (messages: Message[]) => void,
+  initialLimit: number = 30
 ): () => void {
   const localKey = `messages_room_${roomId}`;
 
-  // Priority 1: Realtime Database `messages/${roomId}`
+  // Priority 1: Realtime Database `messages/${roomId}` (limited to initial 30 messages for fast open)
   let rtdbUnsub: (() => void) | null = null;
   if (rtdb) {
     try {
-      const messagesRef = rtdbQuery(ref(rtdb, `messages/${roomId}`), limitToLast(120));
+      const messagesRef = rtdbQuery(ref(rtdb, `messages/${roomId}`), limitToLast(initialLimit));
       rtdbUnsub = onValue(messagesRef, (snapshot) => {
         const data = snapshot.val();
         if (data) {
@@ -898,10 +901,12 @@ export function subscribeToRoomMessages(
               reactions: item.reactions || {},
               userReactions: item.userReactions || {},
               reactionUsers: item.reactionUsers || {},
+              isHighlighted: Boolean(item.isHighlighted),
+              highlightColor: item.highlightColor || undefined,
               expiresAt: item.expiresAt,
               createdAt: item.createdAt || item.timestamp || Date.now(),
               timestamp: item.timestamp || item.createdAt || Date.now(),
-              status: item.status || ((item.isPrivate || item.type === 'private') ? 'sent' : 'read')
+              status: item.status || 'delivered'
             };
           })
           .filter(m => !isMsgExpired(m, PUBLIC_MESSAGE_TTL_MS))
@@ -919,12 +924,12 @@ export function subscribeToRoomMessages(
     }
   }
 
-  // Priority 2: Firestore collection `rooms/{roomId}/messages` (auto-filters & cleans 24h expired messages)
+  // Priority 2: Firestore collection `rooms/{roomId}/messages` (latest 30 messages, auto-cleans >24h expired)
   let firestoreUnsub: (() => void) | null = null;
   if (db) {
     try {
       const messagesRef = collection(db, 'rooms', roomId, 'messages');
-      const q = query(messagesRef, orderBy('createdAt', 'asc'));
+      const q = query(messagesRef, orderBy('createdAt', 'desc'), limit(initialLimit));
 
       firestoreUnsub = onSnapshot(q, (snapshot) => {
         if (!snapshot.empty) {
@@ -960,10 +965,12 @@ export function subscribeToRoomMessages(
               reactions: data.reactions || {},
               userReactions: data.userReactions || {},
               reactionUsers: data.reactionUsers || {},
+              isHighlighted: Boolean(data.isHighlighted),
+              highlightColor: data.highlightColor || undefined,
               expiresAt: data.expiresAt || undefined,
               createdAt: createdMs,
               timestamp: data.timestamp || createdMs,
-              status: data.status || ((data.isPrivate || data.type === 'private') ? 'sent' : 'read')
+              status: data.status || 'delivered'
             };
             if (isMsgExpired(msgItem, PUBLIC_MESSAGE_TTL_MS)) {
               // Silent background purge of expired Firestore message (>24h)
@@ -972,6 +979,7 @@ export function subscribeToRoomMessages(
               list.push(msgItem);
             }
           });
+          list.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
           localStorage.setItem(localKey, JSON.stringify(list));
           onMessages(list);
         } else {
@@ -989,7 +997,7 @@ export function subscribeToRoomMessages(
     try {
       const saved = localStorage.getItem(localKey);
       const parsed: Message[] = saved ? JSON.parse(saved) : [];
-      return parsed.filter(m => !isMsgExpired(m, PUBLIC_MESSAGE_TTL_MS));
+      return parsed.filter(m => !isMsgExpired(m, PUBLIC_MESSAGE_TTL_MS)).slice(-initialLimit);
     } catch {
       return [];
     }
@@ -1015,6 +1023,130 @@ export function subscribeToRoomMessages(
     if (firestoreUnsub) firestoreUnsub();
     liveChatBus?.removeEventListener('message', handleBroadcast);
   };
+}
+
+// Fetch older room messages (pagination on upward scroll)
+export async function fetchOlderRoomMessages(
+  roomId: string,
+  beforeTimestamp: number,
+  pageSize: number = 30
+): Promise<Message[]> {
+  if (!roomId || !beforeTimestamp) return [];
+  const results = new Map<string, Message>();
+
+  if (db) {
+    try {
+      const messagesRef = collection(db, 'rooms', roomId, 'messages');
+      const q = query(
+        messagesRef,
+        where('timestamp', '<', beforeTimestamp),
+        orderBy('timestamp', 'desc'),
+        limit(pageSize)
+      );
+      const snap = await getDocs(q);
+      snap.forEach((docSnap) => {
+        const data = docSnap.data();
+        const createdMs = data.createdAt?.toMillis ? data.createdAt.toMillis() : (data.createdAt || data.timestamp || 0);
+        const msgItem: Message = {
+          id: data.id || docSnap.id,
+          roomId,
+          senderId: data.userId || data.senderId,
+          senderName: data.userName || data.senderName,
+          senderAvatar: data.userAvatar || data.senderAvatar || '',
+          senderRole: data.userVipTier || data.senderRole || 'member',
+          senderVipBadge: data.userVipBadge || data.senderVipBadge || '',
+          badges: data.badges || [],
+          type: data.type || 'text',
+          isPrivate: !!data.isPrivate || data.type === 'private',
+          recipientId: data.recipientId || undefined,
+          content: data.text || data.content || '',
+          text: data.text || data.content || '',
+          gift: data.gift || undefined,
+          replyTo: data.replyTo || undefined,
+          audioDuration: data.audioDuration || undefined,
+          audioUrl: data.audioUrl || undefined,
+          voiceUrl: data.voiceUrl || undefined,
+          mediaUrl: data.mediaUrl || undefined,
+          mediaType: data.mediaType || undefined,
+          stickerId: data.stickerId || undefined,
+          stickerEmoji: data.stickerEmoji || undefined,
+          stickerLabel: data.stickerLabel || undefined,
+          stickerAnimation: data.stickerAnimation || undefined,
+          reactions: data.reactions || {},
+          userReactions: data.userReactions || {},
+          reactionUsers: data.reactionUsers || {},
+          isHighlighted: Boolean(data.isHighlighted),
+          highlightColor: data.highlightColor || undefined,
+          expiresAt: data.expiresAt || undefined,
+          createdAt: createdMs,
+          timestamp: data.timestamp || createdMs,
+          status: data.status || 'delivered',
+        };
+        if (!isMsgExpired(msgItem, PUBLIC_MESSAGE_TTL_MS)) {
+          results.set(msgItem.id, msgItem);
+        }
+      });
+    } catch {}
+  }
+
+  if (rtdb && results.size === 0) {
+    try {
+      const q = rtdbQuery(
+        ref(rtdb, `messages/${roomId}`),
+        orderByChild('timestamp'),
+        endBefore(beforeTimestamp),
+        limitToLast(pageSize)
+      );
+      const snap = await get(q);
+      const val = snap.val();
+      if (val) {
+        Object.keys(val).forEach((key) => {
+          const item = val[key];
+          if (!item) return;
+          const m: Message = {
+            id: key,
+            roomId,
+            senderId: item.senderId || item.userId || 'usr_guest',
+            senderName: item.senderName || item.userName || 'مستخدم',
+            senderAvatar: item.senderAvatar || item.userAvatar || '',
+            senderRole: item.senderRole || item.userVipTier || 'member',
+            senderVipBadge: item.senderVipBadge || item.userVipBadge || '',
+            badges: item.badges || [],
+            type: item.type || 'text',
+            isPrivate: !!item.isPrivate || item.type === 'private',
+            recipientId: item.recipientId,
+            content: item.content || item.text || '',
+            text: item.text || item.content || '',
+            gift: item.gift,
+            replyTo: item.replyTo,
+            audioDuration: item.audioDuration,
+            audioUrl: item.audioUrl,
+            voiceUrl: item.voiceUrl,
+            mediaUrl: item.mediaUrl,
+            mediaType: item.mediaType,
+            stickerId: item.stickerId,
+            stickerEmoji: item.stickerEmoji,
+            stickerLabel: item.stickerLabel,
+            stickerAnimation: item.stickerAnimation,
+            reactions: item.reactions || {},
+            userReactions: item.userReactions || {},
+            reactionUsers: item.reactionUsers || {},
+            isHighlighted: Boolean(item.isHighlighted),
+            highlightColor: item.highlightColor || undefined,
+            expiresAt: item.expiresAt,
+            createdAt: item.createdAt || item.timestamp || Date.now(),
+            timestamp: item.timestamp || item.createdAt || Date.now(),
+            status: item.status || 'delivered',
+          };
+          if (!isMsgExpired(m, PUBLIC_MESSAGE_TTL_MS)) {
+            results.set(m.id, m);
+          }
+        });
+      }
+    } catch {}
+  }
+
+  return Array.from(results.values()).sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
 }
 
 // Send Real Message to Firebase (saved both in room and strictly under user's UID path)
@@ -1052,10 +1184,12 @@ export async function sendFirestoreMessage(
     reactions: message.reactions || {},
     userReactions: message.userReactions || {},
     reactionUsers: message.reactionUsers || {},
+    isHighlighted: message.isHighlighted ? true : undefined,
+    highlightColor: message.highlightColor,
     expiresAt: Date.now() + PUBLIC_MESSAGE_TTL_MS,
     createdAt: Date.now(),
     timestamp: Date.now(),
-    status: message.status || (isPrivateMsg ? 'sent' : 'read')
+    status: message.status || 'sent'
   };
 
   // Strip undefined properties before Firebase writes
@@ -1136,6 +1270,8 @@ export async function sendFirestoreMessage(
         reactions: newMsg.reactions || {},
         userReactions: newMsg.userReactions || {},
         reactionUsers: newMsg.reactionUsers || {},
+        isHighlighted: Boolean(newMsg.isHighlighted),
+        highlightColor: newMsg.highlightColor || null,
         expiresAt: newMsg.expiresAt,
         status: newMsg.status,
         timestamp: newMsg.timestamp,
@@ -3220,12 +3356,13 @@ export function subscribeToDirectMessages(
     if (changed) emit();
   });
 
-  // 2. Real-time Firestore onSnapshot Listener (auto-cleans 7-day expired DMs)
+  // 2. Real-time Firestore onSnapshot Listener (scoped to open conversation & latest 40 messages)
   let firestoreUnsub: (() => void) | null = null;
   if (db) {
     try {
       const msgsCol = collection(db, 'direct_chats', convId, 'messages');
-      firestoreUnsub = onSnapshot(msgsCol, (snapshot) => {
+      const dmQuery = query(msgsCol, orderBy('timestamp', 'desc'), limit(40));
+      firestoreUnsub = onSnapshot(dmQuery, (snapshot) => {
         if (!snapshot.empty) {
           snapshot.docs.forEach(docSnap => {
             const data = docSnap.data();
@@ -3255,7 +3392,7 @@ export function subscribeToDirectMessages(
   let rtdbUnsub: (() => void) | null = null;
   if (rtdb) {
     try {
-      const msgRef = rtdbQuery(ref(rtdb, `direct_messages/${convId}`), limitToLast(100));
+      const msgRef = rtdbQuery(ref(rtdb, `direct_messages/${convId}`), limitToLast(40));
       rtdbUnsub = onValue(msgRef, (snapshot) => {
         const val = snapshot.val();
         if (val) {

@@ -251,6 +251,8 @@ export interface Message {
   createdAt?: number;
   timestamp: number;
   status: 'sent' | 'delivered' | 'read' | 'pending_offline';
+  isHighlighted?: boolean;
+  highlightColor?: 'sky' | 'amber' | 'rose' | 'emerald';
   likes?: number;
   reactions?: { [emoji: string]: number };
   userReactions?: { [userId: string]: string };

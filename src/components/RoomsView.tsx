@@ -1058,16 +1058,16 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
   }, [forumPosts, forumFilter, onlineUserIds, currentUser.id]);
 
   return (
-    <div className="pb-24 pt-2 px-2.5 sm:px-4 max-w-6xl mx-auto space-y-2" dir="rtl">
+    <div className="pb-24 pt-1.5 sm:pt-2 px-2 sm:px-4 max-w-6xl mx-auto space-y-1.5 sm:space-y-2" dir="rtl">
       {/* 1. Compact Live Stats Strip */}
-      <div className="grid grid-cols-2 gap-2">
+      <div className="grid grid-cols-2 gap-1.5 sm:gap-2">
         {/* Live Online Users Count Only */}
         <div
           onClick={onOpenOnlineUsers}
-          className="px-2.5 py-1.5 rounded-xl bg-gradient-to-br from-teal-100 via-emerald-100 to-cyan-100 border border-teal-300/90 text-teal-950 shadow-xs flex items-center justify-between cursor-pointer hover:brightness-[0.98] active:scale-[0.98] transition-all"
+          className="px-2 sm:px-2.5 py-1 sm:py-1.5 rounded-xl bg-gradient-to-br from-teal-100 via-emerald-100 to-cyan-100 border border-teal-300/90 text-teal-950 shadow-xs flex items-center justify-between cursor-pointer hover:brightness-[0.98] active:scale-[0.98] transition-all"
         >
           <div className="text-right min-w-0">
-            <div className="flex items-center gap-1 text-[10px] font-black text-teal-800">
+            <div className="flex items-center gap-1 text-[9.5px] sm:text-[10px] font-black text-teal-800">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-pulse shrink-0"></span>
               <span className="truncate">المتصلون الآن</span>
               {typeof navigator !== 'undefined' && navigator.onLine === false && socketState !== 'connected' && (
@@ -1077,32 +1077,32 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
               )}
             </div>
             <div className="flex items-center gap-1 leading-tight">
-              <span className="text-sm font-black text-teal-950 tabular-nums">
+              <span className="text-xs sm:text-sm font-black text-teal-950 tabular-nums">
                 {Math.max(1, totalActiveUsersCount).toLocaleString()}
               </span>
-              <span className="text-[10px] font-bold text-emerald-800 whitespace-nowrap">
+              <span className="text-[9.5px] sm:text-[10px] font-bold text-emerald-800 whitespace-nowrap">
                 متصل الآن
               </span>
             </div>
           </div>
-          <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center text-white shrink-0">
-            <Users strokeWidth={2} className="w-3.5 h-3.5 opacity-100 saturate-110 brightness-105" />
+          <div className="w-6 h-6 sm:w-7 sm:h-7 rounded-lg bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center text-white shrink-0">
+            <Users strokeWidth={2} className="w-3 h-3 sm:w-3.5 sm:h-3.5 opacity-100 saturate-110 brightness-105" />
           </div>
         </div>
 
-        {/* Real-time Cumulative Visitors (Firestore totalVisitors) */}
-        <div className="px-2.5 py-1.5 rounded-xl bg-gradient-to-br from-amber-100 via-rose-100 to-orange-100 border border-amber-300/90 text-amber-950 shadow-xs flex items-center justify-between">
+        {/* Unified Live Members / Visitors Counter (Synced 1:1 with Admin Panel "الأعضاء") */}
+        <div className="px-2 sm:px-2.5 py-1 sm:py-1.5 rounded-xl bg-gradient-to-br from-amber-100 via-rose-100 to-orange-100 border border-amber-300/90 text-amber-950 shadow-xs flex items-center justify-between">
           <div className="text-right min-w-0">
-            <div className="flex items-center gap-1 text-[10px] font-black text-rose-800">
+            <div className="flex items-center gap-1 text-[9.5px] sm:text-[10px] font-black text-rose-800">
               <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></span>
-              <span className="truncate">إجمالي الزوار</span>
+              <span className="truncate">الأعضاء والزوار</span>
             </div>
-            <div className="text-sm font-black text-amber-950 tabular-nums leading-tight">
-              {(cumulativeVisitorsCount || 15480).toLocaleString()} <span className="text-[9.5px] font-bold text-rose-800">زائر</span>
+            <div className="text-xs sm:text-sm font-black text-amber-950 tabular-nums leading-tight">
+              {Math.max(1, registeredUsersCount || totalActiveUsersCount || 1).toLocaleString()} <span className="text-[9px] sm:text-[9.5px] font-bold text-rose-800">عضو</span>
             </div>
           </div>
-          <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-amber-500 to-rose-500 flex items-center justify-center text-white shrink-0">
-            <Eye className="w-3.5 h-3.5" />
+          <div className="w-6 h-6 sm:w-7 sm:h-7 rounded-lg bg-gradient-to-br from-amber-500 to-rose-500 flex items-center justify-center text-white shrink-0">
+            <Eye className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
           </div>
         </div>
       </div>
@@ -1110,15 +1110,15 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
       {/* Top Horizontal Quick Pills Row — 4 calm pastel flat pills in one row, zero scroll, zero neon/shadow */}
       <div
         dir="rtl"
-        className="flex flex-nowrap gap-2 w-full px-[10px] overflow-hidden"
+        className="flex flex-nowrap gap-1.5 sm:gap-2 w-full px-1 sm:px-[10px] overflow-hidden"
       >
         {!isStrictOwner && (
           <button
             type="button"
             onClick={onOpenWallet}
-            className="flex-1 basis-0 min-w-0 h-[38px] rounded-[20px] px-1 bg-[#FFF1E0] text-[#9A4A00] border border-[#FFE0B8] text-[12.5px] font-semibold whitespace-nowrap overflow-hidden flex items-center justify-center gap-[5px] active:scale-95 transition-transform cursor-pointer"
+            className="flex-1 basis-0 min-w-0 h-[33px] sm:h-[38px] rounded-[18px] sm:rounded-[20px] px-1 bg-[#FFF1E0] text-[#9A4A00] border border-[#FFE0B8] text-[11.5px] sm:text-[12.5px] font-semibold whitespace-nowrap overflow-hidden flex items-center justify-center gap-1 sm:gap-[5px] active:scale-95 transition-transform cursor-pointer"
           >
-            <span className="text-[15px] leading-none shrink-0 opacity-100 saturate-110 brightness-105" aria-hidden="true">🪙</span>
+            <span className="text-[13.5px] sm:text-[15px] leading-none shrink-0 opacity-100 saturate-110 brightness-105" aria-hidden="true">🪙</span>
             <span className="truncate">شحن الكوينز</span>
           </button>
         )}
@@ -1127,10 +1127,10 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
           <button
             type="button"
             onClick={onOpenLeaderboard}
-            className="flex-1 basis-0 min-w-0 h-[38px] rounded-[20px] px-1 bg-[#F0EBFF] text-[#4C2A9E] border border-[#DDD0FF] text-[12.5px] font-semibold whitespace-nowrap overflow-hidden flex items-center justify-center gap-[5px] active:scale-95 transition-transform cursor-pointer"
+            className="flex-1 basis-0 min-w-0 h-[33px] sm:h-[38px] rounded-[18px] sm:rounded-[20px] px-1 bg-[#F0EBFF] text-[#4C2A9E] border border-[#DDD0FF] text-[11.5px] sm:text-[12.5px] font-semibold whitespace-nowrap overflow-hidden flex items-center justify-center gap-1 sm:gap-[5px] active:scale-95 transition-transform cursor-pointer"
             title="قائمة الكبار - التوب 10"
           >
-            <span className="text-[15px] leading-none shrink-0 opacity-100 saturate-110 brightness-105" aria-hidden="true">🏆</span>
+            <span className="text-[13.5px] sm:text-[15px] leading-none shrink-0 opacity-100 saturate-110 brightness-105" aria-hidden="true">🏆</span>
             <span className="truncate">الكبار</span>
           </button>
         )}
@@ -1139,9 +1139,9 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
           <button
             type="button"
             onClick={onOpenVip}
-            className="flex-1 basis-0 min-w-0 h-[38px] rounded-[20px] px-1 bg-[#FFF8D6] text-[#7A5A00] border border-[#F0E3A0] text-[12.5px] font-semibold whitespace-nowrap overflow-hidden flex items-center justify-center gap-[5px] active:scale-95 transition-transform cursor-pointer"
+            className="flex-1 basis-0 min-w-0 h-[33px] sm:h-[38px] rounded-[18px] sm:rounded-[20px] px-1 bg-[#FFF8D6] text-[#7A5A00] border border-[#F0E3A0] text-[11.5px] sm:text-[12.5px] font-semibold whitespace-nowrap overflow-hidden flex items-center justify-center gap-1 sm:gap-[5px] active:scale-95 transition-transform cursor-pointer"
           >
-            <span className="text-[15px] leading-none shrink-0 opacity-100 saturate-110 brightness-105" aria-hidden="true">👑</span>
+            <span className="text-[13.5px] sm:text-[15px] leading-none shrink-0 opacity-100 saturate-110 brightness-105" aria-hidden="true">👑</span>
             <span className="truncate">VIP</span>
           </button>
         )}
@@ -1150,9 +1150,9 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
           <button
             type="button"
             onClick={onOpenMissions}
-            className="flex-1 basis-0 min-w-0 h-[38px] rounded-[20px] px-1 bg-[#E6F4EA] text-[#1A6B3C] border border-[#C8E6D2] text-[12.5px] font-semibold whitespace-nowrap overflow-hidden flex items-center justify-center gap-[5px] active:scale-95 transition-transform cursor-pointer"
+            className="flex-1 basis-0 min-w-0 h-[33px] sm:h-[38px] rounded-[18px] sm:rounded-[20px] px-1 bg-[#E6F4EA] text-[#1A6B3C] border border-[#C8E6D2] text-[11.5px] sm:text-[12.5px] font-semibold whitespace-nowrap overflow-hidden flex items-center justify-center gap-1 sm:gap-[5px] active:scale-95 transition-transform cursor-pointer"
           >
-            <span className="text-[15px] leading-none shrink-0 opacity-100 saturate-110 brightness-105" aria-hidden="true">✅</span>
+            <span className="text-[13.5px] sm:text-[15px] leading-none shrink-0 opacity-100 saturate-110 brightness-105" aria-hidden="true">✅</span>
             <span className="truncate">مهامي</span>
           </button>
         )}
@@ -1162,7 +1162,7 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
       <StoriesBar currentUser={currentUser} onOpenUserProfile={onOpenUserProfile} />
 
       {/* 2. Top Compact Horizontal Strip: غرف شات مصر العامة + Live Audio Rooms */}
-      <div id="home-rooms-section" className="bg-white/95 border border-slate-200 rounded-2xl mt-2 p-2.5 shadow-sm">
+      <div id="home-rooms-section" className="bg-white/95 border border-slate-200 rounded-2xl mt-1 sm:mt-2 p-2 sm:p-2.5 shadow-sm">
         <div className="flex items-center justify-between gap-2 px-0.5 mb-2">
           <h2 className="text-xs sm:text-sm font-black text-slate-900 flex items-center gap-1.5 whitespace-nowrap">
             <span>🇪🇬 غرف شات مصر</span>

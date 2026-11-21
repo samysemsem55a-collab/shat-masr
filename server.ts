@@ -638,14 +638,14 @@ wss.on('connection', (ws: WebSocket) => {
 
           socketToUser.set(ws, { userId: user.id, sessionId: user.sessionId, roomId });
 
-          // Send existing non-expired room history (24h TTL) to newly joined client
+          // Send existing non-expired room history (24h TTL, latest 30 for fast open)
           const rawHistory = messagesByRoom.get(roomId) || [];
           const history = rawHistory.filter(m => !isMessageExpired(m, PUBLIC_MESSAGE_TTL_MS));
           if (history.length !== rawHistory.length) messagesByRoom.set(roomId, history);
           ws.send(JSON.stringify({
             type: 'ROOM_HISTORY',
             roomId,
-            messages: history
+            messages: history.slice(-30)
           }));
 
           // Send active pinned message for this room if any

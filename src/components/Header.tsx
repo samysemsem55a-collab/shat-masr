@@ -138,7 +138,7 @@ export const Header: React.FC<HeaderProps> = React.memo(({
   };
 
   return (
-    <header dir="rtl" className="sticky top-0 z-[50] bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-slate-200/90 dark:border-slate-800 px-2 sm:px-5 py-2 pt-[calc(env(safe-area-inset-top,0px)+0.5rem)] shadow-sm transition-colors duration-300">
+    <header dir="rtl" className="sticky top-0 z-[50] bg-[#EAF5FD]/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-sky-200/80 dark:border-slate-800 px-2 sm:px-5 py-2 pt-[calc(env(safe-area-inset-top,0px)+0.5rem)] shadow-sm transition-colors duration-300">
       <div className="max-w-7xl mx-auto flex items-center justify-between gap-1 sm:gap-2">
 
         {/* Primary Header Row: Profile + Desktop Brand/Pills + Symmetrical Icon Toolbar */}
@@ -293,27 +293,32 @@ export const Header: React.FC<HeaderProps> = React.memo(({
           {/* Left Side (in RTL): Symmetrical Action Icons Toolbar + Store + Far-Left Menu */}
           <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
 
-            {/* Incoming Messages Side Drawer Trigger + Unread Badge */}
-            <button
-              type="button"
-              onClick={() => {
-                setIsMoreMenuOpen(false);
-                onOpenMessagesTab?.();
-              }}
-              title="الرسائل الخاصة والإشعارات الواردة"
-              className={`relative w-8 h-9 sm:w-9 rounded-xl border flex items-center justify-center transition-all shrink-0 active:scale-95 cursor-pointer ${
-                totalUnreadMessagesCount > 0
-                  ? 'bg-indigo-50 hover:bg-indigo-100 border-indigo-300 text-indigo-600 shadow-xs'
-                  : 'bg-slate-100 hover:bg-slate-200 border-slate-200 text-slate-700'
-              }`}
-            >
-              <MessageCircle strokeWidth={2} className="w-4 h-4 opacity-100 saturate-110 brightness-105" />
-              {totalUnreadMessagesCount > 0 && (
-                <span className="absolute -top-1 -right-1 min-w-[17px] h-[17px] px-1 rounded-full bg-rose-600 text-white text-[9px] font-black flex items-center justify-center shadow border border-white tabular-nums">
-                  {totalUnreadMessagesCount > 99 ? '99+' : totalUnreadMessagesCount}
-                </span>
-              )}
-            </button>
+            {/* Incoming Messages & Friends Side Drawer Trigger + Lightweight Unread Badge */}
+            {(() => {
+              const combinedPrivateBadge = totalUnreadMessagesCount + pendingFriendRequestsCount;
+              return (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsMoreMenuOpen(false);
+                    onOpenMessagesTab?.();
+                  }}
+                  title="الرسائل الخاصة والأصدقاء"
+                  className={`relative w-8 h-9 sm:w-9 rounded-xl border flex items-center justify-center transition-all shrink-0 active:scale-95 cursor-pointer ${
+                    combinedPrivateBadge > 0
+                      ? 'bg-[#E1F1FD] hover:bg-[#D2EAFB] border-sky-300 text-[#1E96E8] shadow-xs'
+                      : 'bg-slate-100 hover:bg-slate-200 border-slate-200 text-slate-700'
+                  }`}
+                >
+                  <MessageCircle strokeWidth={2} className="w-4 h-4 opacity-100 saturate-110 brightness-105" />
+                  {combinedPrivateBadge > 0 && (
+                    <span className="absolute -top-1 -right-1 min-w-[16px] h-[16px] px-1 rounded-full bg-[#1E96E8] text-white text-[9px] font-black flex items-center justify-center shadow border border-white tabular-nums">
+                      {combinedPrivateBadge > 99 ? '99+' : combinedPrivateBadge}
+                    </span>
+                  )}
+                </button>
+              );
+            })()}
             
             {/* Friend Requests Button */}
             <button 

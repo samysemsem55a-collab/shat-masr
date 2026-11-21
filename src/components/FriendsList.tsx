@@ -53,7 +53,13 @@ export const FriendsList: React.FC<FriendsListProps> = ({
       return;
     }
     setConfirmRemoveId(null);
-    await removeFriendInDB(currentUser.id, fId);
+    const snapshot = friends;
+    setFriends(prev => prev.filter(f => (f.friendId || f.id) !== fId));
+    try {
+      await removeFriendInDB(currentUser.id, fId);
+    } catch {
+      setFriends(snapshot);
+    }
   };
 
   const handleStartChat = (friend: Friend) => {
@@ -77,15 +83,15 @@ export const FriendsList: React.FC<FriendsListProps> = ({
   return (
     <div className="space-y-3 animate-in fade-in">
       {/* Header Stats */}
-      <div className="flex items-center justify-between p-3.5 rounded-2xl bg-gradient-to-r from-indigo-50 via-white to-purple-50 border border-slate-200 shadow-sm">
+      <div className="flex items-center justify-between p-3.5 rounded-2xl bg-gradient-to-r from-[#EAF5FD] via-white to-sky-50 border border-sky-200/80 shadow-sm">
         <div className="flex items-center gap-2.5">
-          <div className="w-10 h-10 rounded-xl bg-indigo-100 text-indigo-600 flex items-center justify-center border border-indigo-200">
+          <div className="w-10 h-10 rounded-xl bg-sky-100 text-[#1E96E8] flex items-center justify-center border border-sky-200">
             <Users className="w-5 h-5" />
           </div>
           <div>
             <h3 className="text-sm font-black text-slate-900 flex items-center gap-1.5">
               قائمة أصدقائي
-              <span className="text-xs px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 font-bold">
+              <span className="text-xs px-2 py-0.5 rounded-full bg-sky-100 text-[#1565C0] font-bold">
                 {friends.length}
               </span>
             </h3>
@@ -108,7 +114,7 @@ export const FriendsList: React.FC<FriendsListProps> = ({
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
           placeholder="ابحث بالاسم في قائمة أصدقائك..."
-          className="w-full bg-white border border-slate-200 rounded-xl px-4 py-2.5 pr-10 text-xs text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-indigo-500 shadow-sm transition"
+          className="w-full bg-white border border-slate-200 rounded-xl px-4 py-2.5 pr-10 text-xs text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-[#1E96E8] shadow-sm transition"
         />
         <Search className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2" />
       </div>
@@ -116,7 +122,7 @@ export const FriendsList: React.FC<FriendsListProps> = ({
       {/* Friends List Container */}
       {loading ? (
         <div className="py-12 text-center text-slate-500 space-y-2">
-          <div className="w-7 h-7 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin mx-auto"></div>
+          <div className="w-7 h-7 border-2 border-[#1E96E8] border-t-transparent rounded-full animate-spin mx-auto"></div>
           <p className="text-xs font-bold">جاري تحميل قائمة الأصدقاء...</p>
         </div>
       ) : filteredFriends.length === 0 ? (
@@ -142,13 +148,13 @@ export const FriendsList: React.FC<FriendsListProps> = ({
               <div
                 key={fId}
                 onClick={() => handleStartChat(friend)}
-                className="p-3 rounded-2xl bg-white border border-slate-200 hover:border-indigo-300 shadow-sm flex items-center justify-between gap-3 cursor-pointer transition-all hover:bg-slate-50/70 group"
+                className="p-3 rounded-2xl bg-white border border-slate-200 hover:border-sky-300 shadow-sm flex items-center justify-between gap-3 cursor-pointer transition-all hover:bg-sky-50/40 group"
               >
                 {/* Actions: Start Chat & Remove */}
                 <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
                   <button
                     onClick={() => handleStartChat(friend)}
-                    className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold flex items-center gap-1.5 shadow-sm transition-all active:scale-95"
+                    className="px-3 py-1.5 rounded-xl bg-[#1E96E8] hover:bg-[#1982CC] text-white text-xs font-bold flex items-center gap-1.5 shadow-sm transition-all active:scale-95"
                     title="بدء محادثة خاصة"
                   >
                     <MessageCircle className="w-3.5 h-3.5" />
@@ -173,7 +179,7 @@ export const FriendsList: React.FC<FriendsListProps> = ({
                 <div className="flex items-center gap-3 min-w-0">
                   <div className="text-right min-w-0">
                     <div className="flex items-center gap-1.5 justify-end">
-                      <span className="text-sm font-black text-slate-900 truncate group-hover:text-indigo-600 transition">
+                      <span className="text-sm font-black text-slate-900 truncate group-hover:text-[#1E96E8] transition">
                         {friend.name}
                       </span>
                       <span className="text-sm shrink-0">{friend.countryFlag || '🇪🇬'}</span>

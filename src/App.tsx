@@ -51,6 +51,7 @@ import {
 import { 
   CLIENT_APP_VERSION,
   subscribeToRoomMessages, 
+  fetchOlderRoomMessages,
   sendFirestoreMessage, 
   sendDirectMessage,
   subscribeToRoomPresence, 
@@ -141,6 +142,42 @@ function hasUserVisibleChange(prev: User, patch: Partial<User>): boolean {
     }
   }
   return false;
+}
+
+const isMatchingRoomMessage = (existing: Message, incoming: Message): boolean => {
+  if (existing.id === incoming.id) return true;
+  const textA = (existing.content || existing.text || '').trim();
+  const textB = (incoming.content || incoming.text || '').trim();
+  if (
+    existing.senderId === incoming.senderId &&
+    textA === textB &&
+    textA.length > 0 &&
+    Math.abs((existing.timestamp || 0) - (incoming.timestamp || 0)) < 4000
+  ) {
+    return true;
+  }
+  return false;
+};
+
+function mergeRoomMessageList(prev: Message[], incomingList: Message[]): Message[] {
+  const merged = [...prev];
+  for (const incoming of incomingList) {
+    const idx = merged.findIndex(e => isMatchingRoomMessage(e, incoming));
+    if (idx === -1) {
+      merged.push(incoming);
+    } else {
+      const existing = merged[idx];
+      merged[idx] = {
+        ...existing,
+        ...incoming,
+        status: incoming.status === 'read' || existing.status === 'read' ? 'read' : (incoming.status || existing.status),
+        reactions: incoming.reactions ?? existing.reactions,
+        userReactions: incoming.userReactions ?? existing.userReactions,
+        reactionUsers: incoming.reactionUsers ?? existing.reactionUsers,
+      };
+    }
+  }
+  return merged.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
 }
 
 export default function App() {
@@ -321,8 +358,14 @@ export default function App() {
     return hydrateRoomBg(INITIAL_ROOMS);
   });
 
-  // Real-time messages for active room from Firestore
+  // Real-time messages for active room from Firestore (30 initial + upward pagination)
   const [activeRoomMessages, setActiveRoomMessages] = useState<Message[]>([]);
+  const [hasMoreRoomMessages, setHasMoreRoomMessages] = useState<boolean>(false);
+  const [isLoadingOlderRoomMsgs, setIsLoadingOlderRoomMsgs] = useState<boolean>(false);
+  const activeRoomMessagesRef = useRef<Message[]>([]);
+  useEffect(() => {
+    activeRoomMessagesRef.current = activeRoomMessages;
+  }, [activeRoomMessages]);
   const [activeRoom, setActiveRoom] = useState<Room | null>(null);
   const [currentTab, setCurrentTab] = useState<NavTab>('home');
 
@@ -1398,13 +1441,39 @@ export default function App() {
   // Track already-processed first-entry welcome checks in current session
   const welcomedPublicRoomKeysRef = useRef<Set<string>>(new Set());
 
+  // Load older room messages upward (30 per page)
+  const handleLoadOlderRoomMessages = useCallback(async (): Promise<number> => {
+    if (!activeRoom?.id || isLoadingOlderRoomMsgs) return 0;
+    const currentList = activeRoomMessagesRef.current;
+    const oldestTs = currentList.reduce(
+      (min, m) => (m.timestamp && m.timestamp < min ? m.timestamp : min),
+      currentList[0]?.timestamp || Date.now()
+    );
+    setIsLoadingOlderRoomMsgs(true);
+    try {
+      const older = await fetchOlderRoomMessages(activeRoom.id, oldestTs, 30);
+      if (!older || older.length === 0) {
+        setHasMoreRoomMessages(false);
+        return 0;
+      }
+      setHasMoreRoomMessages(older.length >= 30);
+      setActiveRoomMessages(prev => mergeRoomMessageList(prev, older));
+      return older.length;
+    } finally {
+      setIsLoadingOlderRoomMsgs(false);
+    }
+  }, [activeRoom?.id, isLoadingOlderRoomMsgs]);
+
   // Real-Time Room WebSocket & Firebase synchronization for active room
   useEffect(() => {
     if (!activeRoom) {
       setActiveRoomMessages([]);
+      setHasMoreRoomMessages(false);
+      setIsLoadingOlderRoomMsgs(false);
       return;
     }
 
+    setHasMoreRoomMessages(false);
     let isCancelled = false;
     let welcomeBotTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -1451,47 +1520,11 @@ export default function App() {
       });
     });
 
-    const isMatchingMsg = (existing: Message, incoming: Message) => {
-      if (existing.id === incoming.id) return true;
-      const textA = (existing.content || existing.text || '').trim();
-      const textB = (incoming.content || incoming.text || '').trim();
-      if (
-        existing.senderId === incoming.senderId &&
-        textA === textB &&
-        textA.length > 0 &&
-        Math.abs((existing.timestamp || 0) - (incoming.timestamp || 0)) < 4000
-      ) {
-        return true;
-      }
-      return false;
-    };
-
-    const mergeMessageList = (prev: Message[], incomingList: Message[]) => {
-      const merged = [...prev];
-      for (const incoming of incomingList) {
-        const idx = merged.findIndex(e => isMatchingMsg(e, incoming));
-        if (idx === -1) {
-          merged.push(incoming);
-        } else {
-          const existing = merged[idx];
-          merged[idx] = {
-            ...existing,
-            ...incoming,
-            status: incoming.status === 'read' || existing.status === 'read' ? 'read' : (incoming.status || existing.status),
-            reactions: incoming.reactions ?? existing.reactions,
-            userReactions: incoming.userReactions ?? existing.userReactions,
-            reactionUsers: incoming.reactionUsers ?? existing.reactionUsers,
-          };
-        }
-      }
-      return merged.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
-    };
-
     // Subscribe to server-side messages & history
     const unsubMessages = realtimeSocket.subscribeToRoom(
       activeRoom.id,
       (newMsg) => {
-        setActiveRoomMessages(prev => mergeMessageList(prev, [newMsg]));
+        setActiveRoomMessages(prev => mergeRoomMessageList(prev, [newMsg]));
         if (
           newMsg.type === 'gift' &&
           newMsg.gift &&
@@ -1512,7 +1545,7 @@ export default function App() {
       },
       (history) => {
         if (history && history.length > 0) {
-          setActiveRoomMessages(prev => mergeMessageList(prev, history));
+          setActiveRoomMessages(prev => mergeRoomMessageList(prev, history));
         }
       }
     );
@@ -1542,12 +1575,15 @@ export default function App() {
       }
     );
 
-    // Also attach Firebase listener
+    // Also attach Firebase listener (last 30 messages)
     const unsubFirebase = subscribeToRoomMessages(activeRoom.id, (msgs) => {
       if (msgs && msgs.length > 0) {
-        setActiveRoomMessages(prev => mergeMessageList(prev, msgs));
+        if (msgs.length >= 30) {
+          setHasMoreRoomMessages(true);
+        }
+        setActiveRoomMessages(prev => mergeRoomMessageList(prev, msgs));
       }
-    });
+    }, 30);
 
     // Listen to room purge events from Moderator / Owner God Mode
     const unsubPurged = realtimeSocket.subscribeToRoomPurged(activeRoom.id, () => {
@@ -1577,7 +1613,7 @@ export default function App() {
         timestamp: Date.now(),
         status: 'read',
       };
-      setActiveRoomMessages(prev => mergeMessageList(prev, [joinNotice]));
+      setActiveRoomMessages(prev => mergeRoomMessageList(prev, [joinNotice]));
       realtimeSocket.sendMessage(activeRoom.id, joinNotice);
 
       checkAndMarkFirstPublicRoomEntry(currentUser.id, activeRoom.id)
@@ -1607,7 +1643,7 @@ export default function App() {
               status: 'read',
             };
 
-            setActiveRoomMessages(prev => mergeMessageList(prev, [botMsg]));
+            setActiveRoomMessages(prev => mergeRoomMessageList(prev, [botMsg]));
             realtimeSocket.sendMessage(activeRoom.id, botMsg);
             sendFirestoreMessage(activeRoom.id, botMsg).catch((err) => {
               console.warn('Welcome bot message write notice:', err);
@@ -1736,12 +1772,14 @@ export default function App() {
         stickerEmoji: msgData.stickerEmoji,
         stickerLabel: msgData.stickerLabel,
         stickerAnimation: msgData.stickerAnimation,
+        isHighlighted: msgData.isHighlighted ? true : undefined,
+        highlightColor: msgData.isHighlighted ? msgData.highlightColor : undefined,
         reactions: {},
         userReactions: {},
         reactionUsers: {},
         createdAt: Date.now(),
         timestamp: Date.now(),
-        status: msgData.isPrivate ? 'sent' : 'read'
+        status: msgData.status || (typeof navigator !== 'undefined' && navigator.onLine === false ? 'pending_offline' : 'sent')
       };
 
       // Optimistically add to active messages so sender immediately sees their message
@@ -1778,10 +1816,16 @@ export default function App() {
       // 1. Broadcast via WebSocket directly to ALL other connected devices in real time
       realtimeSocket.sendMessage(activeRoom.id, newMsg);
 
-      // 2. Also send to Firebase Realtime Database & Firestore
-      sendFirestoreMessage(activeRoom.id, newMsg).catch(err => {
-        console.warn("Realtime DB message write notice:", err);
-      });
+      // 2. Also send to Firebase Realtime Database & Firestore and promote status to delivered
+      sendFirestoreMessage(activeRoom.id, newMsg)
+        .then(() => {
+          setActiveRoomMessages(prev =>
+            prev.map(m => (m.id === newMsg.id && m.status === 'sent' ? { ...m, status: 'delivered' } : m))
+          );
+        })
+        .catch(err => {
+          console.warn("Realtime DB message write notice:", err);
+        });
 
       // 3. Track Daily Mission, Shared Room Daily Mission, and XP progress
       updateMissionProgress('send_5_messages', 1);
@@ -2270,30 +2314,46 @@ export default function App() {
     isDailyMissionsOpen, isFriendRequestsOpen, isInsidePrivateChat, activeRoom, currentTab
   ]);
 
-  // Friend Request Accept / Decline
+  // Friend Request Accept / Decline (Optimistic UI with safe rollback)
   const handleAcceptFriendRequest = async (req: FriendRequest) => {
+    const prevPending = pendingFriendRequests;
+    const prevBanner = friendReqBanner;
     setPendingFriendRequests(prev => prev.filter(r => r.id !== req.id));
     setFriendReqBanner(curr => (curr?.id === req.id ? null : curr));
-    await acceptFriendRequestInDB(
-      currentUser.id,
-      {
-        id: req.senderId,
-        name: req.senderName,
-        avatar: req.senderAvatar
-      },
-      currentUser,
-      req.id
-    );
     toast.success(`تم قبول طلب صداقة ${req.senderName} بنجاح! 🤝`, {
       description: 'تمت إضافته فوراً إلى قائمة أصدقائك'
     });
+    try {
+      await acceptFriendRequestInDB(
+        currentUser.id,
+        {
+          id: req.senderId,
+          name: req.senderName,
+          avatar: req.senderAvatar
+        },
+        currentUser,
+        req.id
+      );
+    } catch {
+      setPendingFriendRequests(prevPending);
+      setFriendReqBanner(prevBanner);
+      toast.error('تعذر قبول طلب الصداقة، يرجى المحاولة مجدداً');
+    }
   };
 
   const handleDeclineFriendRequest = async (reqId: string, senderId?: string) => {
+    const prevPending = pendingFriendRequests;
+    const prevBanner = friendReqBanner;
     setPendingFriendRequests(prev => prev.filter(r => r.id !== reqId));
     setFriendReqBanner(curr => (curr?.id === reqId ? null : curr));
-    await declineFriendRequestInDB(currentUser.id, reqId, senderId);
     toast.info('تم رفض طلب الصداقة');
+    try {
+      await declineFriendRequestInDB(currentUser.id, reqId, senderId);
+    } catch {
+      setPendingFriendRequests(prevPending);
+      setFriendReqBanner(prevBanner);
+      toast.error('تعذر رفض طلب الصداقة، يرجى المحاولة مجدداً');
+    }
   };
 
   // Switch active user account (for multi-device / multi-tab testing)
@@ -2774,7 +2834,15 @@ export default function App() {
       )}
 
       {/* 2. Main View Routing: Home Page (RoomsView) remains persistently mounted & frozen to prevent re-mounts/reloads */}
-      <main className={activeRoom ? "w-full h-[100dvh] overflow-hidden" : "max-w-7xl mx-auto min-h-[calc(100dvh-56px)]"}>
+      <main
+        className={
+          activeRoom
+            ? "w-full h-[100dvh] overflow-hidden overscroll-none"
+            : currentTab === 'chat'
+            ? "max-w-7xl mx-auto h-[calc(100dvh-54px)] overflow-hidden overscroll-none"
+            : "max-w-7xl mx-auto min-h-[calc(100dvh-56px)]"
+        }
+      >
         {/* Frozen Home Page Container (always mounted; hidden via CSS when inside a room or on another tab) */}
         <div className={!activeRoom && currentTab === 'home' ? '' : 'hidden'}>
           <RoomsView
@@ -2789,7 +2857,7 @@ export default function App() {
             onOpenLeaderboard={openLeaderboard}
             onOpenMissions={openMissions}
             totalActiveUsersCount={trulyOnlineUsers.length}
-            registeredUsersCount={Math.max(registeredUsersCount, trulyOnlineUsers.length)}
+            registeredUsersCount={Math.max(registeredUsersCount, allRegisteredUsers.length, trulyOnlineUsers.length)}
             cumulativeVisitorsCount={cumulativeVisitorsCount}
             onOpenOnlineUsers={openOnlineUsers}
             onClaimSharedRewardCoins={handleClaimSharedRewardCoins}
@@ -2802,7 +2870,7 @@ export default function App() {
               room={{
                 ...activeRoom,
                 activeUsers: roomActiveCount,
-                visitorsCount: cumulativeVisitorsCount.toLocaleString()
+                visitorsCount: Math.max(registeredUsersCount, allRegisteredUsers.length, trulyOnlineUsers.length).toLocaleString()
               }}
               currentUser={currentUser}
               messages={activeRoomMessages}
@@ -2828,6 +2896,9 @@ export default function App() {
                 setIsGiftModalOpen(false);
                 openWallet();
               }}
+              onLoadOlderMessages={handleLoadOlderRoomMessages}
+              hasMoreOlderMessages={hasMoreRoomMessages}
+              isLoadingOlderMessages={isLoadingOlderRoomMsgs}
             />
           ) : (
             <>
@@ -3072,7 +3143,7 @@ export default function App() {
         isOpen={isAdminOpen}
         onClose={() => setIsAdminOpen(false)}
         currentUser={currentUser}
-        allUsers={globalOnlineUsers}
+        allUsers={allRegisteredUsers.length > 0 ? allRegisteredUsers : globalOnlineUsers}
         onUserModified={(updated) => {
           realtimeSocket.sendAdminAction(updated.id, updated);
           if (updated.id === currentUser.id) {

@@ -18,9 +18,22 @@ html.dark {
 }
 
 @layer base {
+  html,
+  body {
+    overscroll-behavior-y: none;
+    overscroll-behavior-x: none;
+  }
   body {
     font-family: 'Cairo', 'Tajawal', system-ui, -apple-system, sans-serif;
   }
+}
+
+.scrollbar-none {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
 }
 
 /* Custom smooth light scrollbar */
@@ -525,7 +538,31 @@ html.dark .chat-msg-row:not([data-preserve-light="true"]) .chat-text-outline-str
   background-image: linear-gradient(120deg, #c2410c, #fb923c, #f59e0b, #ea580c, #c2410c);
 }
 
+/* Soft, eye-friendly muted shimmer strictly for VIP/Rank username pills */
+@keyframes softNameShimmer {
+  0%, 100% {
+    background-position: -120% 0;
+  }
+  50% {
+    background-position: 180% 0;
+  }
+}
+
+.vip-name-pill {
+  position: relative;
+  overflow: hidden;
+  background-image: linear-gradient(
+    110deg,
+    transparent 25%,
+    rgba(255, 255, 255, 0.42) 48%,
+    transparent 70%
+  );
+  background-size: 220% 100%;
+  animation: softNameShimmer 6.5s ease-in-out infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
+  .vip-name-pill,
   .vip-msg-border::before {
     animation: none !important;
   }

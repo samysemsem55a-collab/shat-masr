@@ -157,10 +157,22 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
     const unsubUsers = subscribeToAllUsers((liveUsers) => {
       if (liveUsers && liveUsers.length > 0) {
         setUsersList((prev) => {
-          const map = new Map<string, User>();
-          prev.forEach((u) => map.set(u.id, u));
-          liveUsers.forEach((u) => map.set(u.id, { ...map.get(u.id), ...u }));
-          return Array.from(map.values());
+          const prevMap = new Map<string, User>();
+          prev.forEach((u) => {
+            if (u?.id) prevMap.set(u.id, u);
+          });
+          const deduped = new Map<string, User>();
+          liveUsers.forEach((u) => {
+            if (!u?.id) return;
+            const prevUser = prevMap.get(u.id);
+            deduped.set(u.id, {
+              ...u,
+              isOnline: prevUser?.isOnline ?? u.isOnline,
+              status: prevUser?.status ?? u.status,
+              lastSeen: prevUser?.lastSeen ?? u.lastSeen,
+            });
+          });
+          return Array.from(deduped.values());
         });
       }
     });
