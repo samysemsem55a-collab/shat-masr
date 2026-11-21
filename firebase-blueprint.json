@@ -339,6 +339,64 @@
         "updatedAt": { "type": "number" }
       },
       "required": ["app_version"]
+    },
+    "FriendRequest": {
+      "title": "FriendRequest",
+      "description": "Pending friend request between two users",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "senderId": { "type": "string", "maxLength": 128 },
+        "senderName": { "type": "string", "maxLength": 100 },
+        "senderAvatar": { "type": "string", "maxLength": 500 },
+        "receiverId": { "type": "string", "maxLength": 128 },
+        "status": { "type": "string", "maxLength": 20 },
+        "timestamp": { "type": "number" }
+      },
+      "required": ["senderId", "receiverId", "status"]
+    },
+    "RecentChatIndex": {
+      "title": "RecentChatIndex",
+      "description": "Per-user summary of direct conversations and unread counters",
+      "type": "object",
+      "properties": {
+        "chatId": { "type": "string", "maxLength": 260 },
+        "peerId": { "type": "string", "maxLength": 128 },
+        "peerName": { "type": "string", "maxLength": 100 },
+        "peerAvatar": { "type": "string", "maxLength": 500 },
+        "lastMessage": { "type": "string", "maxLength": 500 },
+        "lastSenderId": { "type": "string", "maxLength": 128 },
+        "lastTimestamp": { "type": "number" },
+        "unreadCount": { "type": "number" }
+      },
+      "required": ["chatId", "peerId"]
+    },
+    "CallSignal": {
+      "title": "CallSignal",
+      "description": "WebRTC audio/video call signaling payload",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "callerId": { "type": "string", "maxLength": 128 },
+        "calleeId": { "type": "string", "maxLength": 128 },
+        "type": { "type": "string", "maxLength": 30 },
+        "callType": { "type": "string", "maxLength": 20 },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["callerId", "calleeId", "type"]
+    },
+    "RoomPresence": {
+      "title": "RoomPresence",
+      "description": "Live user occupancy document inside a specific room",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "name": { "type": "string", "maxLength": 100 },
+        "isOnline": { "type": "boolean" },
+        "status": { "type": "string", "maxLength": 20 },
+        "lastSeen": { "type": "number" }
+      },
+      "required": ["id", "name"]
     }
   },
   "firestore": {
@@ -350,6 +408,26 @@
       "schema": "Friend",
       "description": "Accepted friends list of a user"
     },
+    "/users/{userId}/friend_requests/{requestId}": {
+      "schema": "FriendRequest",
+      "description": "Incoming friend requests for a user"
+    },
+    "/users/{userId}/recent_chats/{chatId}": {
+      "schema": "RecentChatIndex",
+      "description": "Per-user private chat inbox index and unread counters"
+    },
+    "/users/{userId}/user_messages/{msgId}": {
+      "schema": "DirectMessage",
+      "description": "Per-user message mirror for fast private inbox synchronization"
+    },
+    "/users/{userId}/call_signals/{signalId}": {
+      "schema": "CallSignal",
+      "description": "Incoming audio/video WebRTC call signaling queue"
+    },
+    "/users/{userId}/transactions/{txId}": {
+      "schema": "PaymentRequest",
+      "description": "Per-user coin and VIP recharge history"
+    },
     "/users/{userId}/settings/{settingId}": {
       "schema": "UserThemeSettings",
       "description": "Per-user persisted theme, dark mode, and wallpaper preferences"
@@ -357,6 +435,14 @@
     "/presence/{uid}": {
       "schema": "Presence",
       "description": "Mandatory real-time online presence with heartbeat and current room"
+    },
+    "/online_users/{userId}": {
+      "schema": "User",
+      "description": "Live active online users directory with status and lastSeen heartbeat"
+    },
+    "/friendRequests/{requestId}": {
+      "schema": "FriendRequest",
+      "description": "Top-level pending friend request records"
     },
     "/stories/{storyId}": {
       "schema": "Story",
@@ -377,6 +463,10 @@
     "/rooms/{roomId}/messages/{messageId}": {
       "schema": "Message",
       "description": "Public room message feed (auto-expires after 24h)"
+    },
+    "/rooms/{roomId}/presence/{presenceId}": {
+      "schema": "RoomPresence",
+      "description": "Live connected occupants inside each public or private room"
     },
     "/direct_chats/{chatId}": {
       "schema": "DirectChat",

@@ -69,6 +69,7 @@ class RealtimeSocketManager {
   private consentSignalListeners: Set<(signal: { kind: 'request' | 'response' | 'cancel'; payload: any }) => void> = new Set();
   private luxuryGiftListeners: Map<string, Set<(giftData: any) => void>> = new Map();
   private roomPurgedListeners: Map<string, Set<() => void>> = new Map();
+  private roomMessageDeletedListeners: Map<string, Set<(messageId: string) => void>> = new Map();
   private globalJoinListeners: Set<(user: { id: string; name: string; avatar?: string; role?: string; vipBadge?: string }) => void> = new Set();
   private allRoomLastMessageListeners: Set<(lastMessages: Record<string, { senderName: string; content: string; type?: string; timestamp: number }>) => void> = new Set();
   private latestRoomLastMessages: Record<string, { senderName: string; content: string; type?: string; timestamp: number }> = {};
@@ -682,6 +683,13 @@ class RealtimeSocketManager {
         break;
       }
 
+      case 'ROOM_MESSAGE_DELETED': {
+        if (action.roomId && action.messageId) {
+          this.roomMessageDeletedListeners.get(action.roomId)?.forEach(cb => cb(action.messageId));
+        }
+        break;
+      }
+
       case 'GLOBAL_USER_JOINED': {
         if (action.user && action.user.name) {
           this.globalJoinListeners.forEach(cb => cb(action.user));
@@ -890,6 +898,11 @@ class RealtimeSocketManager {
     this.send('CLEAR_ROOM_MESSAGES', { roomId });
   }
 
+  sendRoomMessageDeleted(roomId: string, messageId: string) {
+    if (!roomId || !messageId) return;
+    this.send('DELETE_ROOM_MESSAGE', { roomId, messageId });
+  }
+
   subscribeToRoomPurged(roomId: string, callback: () => void): () => void {
     if (!this.roomPurgedListeners.has(roomId)) {
       this.roomPurgedListeners.set(roomId, new Set());
@@ -897,6 +910,16 @@ class RealtimeSocketManager {
     this.roomPurgedListeners.get(roomId)!.add(callback);
     return () => {
       this.roomPurgedListeners.get(roomId)?.delete(callback);
+    };
+  }
+
+  subscribeToRoomMessageDeleted(roomId: string, callback: (messageId: string) => void): () => void {
+    if (!this.roomMessageDeletedListeners.has(roomId)) {
+      this.roomMessageDeletedListeners.set(roomId, new Set());
+    }
+    this.roomMessageDeletedListeners.get(roomId)!.add(callback);
+    return () => {
+      this.roomMessageDeletedListeners.get(roomId)?.delete(callback);
     };
   }
 

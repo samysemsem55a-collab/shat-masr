@@ -41,7 +41,9 @@ import {
   claimSharedMissionReward,
   recordForumPostView,
   subscribeToFriendsList,
-  sendDirectMessage
+  sendDirectMessage,
+  subscribeToAllRoomsTypingFromRTDB,
+  subscribeToAllRoomLastMessages
 } from '../services/firebase';
 import { isUserAdminOrOwner } from '../data/seedData';
 import { getRankDisplayMeta } from '../utils/userRanks';
@@ -814,7 +816,7 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
   }, [rooms]);
 
   useEffect(() => {
-    const unsubLastMsgs = realtimeSocket.subscribeToAllRoomLastMessages((lastMessages) => {
+    const unsubLastMsgs = subscribeToAllRoomLastMessages((lastMessages) => {
       const now = Date.now();
       const newlyActiveIds: string[] = [];
       for (const [roomId, lm] of Object.entries(lastMessages || {})) {
@@ -871,13 +873,42 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
     return () => clearInterval(timer);
   }, [pulsingRoomsMap]);
 
-  // Real-time WebSocket typing indicator across all public rooms
+  // Real-time WebSocket + Firebase RTDB typing indicator across all public rooms
   const [typingByRoom, setTypingByRoom] = useState<AllRoomsTypingMap>({});
   useEffect(() => {
+    let wsMap: AllRoomsTypingMap = {};
+    let rtdbMap: AllRoomsTypingMap = {};
+
+    const emitMerged = () => {
+      const next: AllRoomsTypingMap = {};
+      const allRoomIds = new Set([...Object.keys(wsMap), ...Object.keys(rtdbMap)]);
+      allRoomIds.forEach((roomId) => {
+        const dedup = new Map<string, { id: string; name: string }>();
+        (wsMap[roomId] || []).forEach((u) => {
+          if (u?.id) dedup.set(u.id, u);
+        });
+        (rtdbMap[roomId] || []).forEach((u) => {
+          if (u?.id) dedup.set(u.id, u);
+        });
+        if (dedup.size > 0) {
+          next[roomId] = Array.from(dedup.values());
+        }
+      });
+      setTypingByRoom(next);
+    };
+
     const unsubTyping = realtimeSocket.subscribeToAllRoomsTyping((nextMap) => {
-      setTypingByRoom({ ...nextMap });
+      wsMap = nextMap || {};
+      emitMerged();
     });
-    return () => unsubTyping();
+    const unsubRtdbTyping = subscribeToAllRoomsTypingFromRTDB((nextMap) => {
+      rtdbMap = nextMap || {};
+      emitMerged();
+    });
+    return () => {
+      unsubTyping();
+      unsubRtdbTyping();
+    };
   }, []);
 
   useEffect(() => {

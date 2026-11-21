@@ -3,6 +3,18 @@ import { User } from '../types/chat';
 export const PRESENCE_HEARTBEAT_MS = 15000; // 15 seconds heartbeat while active
 export const PRESENCE_OFFLINE_TIMEOUT_MS = 75000; // 75 seconds fallback TTL (instant removal via onDisconnect/sendBeacon/deleteDoc)
 
+let serverTimeOffsetMs = 0;
+
+export function setServerTimeOffsetMs(offsetMs: number): void {
+  if (typeof offsetMs === 'number' && Number.isFinite(offsetMs)) {
+    serverTimeOffsetMs = offsetMs;
+  }
+}
+
+export function getServerNowMs(): number {
+  return Date.now() + serverTimeOffsetMs;
+}
+
 export function resolveTimestampMs(value: any): number | undefined {
   if (typeof value === 'number' && !isNaN(value) && value > 0) {
     return value;
@@ -21,7 +33,7 @@ export function resolveTimestampMs(value: any): number | undefined {
   return undefined;
 }
 
-export function isUserTrulyOnline(user?: Partial<User> | null, nowMs: number = Date.now()): boolean {
+export function isUserTrulyOnline(user?: Partial<User> | null, nowMs: number = getServerNowMs()): boolean {
   if (!user) return false;
   if (user.status === 'offline') return false;
   if (user.isOnline === false) return false;
@@ -43,7 +55,7 @@ export function formatLastSeenArabic(lastSeenInput?: any): string {
   const ts = resolveTimestampMs(lastSeenInput);
   if (!ts) return 'غير متصل';
 
-  const diffMs = Math.max(0, Date.now() - ts);
+  const diffMs = Math.max(0, getServerNowMs() - ts);
   const diffMinutes = Math.floor(diffMs / 60000);
 
   if (diffMinutes < 1) {

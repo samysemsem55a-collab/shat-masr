@@ -1347,6 +1347,25 @@ wss.on('connection', (ws: WebSocket) => {
           break;
         }
 
+        case 'DELETE_ROOM_MESSAGE': {
+          const { roomId, messageId } = payload || {};
+          if (roomId && messageId) {
+            const roomMsgs = messagesByRoom.get(roomId);
+            if (Array.isArray(roomMsgs)) {
+              messagesByRoom.set(
+                roomId,
+                roomMsgs.filter((m: any) => m?.id !== messageId)
+              );
+            }
+            broadcastToRoom(roomId, {
+              type: 'ROOM_MESSAGE_DELETED',
+              roomId,
+              messageId
+            });
+          }
+          break;
+        }
+
         case 'PRIVATE_TYPING': {
           const { senderId, senderName, targetUserId, targetSessionId, isTyping } = payload || {};
           if (senderId && targetUserId) {

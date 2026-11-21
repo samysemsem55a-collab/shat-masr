@@ -1,0 +1,146 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "messages": {
+      "$roomId": {
+        ".read": true,
+        ".indexOn": ["timestamp", "createdAt"],
+        ".write": true,
+        "$messageId": {
+          ".validate": "newData.hasChildren(['id', 'senderId']) && newData.child('id').isString() && newData.child('senderId').isString() && (!newData.hasChild('text') || (newData.child('text').isString() && newData.child('text').val().length <= 4000)) && (!newData.hasChild('content') || (newData.child('content').isString() && newData.child('content').val().length <= 4000)) && (!newData.hasChild('timestamp') || newData.child('timestamp').isNumber())"
+        }
+      }
+    },
+    "direct_messages": {
+      "$convId": {
+        ".read": true,
+        ".indexOn": ["timestamp", "createdAt"],
+        ".write": true,
+        "$messageId": {
+          ".validate": "newData.hasChildren(['id', 'senderId', 'recipientId']) && newData.child('id').isString() && newData.child('senderId').isString() && newData.child('recipientId').isString() && (!newData.hasChild('text') || (newData.child('text').isString() && newData.child('text').val().length <= 4000)) && (!newData.hasChild('content') || (newData.child('content').isString() && newData.child('content').val().length <= 4000)) && (!newData.hasChild('timestamp') || newData.child('timestamp').isNumber())"
+        }
+      }
+    },
+    "user_direct_chats": {
+      "$userId": {
+        ".read": true,
+        ".indexOn": ["lastTimestamp"],
+        ".write": true,
+        "$convId": {
+          ".validate": "(!newData.hasChild('unreadCount') || newData.child('unreadCount').isNumber()) && (!newData.hasChild('lastTimestamp') || newData.child('lastTimestamp').isNumber())"
+        }
+      }
+    },
+    "private_typing": {
+      "$convId": {
+        ".read": true,
+        "$userId": {
+          ".write": true,
+          ".validate": "newData.hasChild('isTyping') && newData.child('isTyping').isBoolean() && (!newData.hasChild('updatedAt') || newData.child('updatedAt').isNumber())"
+        }
+      }
+    },
+    "room_typing": {
+      ".read": true,
+      "$roomId": {
+        "$userId": {
+          ".write": true,
+          ".validate": "newData.hasChild('isTyping') && newData.child('isTyping').isBoolean() && (!newData.hasChild('updatedAt') || newData.child('updatedAt').isNumber())"
+        }
+      }
+    },
+    "global_presence": {
+      ".read": true,
+      "$userId": {
+        ".write": true,
+        ".validate": "(!newData.hasChild('isOnline') || newData.child('isOnline').isBoolean()) && (!newData.hasChild('lastSeen') || newData.child('lastSeen').isNumber()) && (!newData.hasChild('lastSeenMs') || newData.child('lastSeenMs').isNumber())"
+      }
+    },
+    "rooms_presence": {
+      ".read": true,
+      "$roomId": {
+        "$userId": {
+          ".write": true,
+          ".validate": "(!newData.hasChild('isOnline') || newData.child('isOnline').isBoolean()) && (!newData.hasChild('lastSeen') || newData.child('lastSeen').isNumber()) && (!newData.hasChild('lastSeenMs') || newData.child('lastSeenMs').isNumber())"
+        }
+      }
+    },
+    "rooms_pinned": {
+      "$roomId": {
+        ".read": true,
+        ".write": true
+      }
+    },
+    "rooms_background": {
+      "$roomId": {
+        ".read": true,
+        ".write": true
+      }
+    },
+    "rooms_lock": {
+      ".read": true,
+      "$roomId": {
+        ".write": true,
+        ".validate": "!newData.hasChild('isLocked') || newData.child('isLocked').isBoolean()"
+      }
+    },
+    "rooms_allowed": {
+      "$roomId": {
+        ".read": true,
+        ".write": true
+      }
+    },
+    "room_join_requests": {
+      "$roomId": {
+        ".read": true,
+        ".write": true
+      }
+    },
+    "room_last_messages": {
+      ".read": true,
+      "$roomId": {
+        ".write": true,
+        ".validate": "!newData.hasChild('timestamp') || newData.child('timestamp').isNumber()"
+      }
+    },
+    "users": {
+      ".read": true,
+      "$userId": {
+        ".write": true
+      }
+    },
+    "friend_requests": {
+      "$userId": {
+        ".read": true,
+        ".write": true
+      }
+    },
+    "call_signals": {
+      "$userId": {
+        ".read": true,
+        ".write": true
+      }
+    },
+    "payments_pending": {
+      ".read": true,
+      ".write": true
+    },
+    "coin_transfers": {
+      ".read": true,
+      ".write": true
+    },
+    "platform_stats": {
+      ".read": true,
+      ".write": true
+    },
+    "app_config": {
+      ".read": true,
+      ".write": true
+    },
+    "moderation": {
+      ".read": true,
+      ".write": true
+    }
+  }
+}
