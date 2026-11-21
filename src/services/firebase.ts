@@ -258,13 +258,22 @@ export function subscribeToRoomPresence(
   onCountChange: (count: number, activeUsers: User[]) => void
 ): () => void {
   const presenceKey = `room_presence_${roomId}`;
-  const mergedMap = new Map<string, User>();
-  if (user?.id) {
-    mergedMap.set(user.id, { ...user, isOnline: true });
-  }
+  const fsUsersMap = new Map<string, User>();
+  const rtdbUsersMap = new Map<string, User>();
+  const roomLastSeenMap = new Map<string, number>();
 
   const emitMerged = () => {
-    const list = Array.from(mergedMap.values());
+    const combined = new Map<string, User>();
+    if (user?.id) {
+      combined.set(user.id, { ...user, isOnline: true, lastSeen: Date.now() });
+    }
+    rtdbUsersMap.forEach((u, id) => {
+      if (u && u.id) combined.set(id, { ...combined.get(id), ...u, isOnline: true });
+    });
+    fsUsersMap.forEach((u, id) => {
+      if (u && u.id) combined.set(id, { ...combined.get(id), ...u, isOnline: true });
+    });
+    const list = Array.from(combined.values());
     try {
       localStorage.setItem(presenceKey, JSON.stringify(list));
     } catch {}
@@ -274,7 +283,6 @@ export function subscribeToRoomPresence(
   let fsCleanup: (() => void) | null = null;
   let fsHeartbeat: ReturnType<typeof setInterval> | null = null;
   let fsSweep: ReturnType<typeof setInterval> | null = null;
-  const roomLastSeenMap = new Map<string, number>();
 
   if (db && user?.id) {
     try {
@@ -292,24 +300,37 @@ export function subscribeToRoomPresence(
         isBanned: !!user.isBanned,
         isMuted: !!user.isMuted,
         lastSeen: Date.now(),
+        lastSeenMs: Date.now(),
         updatedAt: serverTimestamp(),
       };
 
-      setDoc(presenceDocRef, presencePayload, { merge: true }).catch(() => {});
-      roomLastSeenMap.set(user.id, Date.now());
-
-      fsHeartbeat = setInterval(() => {
-        if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
-          return;
-        }
+      const writeRoomHeartbeat = () => {
+        if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
         const nowTs = Date.now();
         roomLastSeenMap.set(user.id, nowTs);
+        fsUsersMap.set(user.id, { ...user, isOnline: true, lastSeen: nowTs });
         setDoc(
           presenceDocRef,
-          { ...presencePayload, lastSeen: nowTs, updatedAt: serverTimestamp() },
+          { ...presencePayload, lastSeen: nowTs, lastSeenMs: nowTs, updatedAt: serverTimestamp() },
           { merge: true }
         ).catch(() => {});
-      }, PRESENCE_HEARTBEAT_MS);
+      };
+
+      writeRoomHeartbeat();
+      fsHeartbeat = setInterval(writeRoomHeartbeat, PRESENCE_HEARTBEAT_MS);
+
+      const handleFocusOrVisible = () => {
+        if (typeof document === 'undefined' || document.visibilityState === 'visible') {
+          writeRoomHeartbeat();
+        }
+      };
+      if (typeof window !== 'undefined') {
+        window.addEventListener('focus', handleFocusOrVisible);
+        window.addEventListener('online', handleFocusOrVisible);
+      }
+      if (typeof document !== 'undefined') {
+        document.addEventListener('visibilitychange', handleFocusOrVisible);
+      }
 
       const presenceCol = collection(db, 'rooms', roomId, 'presence');
       const unsubFs = onSnapshot(
@@ -323,7 +344,7 @@ export function subscribeToRoomPresence(
             const data = docSnap.data();
             if (data.status === 'offline' || data.isOnline === false) {
               roomLastSeenMap.delete(docSnap.id);
-              mergedMap.delete(docSnap.id);
+              fsUsersMap.delete(docSnap.id);
               return;
             }
             const lastSeen =
@@ -333,7 +354,7 @@ export function subscribeToRoomPresence(
               const effectiveSeen = lastSeen || now;
               activeDocIds.add(docSnap.id);
               roomLastSeenMap.set(docSnap.id, effectiveSeen);
-              mergedMap.set(docSnap.id, {
+              fsUsersMap.set(docSnap.id, {
                 id: docSnap.id,
                 name: data.name || 'عضو',
                 avatar: data.avatar || '',
@@ -349,14 +370,14 @@ export function subscribeToRoomPresence(
               } as User);
             } else {
               roomLastSeenMap.delete(docSnap.id);
-              mergedMap.delete(docSnap.id);
+              fsUsersMap.delete(docSnap.id);
             }
           });
           if (isBrowserOnline && !snap.metadata.fromCache) {
-            Array.from(mergedMap.keys()).forEach((id) => {
+            Array.from(fsUsersMap.keys()).forEach((id) => {
               if (id !== user.id && !activeDocIds.has(id)) {
                 roomLastSeenMap.delete(id);
-                mergedMap.delete(id);
+                fsUsersMap.delete(id);
               }
             });
           }
@@ -376,7 +397,7 @@ export function subscribeToRoomPresence(
         roomLastSeenMap.forEach((ts, id) => {
           if (id !== user.id && now - ts > PRESENCE_OFFLINE_TIMEOUT_MS) {
             roomLastSeenMap.delete(id);
-            if (mergedMap.delete(id)) changed = true;
+            if (fsUsersMap.delete(id)) changed = true;
           }
         });
         if (changed) emitMerged();
@@ -386,6 +407,13 @@ export function subscribeToRoomPresence(
         unsubFs();
         if (fsHeartbeat) clearInterval(fsHeartbeat);
         if (fsSweep) clearInterval(fsSweep);
+        if (typeof window !== 'undefined') {
+          window.removeEventListener('focus', handleFocusOrVisible);
+          window.removeEventListener('online', handleFocusOrVisible);
+        }
+        if (typeof document !== 'undefined') {
+          document.removeEventListener('visibilitychange', handleFocusOrVisible);
+        }
         deleteDoc(presenceDocRef).catch(() => {});
       };
     } catch (e) {
@@ -420,13 +448,14 @@ export function subscribeToRoomPresence(
 
       const unsubOccupants = onValue(occupantsRef, (snapshot) => {
         const data = snapshot.val();
+        rtdbUsersMap.clear();
         if (data) {
           const usersList = Object.values(data) as User[];
           usersList.forEach((u) => {
-            if (u && u.id) mergedMap.set(u.id, { ...mergedMap.get(u.id), ...u, isOnline: true });
+            if (u && u.id) rtdbUsersMap.set(u.id, { ...u, isOnline: true });
           });
-          emitMerged();
         }
+        emitMerged();
       });
 
       rtdbCleanup = () => {
@@ -445,14 +474,14 @@ export function subscribeToRoomPresence(
   liveChatBus?.postMessage({
     type: 'PRESENCE_UPDATE',
     roomId,
-    users: Array.from(mergedMap.values())
+    users: Array.from(fsUsersMap.values())
   });
 
   const handleMessage = (event: MessageEvent) => {
     if (event.data?.type === 'PRESENCE_UPDATE' && event.data.roomId === roomId) {
       const users: User[] = event.data.users || [];
       users.forEach((u) => {
-        if (u && u.id) mergedMap.set(u.id, { ...mergedMap.get(u.id), ...u, isOnline: true });
+        if (u && u.id) fsUsersMap.set(u.id, { ...fsUsersMap.get(u.id), ...u, isOnline: true });
       });
       emitMerged();
     }
@@ -460,11 +489,12 @@ export function subscribeToRoomPresence(
   liveChatBus?.addEventListener('message', handleMessage);
 
   return () => {
-    mergedMap.delete(user.id);
+    fsUsersMap.delete(user.id);
+    rtdbUsersMap.delete(user.id);
     liveChatBus?.postMessage({
       type: 'PRESENCE_UPDATE',
       roomId,
-      users: Array.from(mergedMap.values())
+      users: Array.from(fsUsersMap.values())
     });
     liveChatBus?.removeEventListener('message', handleMessage);
     if (fsCleanup) fsCleanup();
@@ -538,6 +568,7 @@ export function subscribeToGlobalPresence(
   let heartbeatTimer: any = null;
   let sweepTimer: any = null;
   let visibilityHandler: (() => void) | null = null;
+  let focusOnlineHandler: (() => void) | null = null;
   const rtdbTrackedIds = new Set<string>();
 
   if (db && user && user.id) {
@@ -572,11 +603,12 @@ export function subscribeToGlobalPresence(
         ratingPoints: Number(user.ratingPoints) || 0,
         isOnline: true,
         lastSeen: Date.now(),
+        lastSeenMs: Date.now(),
         updatedAt: serverTimestamp()
       };
 
-      const sendPresenceHeartbeat = (forceEvenIfHidden: boolean = false) => {
-        if (!forceEvenIfHidden && typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+      const sendPresenceHeartbeat = (_forceEvenIfHidden: boolean = false) => {
+        if (typeof navigator !== 'undefined' && navigator.onLine === false) {
           return;
         }
         const nowTs = Date.now();
@@ -584,6 +616,7 @@ export function subscribeToGlobalPresence(
         setDoc(userOnlineDoc, {
           ...onlinePayload,
           lastSeen: nowTs,
+          lastSeenMs: nowTs,
           updatedAt: serverTimestamp()
         }, { merge: true }).catch(() => {});
         setDoc(userPresenceDoc, {
@@ -614,9 +647,17 @@ export function subscribeToGlobalPresence(
       // Write presence immediately
       sendPresenceHeartbeat(true);
 
-      // Send heartbeat every 15 seconds while active (30s inactivity/disconnect timeout)
-      heartbeatTimer = setInterval(() => sendPresenceHeartbeat(false), PRESENCE_HEARTBEAT_MS);
+      // Send heartbeat every 15 seconds while connected
+      heartbeatTimer = setInterval(() => sendPresenceHeartbeat(true), PRESENCE_HEARTBEAT_MS);
       unsubReconnect = realtimeSocket.subscribeToReconnectSuccess(() => sendPresenceHeartbeat(true));
+
+      focusOnlineHandler = () => {
+        sendPresenceHeartbeat(true);
+      };
+      if (typeof window !== 'undefined') {
+        window.addEventListener('focus', focusOnlineHandler);
+        window.addEventListener('online', focusOnlineHandler);
+      }
 
       if (typeof document !== 'undefined') {
         visibilityHandler = () => {
@@ -828,6 +869,10 @@ export function subscribeToGlobalPresence(
     if (sweepTimer) clearInterval(sweepTimer);
     if (visibilityHandler && typeof document !== 'undefined') {
       document.removeEventListener('visibilitychange', visibilityHandler);
+    }
+    if (focusOnlineHandler && typeof window !== 'undefined') {
+      window.removeEventListener('focus', focusOnlineHandler);
+      window.removeEventListener('online', focusOnlineHandler);
     }
     if (unsubReconnect) unsubReconnect();
     if (unsubFirestore) unsubFirestore();
@@ -4691,11 +4736,38 @@ export async function updatePresenceCurrentRoom(uid: string, roomId: string | nu
   } catch {}
 }
 
-export async function markUserPresenceOffline(uid: string): Promise<void> {
+export async function markUserPresenceOffline(uid: string, roomId?: string | null): Promise<void> {
   if (!uid) return;
+  if (typeof navigator !== 'undefined') {
+    const payload = JSON.stringify({ userId: uid, roomId: roomId || undefined });
+    try {
+      const sent = typeof navigator.sendBeacon === 'function'
+        ? navigator.sendBeacon('/api/presence/offline', new Blob([payload], { type: 'application/json' }))
+        : false;
+      if (!sent && typeof fetch === 'function') {
+        fetch('/api/presence/offline', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: payload,
+          keepalive: true,
+        }).catch(() => {});
+      }
+    } catch {}
+  }
+  if (rtdb) {
+    try {
+      set(ref(rtdb, `global_presence/${uid}`), null).catch(() => {});
+      if (roomId) {
+        set(ref(rtdb, `rooms_presence/${roomId}/${uid}`), null).catch(() => {});
+      }
+    } catch {}
+  }
   if (db) {
     try {
       const nowTs = Date.now();
+      if (roomId) {
+        deleteDoc(doc(db, 'rooms', roomId, 'presence', uid)).catch(() => {});
+      }
       await setDoc(
         doc(db, 'presence', uid),
         {

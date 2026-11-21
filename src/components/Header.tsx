@@ -138,7 +138,7 @@ export const Header: React.FC<HeaderProps> = React.memo(({
   };
 
   return (
-    <header dir="rtl" className="sticky top-0 z-[50] bg-[#EAF5FD]/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-sky-200/80 dark:border-slate-800 px-2 sm:px-5 py-2 pt-[calc(env(safe-area-inset-top,0px)+0.5rem)] shadow-sm transition-colors duration-300">
+    <header dir="rtl" className="relative shrink-0 z-[50] bg-[#EAF5FD]/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-sky-200/80 dark:border-slate-800 px-2 sm:px-5 py-2 pt-[calc(env(safe-area-inset-top,0px)+0.5rem)] shadow-sm transition-colors duration-300">
       <div className="max-w-7xl mx-auto flex items-center justify-between gap-1 sm:gap-2">
 
         {/* Primary Header Row: Profile + Desktop Brand/Pills + Symmetrical Icon Toolbar */}
@@ -304,13 +304,15 @@ export const Header: React.FC<HeaderProps> = React.memo(({
                     onOpenMessagesTab?.();
                   }}
                   title="الرسائل الخاصة والأصدقاء"
-                  className={`relative w-8 h-9 sm:w-9 rounded-xl border flex items-center justify-center transition-all shrink-0 active:scale-95 cursor-pointer ${
+                  aria-label="الرسائل الخاصة والأصدقاء"
+                  className={`relative h-9 px-2 sm:px-2.5 rounded-xl border flex items-center justify-center gap-1 transition-all shrink-0 active:scale-95 cursor-pointer ${
                     combinedPrivateBadge > 0
-                      ? 'bg-[#E1F1FD] hover:bg-[#D2EAFB] border-sky-300 text-[#1E96E8] shadow-xs'
-                      : 'bg-slate-100 hover:bg-slate-200 border-slate-200 text-slate-700'
+                      ? 'bg-[#D6ECFC] hover:bg-[#C3E3FA] border-[#1E96E8]/55 text-[#0F5AA8] shadow-xs'
+                      : 'bg-[#E1F1FD] hover:bg-[#D0E9FC] border-sky-300/90 text-[#1565C0] shadow-xs'
                   }`}
                 >
-                  <MessageCircle strokeWidth={2} className="w-4 h-4 opacity-100 saturate-110 brightness-105" />
+                  <MessageCircle strokeWidth={2.2} className="w-4 h-4 opacity-100 saturate-110 brightness-105 shrink-0" />
+                  <span className="hidden sm:inline text-xs font-black">الخاص</span>
                   {combinedPrivateBadge > 0 && (
                     <span className="absolute -top-1 -right-1 min-w-[16px] h-[16px] px-1 rounded-full bg-[#1E96E8] text-white text-[9px] font-black flex items-center justify-center shadow border border-white tabular-nums">
                       {combinedPrivateBadge > 99 ? '99+' : combinedPrivateBadge}

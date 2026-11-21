@@ -545,6 +545,21 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
   };
 
   useEffect(() => {
+    if (!activeContact || typeof window === 'undefined' || !window.visualViewport) return;
+    const handleViewportResize = () => {
+      if (isNearBottomRef.current) {
+        requestAnimationFrame(() => {
+          messagesEndRef.current?.scrollIntoView({ behavior: 'auto' });
+        });
+      }
+    };
+    window.visualViewport.addEventListener('resize', handleViewportResize);
+    return () => {
+      window.visualViewport?.removeEventListener('resize', handleViewportResize);
+    };
+  }, [activeContact?.id]);
+
+  useEffect(() => {
     if (!activeContact || messages.length === 0) return;
     const lastMsg = messages[messages.length - 1];
     const lastId = lastMsg?.id || null;
@@ -978,7 +993,7 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
   };
 
   return (
-    <div className={isDrawer ? "h-full w-full max-w-full flex flex-col bg-white overflow-x-hidden overflow-y-hidden overscroll-none" : "w-full sm:px-3 max-w-4xl mx-auto h-[calc(100dvh-54px-50px)] sm:h-[calc(100dvh-56px-52px)] flex flex-col overflow-x-hidden overscroll-none"}>
+    <div className={isDrawer ? "h-full w-full max-w-full flex flex-col bg-white overflow-x-hidden overflow-y-hidden overscroll-none" : "w-full sm:px-3 max-w-4xl mx-auto h-full flex flex-col overflow-hidden overscroll-none"}>
 
       {/* If No Contact Selected: Show Inbox & Friends Navigation (Calm Sky-Blue Theme) */}
       {!activeContact ? (
@@ -1150,7 +1165,7 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
 
           {/* Tab 1: Recent Active Direct Chats */}
           {activeTab === 'chats' && (
-            <div className="space-y-2 flex-1 overflow-y-auto overscroll-contain pb-4">
+            <div className={`space-y-2 flex-1 overflow-y-auto overscroll-contain ${isDrawer ? 'pb-4' : 'pb-[calc(64px+env(safe-area-inset-bottom,0px))]'}`}>
               {recentChats.length === 0 ? (
                 <div className="p-8 text-center rounded-3xl bg-white border border-slate-200/90 space-y-3 mt-4 shadow-sm">
                   <div className="w-14 h-14 rounded-full bg-sky-50 border border-sky-200 text-[#1E96E8] flex items-center justify-center mx-auto text-2xl shadow-inner">
@@ -1275,7 +1290,7 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
 
           {/* Tab 2: Friends List (Connected to Firestore /users/{uid}/friends with onSnapshot) */}
           {activeTab === 'friends' && (
-            <div className="flex-1 overflow-y-auto overscroll-contain pb-4">
+            <div className={`flex-1 overflow-y-auto overscroll-contain ${isDrawer ? 'pb-4' : 'pb-[calc(64px+env(safe-area-inset-bottom,0px))]'}`}>
               <FriendsList
                 currentUser={currentUser}
                 onStartPrivateChat={handleSelectFriendForChat}
@@ -1285,7 +1300,7 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
 
           {/* Tab 3: Online Users Available to Message */}
           {activeTab === 'online' && (
-            <div className="space-y-2 flex-1 overflow-y-auto overscroll-contain pb-4">
+            <div className={`space-y-2 flex-1 overflow-y-auto overscroll-contain ${isDrawer ? 'pb-4' : 'pb-[calc(64px+env(safe-area-inset-bottom,0px))]'}`}>
               {globalOnlineUsers.filter(u => u.id !== currentUser.id && isUserTrulyOnline(u)).length === 0 ? (
                 <div className="p-8 text-center rounded-2xl bg-white border border-slate-200 space-y-2 shadow-xs">
                   <p className="text-xs text-slate-600">لا يوجد متصلون آخرون في هذه اللحظة.</p>
@@ -1362,7 +1377,7 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
           style={getWallpaperStyleById(currentUser.chatWallpaper || 'wp_white_gold_doodle')}
           className={isDrawer
             ? "h-full w-full max-w-full flex flex-col bg-[#F3F9FE] overflow-x-hidden overflow-y-hidden overscroll-none"
-            : "fixed inset-0 z-[60] w-screen max-w-full h-[100dvh] sm:relative sm:inset-auto sm:z-auto sm:w-full sm:h-full flex flex-col bg-[#F3F9FE] border-0 sm:border border-sky-200/80 rounded-none sm:rounded-3xl overflow-x-hidden overflow-y-hidden overscroll-none shadow-2xl"
+            : "fixed inset-x-0 top-0 z-[60] w-screen max-w-full h-[var(--app-height,100dvh)] sm:relative sm:inset-auto sm:z-auto sm:w-full sm:h-full flex flex-col bg-[#F3F9FE] border-0 sm:border border-sky-200/80 rounded-none sm:rounded-3xl overflow-x-hidden overflow-y-hidden overscroll-none shadow-2xl"
           }
         >
           {/* Hidden Media File Input (Images & Videos) */}
@@ -2204,6 +2219,13 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                     data-form-type="other"
                     value={inputText}
                     onChange={(e) => handleInputChange(e.target.value)}
+                    onFocus={() => {
+                      if (isNearBottomRef.current) {
+                        setTimeout(() => {
+                          messagesEndRef.current?.scrollIntoView({ behavior: 'auto' });
+                        }, 140);
+                      }
+                    }}
                     onBlur={stopPrivateTypingNow}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter' && !e.shiftKey) {

@@ -86,6 +86,8 @@ class RealtimeSocketManager {
   private networkRecoveryHandler: (() => Promise<void>) | null = null;
   private visibilityBound = false;
   private latestCumulativeVisitorsCount = 15480;
+  private latestGlobalUsers: User[] = [];
+  private latestRoomPresence: Map<string, { count: number; users: User[] }> = new Map();
 
   setTokenProvider(provider: (forceRefresh?: boolean) => Promise<string | null>) {
     this.tokenProvider = provider;
@@ -189,7 +191,7 @@ class RealtimeSocketManager {
   private startHeartbeat() {
     this.stopHeartbeat();
     this.heartbeatTimer = setInterval(() => {
-      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+      if (typeof navigator !== 'undefined' && navigator.onLine === false) {
         return;
       }
       if (this.socket && this.socket.readyState === WebSocket.OPEN) {
@@ -391,16 +393,24 @@ class RealtimeSocketManager {
 
       case 'PRESENCE_UPDATE': {
         const { roomId, count, users } = action;
+        const normalizedUsers = Array.isArray(users) ? users : [];
+        const normalizedCount = Math.max(1, Number(count) || normalizedUsers.length);
+        if (roomId) {
+          this.latestRoomPresence.set(roomId, { count: normalizedCount, users: normalizedUsers });
+        }
         const listeners = this.presenceListeners.get(roomId);
         if (listeners) {
-          listeners.forEach(cb => cb(count, users));
+          listeners.forEach(cb => cb(normalizedCount, normalizedUsers));
         }
         break;
       }
 
       case 'GLOBAL_PRESENCE_UPDATE': {
         const { users } = action;
-        this.globalPresenceListeners.forEach(cb => cb(users));
+        if (Array.isArray(users)) {
+          this.latestGlobalUsers = users;
+          this.globalPresenceListeners.forEach(cb => cb(users));
+        }
         break;
       }
 
@@ -922,6 +932,13 @@ class RealtimeSocketManager {
     }
     this.presenceListeners.get(roomId)!.add(callback);
 
+    const cached = this.latestRoomPresence.get(roomId);
+    if (cached && cached.users.length > 0) {
+      try {
+        callback(cached.count, cached.users);
+      } catch {}
+    }
+
     return () => {
       this.presenceListeners.get(roomId)?.delete(callback);
     };
@@ -929,6 +946,11 @@ class RealtimeSocketManager {
 
   subscribeToGlobalPresence(callback: GlobalPresenceCallback): () => void {
     this.globalPresenceListeners.add(callback);
+    if (this.latestGlobalUsers.length > 0) {
+      try {
+        callback(this.latestGlobalUsers);
+      } catch {}
+    }
     return () => {
       this.globalPresenceListeners.delete(callback);
     };

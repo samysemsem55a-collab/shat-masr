@@ -40,6 +40,7 @@ import { User, Room, Message, GiftItem, VipTier, SpeakerSeat, FriendRequest, Dai
 import { INITIAL_ROOMS, getOrCreateUser, isUserAdminOrOwner, hasCompletedMandatoryProfile } from './data/seedData';
 import { sounds } from './utils/soundEffects';
 import { preloadAppAssets } from './utils/assetCache';
+import { applySmoothAppUpdate } from './utils/appUpdater';
 import { realtimeSocket } from './services/realtimeSocket';
 import { offlineQueue } from './services/offlineQueue';
 import { globalRadioPlayer } from './services/radioPlayer';
@@ -604,6 +605,32 @@ export default function App() {
   const activeRoomRef = useRef<Room | null>(activeRoom);
   activeRoomRef.current = activeRoom;
 
+  // Dynamic Visual Viewport height sync (--app-height) + document scroll lock to eliminate mobile keyboard white gaps
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const syncViewportHeight = () => {
+      const vh = window.visualViewport?.height || window.innerHeight;
+      if (vh > 0) {
+        document.documentElement.style.setProperty('--app-height', `${Math.round(vh)}px`);
+      }
+      if (window.scrollY !== 0 || window.scrollX !== 0) {
+        window.scrollTo(0, 0);
+      }
+    };
+    syncViewportHeight();
+    const vv = window.visualViewport;
+    vv?.addEventListener('resize', syncViewportHeight);
+    vv?.addEventListener('scroll', syncViewportHeight);
+    window.addEventListener('resize', syncViewportHeight);
+    window.addEventListener('orientationchange', syncViewportHeight);
+    return () => {
+      vv?.removeEventListener('resize', syncViewportHeight);
+      vv?.removeEventListener('scroll', syncViewportHeight);
+      window.removeEventListener('resize', syncViewportHeight);
+      window.removeEventListener('orientationchange', syncViewportHeight);
+    };
+  }, []);
+
   // Persist User Changes & Sync to Firebase only after mandatory onboarding completes
   useEffect(() => {
     if (hasCompletedMandatoryProfile(currentUser)) {
@@ -702,7 +729,7 @@ export default function App() {
   useEffect(() => {
     if (!isProfileReady || !currentUser.id) return;
     const handleBeforeUnload = () => {
-      markUserPresenceOffline(currentUser.id).catch(() => {});
+      markUserPresenceOffline(currentUser.id, activeRoomRef.current?.id).catch(() => {});
     };
     window.addEventListener('pagehide', handleBeforeUnload);
     window.addEventListener('beforeunload', handleBeforeUnload);
@@ -1480,13 +1507,29 @@ export default function App() {
     // Join room on real-time server
     realtimeSocket.joinRoom(activeRoom.id, currentUser);
 
-    // Subscribe to server-side + Firestore room presence (real live users inside THIS room only)
-    const unsubPresence = realtimeSocket.subscribeToPresence(activeRoom.id, (count, occupants) => {
-      setRoomActiveCount(prev => (prev === count ? prev : count));
-      setRoomActiveUsers(prev => (areUserListsEqual(prev, occupants) ? prev : occupants));
-      setRooms(prev => {
+    // Subscribe to server-side + Firestore/RTDB room presence cleanly without overwriting one source with the other
+    let wsOccupantsList: User[] = [];
+    let fsOccupantsList: User[] = [];
+
+    const syncMergedRoomPresence = () => {
+      const me = currentUserRef.current;
+      const mergedMap = new Map<string, User>();
+      if (me?.id) {
+        mergedMap.set(me.id, { ...me, isOnline: true });
+      }
+      wsOccupantsList.forEach((u) => {
+        if (u && u.id) mergedMap.set(u.id, { ...mergedMap.get(u.id), ...u, isOnline: true });
+      });
+      fsOccupantsList.forEach((u) => {
+        if (u && u.id) mergedMap.set(u.id, { ...mergedMap.get(u.id), ...u, isOnline: true });
+      });
+      const merged = Array.from(mergedMap.values());
+      const count = Math.max(1, merged.length);
+      setRoomActiveUsers((prev) => (areUserListsEqual(prev, merged) ? prev : merged));
+      setRoomActiveCount((prev) => (prev === count ? prev : count));
+      setRooms((prev) => {
         let changed = false;
-        const next = prev.map(r => {
+        const next = prev.map((r) => {
           if (r.id === activeRoom.id && r.activeUsers !== count) {
             changed = true;
             return { ...r, activeUsers: count };
@@ -1495,29 +1538,16 @@ export default function App() {
         });
         return changed ? next : prev;
       });
+    };
+
+    const unsubPresence = realtimeSocket.subscribeToPresence(activeRoom.id, (_count, occupants) => {
+      wsOccupantsList = Array.isArray(occupants) ? occupants : [];
+      syncMergedRoomPresence();
     });
 
-    const unsubRoomFirestorePresence = subscribeToRoomPresence(activeRoom.id, currentUser, (fsCount, fsOccupants) => {
-      setRoomActiveUsers((prev) => {
-        const map = new Map<string, User>();
-        fsOccupants.forEach((u) => {
-          if (u && u.id) map.set(u.id, u);
-        });
-        const merged = Array.from(map.values());
-        return areUserListsEqual(prev, merged) ? prev : merged;
-      });
-      setRoomActiveCount((prev) => (prev === fsCount ? prev : fsCount));
-      setRooms((prev) => {
-        let changed = false;
-        const next = prev.map((r) => {
-          if (r.id === activeRoom.id && r.activeUsers !== fsCount) {
-            changed = true;
-            return { ...r, activeUsers: fsCount };
-          }
-          return r;
-        });
-        return changed ? next : prev;
-      });
+    const unsubRoomFirestorePresence = subscribeToRoomPresence(activeRoom.id, currentUser, (_fsCount, fsOccupants) => {
+      fsOccupantsList = Array.isArray(fsOccupants) ? fsOccupants : [];
+      syncMergedRoomPresence();
     });
 
     // Subscribe to server-side messages & history
@@ -2229,7 +2259,7 @@ export default function App() {
     try {
       await Promise.race([
         Promise.allSettled([
-          markUserPresenceOffline(currentUser.id),
+          markUserPresenceOffline(currentUser.id, activeRoomRef.current?.id),
           logOutUser(),
         ]),
         new Promise((resolve) => setTimeout(resolve, 1200)),
@@ -2388,7 +2418,7 @@ export default function App() {
   // Initial Full-Screen Arabic RTL Welcome Screen until user taps "دخول فوري بدون تسجيل" or logs in
   if (!isProfileReady) {
     return (
-      <div className={`min-h-screen text-slate-900 dark:text-slate-100 transition-colors duration-300 ${fontClass}`}>
+      <div className={`h-[var(--app-height,100dvh)] overflow-y-auto overscroll-contain text-slate-900 dark:text-slate-100 transition-colors duration-300 ${fontClass}`}>
         <Toaster
           position="top-center"
           dir="rtl"
@@ -2414,7 +2444,7 @@ export default function App() {
   }
 
   return (
-    <div className={`min-h-screen original-app-bg text-slate-900 dark:text-slate-100 transition-colors duration-300 ${fontClass}`}>
+    <div className={`app-viewport-shell w-full flex flex-col overflow-hidden overscroll-none original-app-bg text-slate-900 dark:text-slate-100 transition-colors duration-300 ${fontClass}`}>
       
       {/* Sonner Professional Toast Notifications (z-index 300) */}
       <Toaster
@@ -2447,7 +2477,7 @@ export default function App() {
             </p>
             <button
               type="button"
-              onClick={() => window.location.reload()}
+              onClick={() => applySmoothAppUpdate(remoteVersionInfo.version)}
               className="w-full py-3 rounded-2xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-black text-xs shadow-lg cursor-pointer"
             >
               تحديث الآن 🔄
@@ -2474,7 +2504,7 @@ export default function App() {
                 try {
                   localStorage.setItem(`seen_update_for_version_${remoteVersionInfo.version}`, 'true');
                 } catch {}
-                window.location.reload();
+                applySmoothAppUpdate(remoteVersionInfo.version);
               }}
               className="pointer-events-auto cursor-pointer flex items-center justify-between gap-2.5 px-3.5 py-2.5 rounded-2xl bg-gradient-to-l from-emerald-600 to-teal-600 text-white shadow-2xl border border-white/25"
             >
@@ -2519,7 +2549,7 @@ export default function App() {
                     try {
                       localStorage.setItem(`seen_update_for_version_${appUpdateNotice.version}`, 'true');
                     } catch {}
-                    window.location.reload();
+                    applySmoothAppUpdate(appUpdateNotice.version);
                   }}
                   className="px-2.5 py-1 rounded-xl bg-white text-indigo-700 hover:bg-amber-50 text-[11px] font-black flex items-center gap-1 shadow-sm active:scale-95 transition cursor-pointer"
                 >
@@ -2833,18 +2863,16 @@ export default function App() {
         </div>
       )}
 
-      {/* 2. Main View Routing: Home Page (RoomsView) remains persistently mounted & frozen to prevent re-mounts/reloads */}
+      {/* 2. Main View Routing: Locked inside 100dvh viewport flex container so Header stays permanently pinned */}
       <main
         className={
           activeRoom
-            ? "w-full h-[100dvh] overflow-hidden overscroll-none"
-            : currentTab === 'chat'
-            ? "max-w-7xl mx-auto h-[calc(100dvh-54px)] overflow-hidden overscroll-none"
-            : "max-w-7xl mx-auto min-h-[calc(100dvh-56px)]"
+            ? "flex-1 min-h-0 w-full overflow-hidden overscroll-none"
+            : "flex-1 min-h-0 w-full max-w-7xl mx-auto overflow-hidden overscroll-none"
         }
       >
         {/* Frozen Home Page Container (always mounted; hidden via CSS when inside a room or on another tab) */}
-        <div className={!activeRoom && currentTab === 'home' ? '' : 'hidden'}>
+        <div className={!activeRoom && currentTab === 'home' ? 'h-full w-full overflow-y-auto overflow-x-hidden overscroll-contain pb-[calc(64px+env(safe-area-inset-bottom,0px))]' : 'hidden'}>
           <RoomsView
             rooms={rooms}
             currentUser={currentUser}
@@ -2885,6 +2913,8 @@ export default function App() {
               onUpdateRoomLock={(locked) => handleUpdateRoomLock(activeRoom.id, locked)}
               onOpenUserProfile={(u) => setSelectedProfileUser(u)}
               onOpenPrivateChatWith={handleOpenPrivateChatWith}
+              onOpenMessagesDrawer={openMessagesDrawer}
+              unreadPrivateCount={totalUnreadMessagesCount + pendingFriendRequests.length}
               onSendGiftToUser={handleSendGiftToUser}
               onOpenOnlineUsers={openOnlineUsers}
               onUpdateUser={(updated) => {
@@ -2931,30 +2961,34 @@ export default function App() {
               )}
 
               {currentTab === 'games' && (
-                <GamesView
-                  currentUser={currentUser}
-                  allOnlineUsers={globalOnlineUsers}
-                  onUpdateCoins={(coins) => handleUpdateUserBalance(coins, currentUser.earningsEgp)}
-                  onOpenWallet={openWallet}
-                />
+                <div className="h-full w-full overflow-y-auto overflow-x-hidden overscroll-contain pb-[calc(64px+env(safe-area-inset-bottom,0px))]">
+                  <GamesView
+                    currentUser={currentUser}
+                    allOnlineUsers={globalOnlineUsers}
+                    onUpdateCoins={(coins) => handleUpdateUserBalance(coins, currentUser.earningsEgp)}
+                    onOpenWallet={openWallet}
+                  />
+                </div>
               )}
 
               {currentTab === 'profile' && (
-                <ProfileView
-                  currentUser={currentUser}
-                  onUpdateUser={(updated) => {
-                    const merged = { ...currentUserRef.current, ...updated };
-                    setCurrentUser(merged);
-                    propagateUserIdentityAcrossApp(merged).catch(() => {});
-                  }}
-                  onOpenWallet={openWallet}
-                  onOpenVip={openVip}
-                  onLogout={handleLogout}
-                  isDarkMode={isDarkMode}
-                  onToggleDarkMode={toggleDarkMode}
-                  openToSupport={openSupportRequested}
-                  onConsumeSupportScroll={() => setOpenSupportRequested(false)}
-                />
+                <div className="h-full w-full overflow-y-auto overflow-x-hidden overscroll-contain pb-[calc(64px+env(safe-area-inset-bottom,0px))]">
+                  <ProfileView
+                    currentUser={currentUser}
+                    onUpdateUser={(updated) => {
+                      const merged = { ...currentUserRef.current, ...updated };
+                      setCurrentUser(merged);
+                      propagateUserIdentityAcrossApp(merged).catch(() => {});
+                    }}
+                    onOpenWallet={openWallet}
+                    onOpenVip={openVip}
+                    onLogout={handleLogout}
+                    isDarkMode={isDarkMode}
+                    onToggleDarkMode={toggleDarkMode}
+                    openToSupport={openSupportRequested}
+                    onConsumeSupportScroll={() => setOpenSupportRequested(false)}
+                  />
+                </div>
               )}
             </>
           )}

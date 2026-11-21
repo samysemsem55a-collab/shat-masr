@@ -13,7 +13,20 @@ const app = express();
 const server = http.createServer(app);
 const PORT = Number(process.env.PORT) || 3000;
 
+function computeServerBuildVersion(): string {
+  try {
+    const distHtml = path.resolve(__dirname, 'dist', 'index.html');
+    if (fs.existsSync(distHtml)) {
+      const stat = fs.statSync(distHtml);
+      return `build-${Math.floor(stat.mtimeMs)}`;
+    }
+  } catch {}
+  return `srv-${Date.now()}`;
+}
+const SERVER_BUILD_VERSION = computeServerBuildVersion();
+
 app.use(express.json());
+app.use(express.text({ type: 'text/plain' }));
 
 // In-Memory Authoritative Real-Time Data Store
 interface ChatMessage {
@@ -439,9 +452,12 @@ function getRoomOccupantsList(roomId: string): RoomOccupant[] {
 
 function getGlobalOnlineUsers(): RoomOccupant[] {
   const allUsersMap = new Map<string, RoomOccupant>();
+  const now = Date.now();
   
   // 1. First add all currently registered connected sockets
   connectedUsers.forEach(({ user, lastSeen }, id) => {
+    const isSocketOpen = Boolean(connectedUsers.get(id)?.ws && connectedUsers.get(id)?.ws.readyState === WebSocket.OPEN);
+    if (!isSocketOpen && now - lastSeen > 45000) return;
     allUsersMap.set(id, {
       id: user.id,
       name: user.name,
@@ -457,10 +473,14 @@ function getGlobalOnlineUsers(): RoomOccupant[] {
     });
   });
 
-  // 2. Also ensure any room occupant is present
+  // 2. Also ensure any active room occupant is present
   roomOccupants.forEach((occupants) => {
     occupants.forEach((user, id) => {
-      allUsersMap.set(id, user);
+      const conn = connectedUsers.get(id);
+      const hasOpenSocket = Boolean(conn?.ws && conn.ws.readyState === WebSocket.OPEN);
+      if (hasOpenSocket || now - (user.joinedAt || 0) <= 45000) {
+        allUsersMap.set(id, { ...user, isOnline: true });
+      }
     });
   });
 
@@ -615,12 +635,31 @@ wss.on('connection', (ws: WebSocket) => {
           const { roomId, user } = payload;
           if (!roomId || !user) return;
 
+          // Clean up prior room membership if this socket switches rooms directly
+          const prevSocketInfo = socketToUser.get(ws);
+          if (prevSocketInfo?.roomId && prevSocketInfo.roomId !== roomId) {
+            const oldOccMap = roomOccupants.get(prevSocketInfo.roomId);
+            if (oldOccMap && oldOccMap.has(user.id)) {
+              const departing = oldOccMap.get(user.id);
+              setRoomTypingState(prevSocketInfo.roomId, user.id, departing?.name || user.name || '', false, ws);
+              oldOccMap.delete(user.id);
+              const oldList = Array.from(oldOccMap.values());
+              broadcastToRoom(prevSocketInfo.roomId, {
+                type: 'PRESENCE_UPDATE',
+                roomId: prevSocketInfo.roomId,
+                count: oldList.length,
+                users: oldList
+              });
+            }
+          }
+
           let occMap = roomOccupants.get(roomId);
           if (!occMap) {
             occMap = new Map();
             roomOccupants.set(roomId, occMap);
           }
 
+          const joinTs = Date.now();
           // Register occupant
           const occupant: RoomOccupant = {
             id: user.id,
@@ -631,12 +670,17 @@ wss.on('connection', (ws: WebSocket) => {
             isOnline: true,
             isBanned: user.isBanned || false,
             isMuted: user.isMuted || false,
-            joinedAt: Date.now(),
-            sessionId: user.sessionId
+            joinedAt: joinTs,
+            sessionId: user.sessionId,
+            isGuest: user.isGuest
           };
           occMap.set(user.id, occupant);
 
-          socketToUser.set(ws, { userId: user.id, sessionId: user.sessionId, roomId });
+          const prevStoredUser = usersStore.get(user.id);
+          const mergedUser = { ...prevStoredUser, ...user };
+          usersStore.set(user.id, mergedUser);
+          connectedUsers.set(user.id, { ws, user: mergedUser, lastSeen: joinTs });
+          socketToUser.set(ws, { userId: user.id, sessionId: user.sessionId, roomId, lastHeartbeatAt: joinTs });
 
           // Send existing non-expired room history (24h TTL, latest 30 for fast open)
           const rawHistory = messagesByRoom.get(roomId) || [];
@@ -717,6 +761,11 @@ wss.on('connection', (ws: WebSocket) => {
 
         case 'LEAVE_ROOM': {
           const { roomId, userId } = payload;
+          const sInfo = socketToUser.get(ws);
+          if (sInfo && sInfo.roomId === roomId) {
+            sInfo.roomId = undefined;
+            sInfo.lastHeartbeatAt = Date.now();
+          }
           if (roomId && userId) {
             const occMap = roomOccupants.get(roomId);
             const departingUser = occMap?.get(userId);
@@ -732,7 +781,8 @@ wss.on('connection', (ws: WebSocket) => {
               });
               broadcastToAll({
                 type: 'GLOBAL_PRESENCE_UPDATE',
-                users: getGlobalOnlineUsers()
+                users: getGlobalOnlineUsers(),
+                onlineCount: Math.max(1, connectedUsers.size)
               });
             }
           }
@@ -1482,9 +1532,82 @@ app.get('/api/auth/session', (req: Request, res: Response) => {
   });
 });
 
+app.get('/api/app-version', (_req: Request, res: Response) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.json({
+    version: SERVER_BUILD_VERSION,
+    timestamp: Date.now()
+  });
+});
+
+app.post('/api/presence/offline', (req: Request, res: Response) => {
+  try {
+    let bodyObj: any = req.body;
+    if (typeof bodyObj === 'string') {
+      try {
+        bodyObj = JSON.parse(bodyObj);
+      } catch {
+        bodyObj = {};
+      }
+    }
+    const uid = typeof bodyObj?.userId === 'string' ? bodyObj.userId.trim() : '';
+    const targetRoomId = typeof bodyObj?.roomId === 'string' ? bodyObj.roomId.trim() : '';
+    if (uid) {
+      let changed = false;
+      if (connectedUsers.delete(uid)) changed = true;
+      lastAnnouncedJoinAt.delete(uid);
+
+      if (targetRoomId) {
+        const occMap = roomOccupants.get(targetRoomId);
+        if (occMap && occMap.has(uid)) {
+          const occ = occMap.get(uid);
+          setRoomTypingState(targetRoomId, uid, occ?.name || '', false);
+          occMap.delete(uid);
+          const list = Array.from(occMap.values());
+          broadcastToRoom(targetRoomId, {
+            type: 'PRESENCE_UPDATE',
+            roomId: targetRoomId,
+            count: list.length,
+            users: list
+          });
+          changed = true;
+        }
+      } else {
+        roomOccupants.forEach((occMap, rId) => {
+          if (occMap.has(uid)) {
+            const occ = occMap.get(uid);
+            setRoomTypingState(rId, uid, occ?.name || '', false);
+            occMap.delete(uid);
+            const list = Array.from(occMap.values());
+            broadcastToRoom(rId, {
+              type: 'PRESENCE_UPDATE',
+              roomId: rId,
+              count: list.length,
+              users: list
+            });
+            changed = true;
+          }
+        });
+      }
+
+      if (changed) {
+        broadcastToAll({
+          type: 'GLOBAL_PRESENCE_UPDATE',
+          users: getGlobalOnlineUsers(),
+          onlineCount: Math.max(1, connectedUsers.size)
+        });
+      }
+    }
+    res.json({ ok: true });
+  } catch {
+    res.json({ ok: false });
+  }
+});
+
 app.get('/api/health', (_req: Request, res: Response) => {
   res.json({
     status: 'ok',
+    version: SERVER_BUILD_VERSION,
     connectedClients: wss.clients.size,
     totalUsers: usersStore.size,
     activeRooms: messagesByRoom.size,
@@ -1690,9 +1813,23 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    app.use(express.static(path.resolve(__dirname, 'dist')));
+    const distDir = path.resolve(__dirname, 'dist');
+    app.use(express.static(distDir, {
+      setHeaders: (res, filePath) => {
+        if (
+          filePath.endsWith('index.html') ||
+          filePath.endsWith('sw.js') ||
+          filePath.endsWith('registerSW.js') ||
+          filePath.endsWith('manifest.webmanifest') ||
+          filePath.endsWith('manifest.json')
+        ) {
+          res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+        }
+      }
+    }));
     app.get('*', (_req: Request, res: Response) => {
-      res.sendFile(path.resolve(__dirname, 'dist', 'index.html'));
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+      res.sendFile(path.resolve(distDir, 'index.html'));
     });
   }
 

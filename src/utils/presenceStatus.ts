@@ -1,7 +1,7 @@
 import { User } from '../types/chat';
 
 export const PRESENCE_HEARTBEAT_MS = 15000; // 15 seconds heartbeat while active
-export const PRESENCE_OFFLINE_TIMEOUT_MS = 30000; // 30 seconds disconnect/inactivity timeout
+export const PRESENCE_OFFLINE_TIMEOUT_MS = 75000; // 75 seconds fallback TTL (instant removal via onDisconnect/sendBeacon/deleteDoc)
 
 export function resolveTimestampMs(value: any): number | undefined {
   if (typeof value === 'number' && !isNaN(value) && value > 0) {
@@ -24,9 +24,11 @@ export function resolveTimestampMs(value: any): number | undefined {
 export function isUserTrulyOnline(user?: Partial<User> | null, nowMs: number = Date.now()): boolean {
   if (!user) return false;
   if (user.status === 'offline') return false;
-  if (user.isOnline !== true) return false;
+  if (user.isOnline === false) return false;
+  const hasOnlineFlag = user.isOnline === true || (user as any).online === true;
+  if (!hasOnlineFlag) return false;
 
-  const lastSeen = resolveTimestampMs((user as any).lastSeenMs ?? user.lastSeen);
+  const lastSeen = resolveTimestampMs((user as any).lastSeenMs ?? user.lastSeen ?? (user as any).updatedAt);
   if (typeof lastSeen !== 'number' || lastSeen <= 0) {
     return false;
   }

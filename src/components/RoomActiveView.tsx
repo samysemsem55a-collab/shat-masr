@@ -39,7 +39,8 @@ import {
   Palette,
   Crown,
   Trash2,
-  Copy
+  Copy,
+  MessageCircle
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { toast } from '../utils/appToast';
@@ -99,6 +100,8 @@ interface RoomActiveViewProps {
   onUpdateRoomLock?: (isLocked: boolean) => void;
   onOpenUserProfile: (user: User) => void;
   onOpenPrivateChatWith?: (user: User) => void;
+  onOpenMessagesDrawer?: () => void;
+  unreadPrivateCount?: number;
   onSendGiftToUser?: (user: User) => void;
   onOpenOnlineUsers: () => void;
   onUpdateUser?: (user: User) => void;
@@ -728,6 +731,8 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
   onUpdateRoomLock,
   onOpenUserProfile,
   onOpenPrivateChatWith,
+  onOpenMessagesDrawer,
+  unreadPrivateCount = 0,
   onSendGiftToUser,
   onOpenOnlineUsers,
   onUpdateUser,
@@ -1090,6 +1095,21 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
     hasInitialScrolledRef.current = false;
     isNearBottomRef.current = true;
     setShowScrollDownBtn(false);
+  }, [room.id]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.visualViewport) return;
+    const handleViewportResize = () => {
+      if (isNearBottomRef.current) {
+        requestAnimationFrame(() => {
+          messagesEndRef.current?.scrollIntoView({ behavior: 'auto' });
+        });
+      }
+    };
+    window.visualViewport.addEventListener('resize', handleViewportResize);
+    return () => {
+      window.visualViewport?.removeEventListener('resize', handleViewportResize);
+    };
   }, [room.id]);
 
   // Sequential 1-by-1 Room Join System Notice (5 seconds per user, clickable for 3 quick actions)
@@ -1984,7 +2004,7 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
     (effectiveRoomBackground === 'default' && Boolean(currentUser.chatWallpaper && DARK_PERSONAL_WALLPAPERS.has(currentUser.chatWallpaper)));
 
   return (
-    <div style={getRoomContainerStyle(room.id, currentUser.chatWallpaper, effectiveRoomBackground)} className={`relative flex flex-col h-[100dvh] w-full bg-[#f6f8fc] overflow-hidden overscroll-none select-none transition-all duration-500 ${isDarkRoomBg ? 'text-white' : 'text-slate-900'}`}>
+    <div style={getRoomContainerStyle(room.id, currentUser.chatWallpaper, effectiveRoomBackground)} className={`relative flex flex-col h-full w-full bg-[#f6f8fc] overflow-hidden overscroll-none select-none transition-all duration-500 ${isDarkRoomBg ? 'text-white' : 'text-slate-900'}`}>
       
       {/* 1. CALM LIGHT SKY-BLUE PINNED ROOM HEADER */}
       <header className="relative backdrop-blur-md border-b px-2 sm:px-3 py-1.5 pt-[calc(env(safe-area-inset-top,0px)+0.35rem)] flex items-center justify-between gap-2 shrink-0 shadow-xs z-30 bg-[#EAF5FD]/95 dark:bg-slate-900/95 border-sky-200/80 dark:border-slate-800">
@@ -2138,6 +2158,25 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
               </button>
             )}
           </div>
+
+          {/* Visible Private Chats & Friends Button on ALL Viewports */}
+          {onOpenMessagesDrawer && (
+            <button
+              type="button"
+              onClick={onOpenMessagesDrawer}
+              className="relative h-7.5 w-7.5 sm:h-8 sm:w-auto sm:px-2 rounded-xl bg-[#E1F1FD] hover:bg-[#D0E9FC] border border-sky-300 text-[#1565C0] text-[10.5px] font-black flex items-center justify-center gap-1 active:scale-95 shrink-0 cursor-pointer"
+              title="الرسائل الخاصة والأصدقاء"
+              aria-label="الرسائل الخاصة والأصدقاء"
+            >
+              <MessageCircle className="w-3.5 h-3.5" />
+              <span className="hidden md:inline">الخاص</span>
+              {unreadPrivateCount > 0 && (
+                <span className="absolute -top-1 -right-1 min-w-[15px] h-[15px] px-1 rounded-full bg-[#1E96E8] text-white text-[9px] font-black flex items-center justify-center border border-white tabular-nums">
+                  {unreadPrivateCount > 99 ? '99+' : unreadPrivateCount}
+                </span>
+              )}
+            </button>
+          )}
 
           {/* Visible Share Room Link Button on ALL Viewports */}
           <button
@@ -3182,6 +3221,13 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
             value={inputText}
             disabled={currentUser.isBanned || currentUser.isMuted}
             onChange={(e) => handleInputChange(e.target.value)}
+            onFocus={() => {
+              if (isNearBottomRef.current) {
+                setTimeout(() => {
+                  messagesEndRef.current?.scrollIntoView({ behavior: 'auto' });
+                }, 140);
+              }
+            }}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();

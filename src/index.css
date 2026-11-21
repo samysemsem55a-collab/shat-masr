@@ -19,13 +19,27 @@ html.dark {
 
 @layer base {
   html,
-  body {
+  body,
+  #root {
+    height: 100%;
+    width: 100%;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    overscroll-behavior: none;
     overscroll-behavior-y: none;
     overscroll-behavior-x: none;
   }
   body {
     font-family: 'Cairo', 'Tajawal', system-ui, -apple-system, sans-serif;
   }
+}
+
+.app-viewport-shell {
+  height: var(--app-height, 100dvh);
+  max-height: var(--app-height, 100dvh);
+  overflow: hidden;
+  overscroll-behavior: none;
 }
 
 .scrollbar-none {
