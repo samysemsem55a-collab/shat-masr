@@ -1011,20 +1011,6 @@ export async function sendFirestoreMessage(
       { merge: true }
     );
 
-    if (uid !== 'system_bot') {
-      setDoc(
-        doc(db, 'users', uid, 'user_messages', msgId),
-        {
-          id: msgId,
-          roomId,
-          text: newMsg.content,
-          type: newMsg.type,
-          createdAt: serverTimestamp()
-        },
-        { merge: true }
-      ).catch(() => {});
-    }
-
     if (newMsg.type !== 'system_welcome' && !isPrivateMsg) {
       const previewContent =
         newMsg.type === 'gift' && newMsg.gift?.name
@@ -1875,18 +1861,6 @@ export async function approvePendingPayment(
         userUpdates.vipBadge = tierBadge;
       }
       await setDoc(userDocRef, userUpdates, { merge: true });
-
-      const onlineUpdates: any = {};
-      if (coinsToAdd > 0 && typeof updatedCoinsForSocket === 'number') {
-        onlineUpdates.coins = updatedCoinsForSocket;
-      }
-      if (vipTierId && tierBadge) {
-        onlineUpdates.role = vipTierId;
-        onlineUpdates.vipBadge = tierBadge;
-      }
-      if (Object.keys(onlineUpdates).length > 0) {
-        await setDoc(doc(db, 'online_users', userId), onlineUpdates, { merge: true }).catch(() => {});
-      }
     } catch (e) {
       console.warn("Approve payment Firestore error:", e);
     }
@@ -2167,10 +2141,23 @@ export function subscribeToFriendRequests(
     if (e.data?.type === 'NEW_FRIEND_REQUEST' && targetId === userId && req?.status === 'pending') {
       socketMap.set(req.id, req);
       emit();
-    } else if (e.data?.type === 'FRIEND_REQUEST_RESOLVED' && e.data.requestId) {
-      rootMap.delete(e.data.requestId);
-      socketMap.delete(e.data.requestId);
-      localSeedMap.delete(e.data.requestId);
+    } else if (e.data?.type === 'FRIEND_REQUEST_RESOLVED') {
+      const reqId = e.data.requestId;
+      const resolvedSenderId = e.data.senderId;
+      if (reqId) {
+        rootMap.delete(reqId);
+        socketMap.delete(reqId);
+        localSeedMap.delete(reqId);
+      }
+      if (resolvedSenderId) {
+        [rootMap, socketMap, localSeedMap].forEach((m) => {
+          Array.from(m.entries()).forEach(([key, val]) => {
+            if (val.fromId === resolvedSenderId || val.senderId === resolvedSenderId) {
+              m.delete(key);
+            }
+          });
+        });
+      }
       emit();
     }
   };
@@ -2296,12 +2283,11 @@ export async function acceptFriendRequestInDB(
     userId: currentUserId,
     friend: currentFriendRecord
   });
-  if (requestId) {
-    liveChatBus?.postMessage({
-      type: 'FRIEND_REQUEST_RESOLVED',
-      requestId
-    });
-  }
+  liveChatBus?.postMessage({
+    type: 'FRIEND_REQUEST_RESOLVED',
+    requestId: requestId || `freq_${friendId}_${currentUserId}`,
+    senderId: friendId
+  });
 }
 
 export async function declineFriendRequestInDB(
@@ -2351,10 +2337,11 @@ export async function declineFriendRequestInDB(
     }
   }
 
-  if (requestId) {
+  if (requestId || senderId) {
     liveChatBus?.postMessage({
       type: 'FRIEND_REQUEST_RESOLVED',
-      requestId
+      requestId: requestId || (senderId ? `freq_${senderId}_${currentUserId}` : undefined),
+      senderId
     });
   }
 }
@@ -4073,11 +4060,6 @@ export async function markRoomPrivateMessagesAsRead(
   });
 
   for (const id of unreadIds) {
-    if (rtdb) {
-      try {
-        await update(ref(rtdb, `messages/${roomId}/${id}`), { status: 'read' });
-      } catch {}
-    }
     if (db) {
       try {
         await setDoc(doc(db, 'rooms', roomId, 'messages', id), { status: 'read' }, { merge: true });
@@ -4182,20 +4164,6 @@ export async function toggleMessageReaction(
       console.warn("Firestore reaction update notice:", e);
     }
   }
-
-  // RTDB update
-  if (rtdb) {
-    try {
-      const msgRef = ref(rtdb, `messages/${roomId}/${messageId}`);
-      await update(msgRef, {
-        reactions: updatedMsg.reactions || {},
-        userReactions: updatedMsg.userReactions || {},
-        reactionUsers: updatedMsg.reactionUsers || {}
-      });
-    } catch (e) {
-      console.warn("RTDB reaction update notice:", e);
-    }
-  }
 }
 
 // ==========================================
@@ -4222,17 +4190,7 @@ export async function deleteRoomMessage(roomId: string, messageId: string): Prom
     messageId
   });
 
-  // 3. Remove from Realtime Database
-  if (rtdb) {
-    try {
-      const msgRef = ref(rtdb, `messages/${roomId}/${messageId}`);
-      await remove(msgRef);
-    } catch (e) {
-      console.warn("RTDB message removal notice:", e);
-    }
-  }
-
-  // 4. Delete document from Firestore
+  // 3. Delete document from Firestore
   if (db) {
     try {
       const docRef = doc(db, 'rooms', roomId, 'messages', messageId);
@@ -5004,11 +4962,6 @@ export async function recordProfileVisit(targetUserId: string, visitorId: string
         { profileVisitsCount: increment(1) },
         { merge: true }
       );
-      await setDoc(
-        doc(db, 'online_users', targetUserId),
-        { profileVisitsCount: increment(1) },
-        { merge: true }
-      ).catch(() => {});
     } catch {}
   }
 }
@@ -6246,11 +6199,6 @@ export async function purgeRoomMessages(roomId: string): Promise<void> {
   } catch {}
   realtimeSocket.sendClearRoomMessages(roomId);
 
-  if (rtdb) {
-    try {
-      await remove(ref(rtdb, `messages/${roomId}`));
-    } catch {}
-  }
   if (db) {
     try {
       const snap = await getDocs(collection(db, 'rooms', roomId, 'messages'));
@@ -6888,13 +6836,6 @@ export async function recordGiftRecipientStats(recipientId: string, giftCost: nu
         },
         { merge: true }
       );
-      await setDoc(
-        doc(db, 'online_users', recipientId),
-        {
-          ratingPoints: increment(ratingGain)
-        },
-        { merge: true }
-      ).catch(() => {});
     } catch {}
   }
 

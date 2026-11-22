@@ -211,15 +211,6 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
     toast.social(`تم إرسال طلب صداقة إلى ${user.name} بنجاح 🤝`);
     try {
       await sendFriendRequest(currentUser, user.id);
-      realtimeSocket.sendFriendRequest({
-        id: `req_${Date.now()}`,
-        senderId: currentUser.id,
-        senderName: currentUser.name,
-        senderAvatar: currentUser.avatar,
-        receiverId: user.id,
-        createdAt: Date.now(),
-        status: 'pending',
-      });
     } catch {
       setFriendRequestSent(false);
       toast.error('تعذر إرسال طلب الصداقة حالياً');

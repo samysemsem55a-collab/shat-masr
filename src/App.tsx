@@ -265,6 +265,9 @@ export default function App() {
     } catch {}
   }, [unreadSendersMap, currentUser.id]);
 
+  const unreadSendersMapRef = useRef<Record<string, UnreadSenderSummary>>(unreadSendersMap);
+  unreadSendersMapRef.current = unreadSendersMap;
+
   const clearUnreadForSender = useCallback((senderId: string) => {
     if (!senderId) return;
     recentlyClearedPeerRef.current.set(senderId, Date.now());
@@ -279,12 +282,12 @@ export default function App() {
 
   const clearAllUnreadMessages = useCallback(() => {
     recentlyClearedAllAtRef.current = Date.now();
-    let knownPeerIds: string[] = [];
-    setUnreadSendersMap((prev) => {
-      knownPeerIds = Object.keys(prev);
-      return {};
-    });
-    resetAllDirectChatsUnreadInDB(currentUserRef.current.id, knownPeerIds).catch(() => {});
+    const myId = currentUserRef.current.id;
+    const knownChatIds = Object.keys(unreadSendersMapRef.current).map((peerId) =>
+      [myId, peerId].sort().join('_')
+    );
+    setUnreadSendersMap({});
+    resetAllDirectChatsUnreadInDB(myId, knownChatIds).catch(() => {});
   }, []);
 
   const unreadMessagesBySender = useMemo(
@@ -836,7 +839,7 @@ export default function App() {
       const currentRoom = activeRoomRef.current;
       if (currentRoom) {
         realtimeSocket.joinRoom(currentRoom.id, me);
-        realtimeSocket.apiFetchWithRefresh(`/api/rooms/${encodeURIComponent(currentRoom.id)}/messages`)
+        realtimeSocket.apiFetchWithRefresh(`/api/messages/${encodeURIComponent(currentRoom.id)}`)
           .then(r => (r.ok ? r.json() : null))
           .then(data => {
             if (Array.isArray(data?.messages) && data.messages.length > 0) {
@@ -1189,14 +1192,16 @@ export default function App() {
           const recents: any[] = savedRecent ? JSON.parse(savedRecent) : [];
           const nextRecent = [
             {
+              chatId: convId,
               peerId: rawMsg.senderId,
               peerName: rawMsg.senderName || 'عضو شات مصر',
               peerAvatar: rawMsg.senderAvatar || '',
               lastMessage: rawMsg.content || rawMsg.text || 'رسالة جديدة',
               lastTimestamp: rawMsg.timestamp || Date.now(),
+              unreadCount: isViewingThisSender ? 0 : 1,
               isOnline: true
             },
-            ...recents.filter((c) => c.peerId !== rawMsg.senderId)
+            ...recents.filter((c) => c.chatId !== convId && c.peerId !== rawMsg.senderId)
           ];
           localStorage.setItem(recentKey, JSON.stringify(nextRecent));
         } catch {}
@@ -2702,15 +2707,6 @@ export default function App() {
                     type="button"
                     onClick={async () => {
                       await sendFriendRequest(currentUserRef.current, globalJoinBanner.id);
-                      realtimeSocket.sendFriendRequest({
-                        id: `req_${Date.now()}`,
-                        senderId: currentUserRef.current.id,
-                        senderName: currentUserRef.current.name,
-                        senderAvatar: currentUserRef.current.avatar,
-                        receiverId: globalJoinBanner.id,
-                        createdAt: Date.now(),
-                        status: 'pending'
-                      });
                       toast.success(`تم إرسال طلب صداقة إلى ${globalJoinBanner.name} 🤝`);
                       setIsGlobalJoinMenuOpen(false);
                       setGlobalJoinBanner(null);

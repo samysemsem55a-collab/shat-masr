@@ -1673,13 +1673,15 @@ app.get('/api/admin/direct-chats/:convId', (req: Request, res: Response) => {
   res.json({ convId, messages: msgs });
 });
 
-app.get('/api/messages/:roomId', (req: Request, res: Response) => {
+const handleGetRoomMessages = (req: Request, res: Response) => {
   const roomId = req.params.roomId;
   const rawHistory = messagesByRoom.get(roomId) || [];
   const history = rawHistory.filter(m => !isMessageExpired(m, PUBLIC_MESSAGE_TTL_MS));
   if (history.length !== rawHistory.length) messagesByRoom.set(roomId, history);
   res.json({ roomId, messages: history });
-});
+};
+app.get('/api/messages/:roomId', handleGetRoomMessages);
+app.get('/api/rooms/:roomId/messages', handleGetRoomMessages);
 
 app.get('/api/presence/:roomId', (req: Request, res: Response) => {
   const roomId = req.params.roomId;

@@ -2719,15 +2719,6 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
                     const targetId = activeJoinNotice.userId;
                     const targetName = activeJoinNotice.name;
                     await sendFriendRequest(currentUser, targetId);
-                    realtimeSocket.sendFriendRequest({
-                      id: `req_${Date.now()}`,
-                      senderId: currentUser.id,
-                      senderName: currentUser.name,
-                      senderAvatar: currentUser.avatar,
-                      receiverId: targetId,
-                      createdAt: Date.now(),
-                      status: 'pending'
-                    });
                     toast.success(`تم إرسال طلب صداقة إلى ${targetName} 🤝`);
                     advanceJoinQueue();
                   }}

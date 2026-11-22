@@ -47,7 +47,8 @@ import {
   uploadPrivateChatMedia,
   setPrivateTyping,
   subscribeToPrivateTyping,
-  submitUserReport
+  submitUserReport,
+  recordGiftRecipientStats
 } from '../services/firebase';
 import { FriendsList } from './FriendsList';
 import { LuxuryGiftModal } from './LuxuryGiftModal';
@@ -289,6 +290,8 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
       console.warn('Direct gift send error:', err);
       toast.error('تعذر إرسال الهدية في المحادثة الخاصة');
     });
+
+    recordGiftRecipientStats(activeContact.id, gift.cost).catch(() => {});
   };
 
   // 1. Subscribe to Real-Time Recent Chats from DB
