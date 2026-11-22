@@ -2424,20 +2424,24 @@ export default function App() {
 
   // Friend Request Accept / Decline (Optimistic UI with safe rollback)
   const handleAcceptFriendRequest = async (req: FriendRequest) => {
+    const senderId = req.senderId || req.fromId || '';
+    const senderName = req.senderName || req.fromName || 'عضو شات مصر';
+    const senderAvatar = req.senderAvatar || req.fromAvatar || '';
+    if (!senderId) return;
     const prevPending = pendingFriendRequests;
     const prevBanner = friendReqBanner;
     setPendingFriendRequests(prev => prev.filter(r => r.id !== req.id));
     setFriendReqBanner(curr => (curr?.id === req.id ? null : curr));
-    toast.success(`تم قبول طلب صداقة ${req.senderName} بنجاح! 🤝`, {
+    toast.success(`تم قبول طلب صداقة ${senderName} بنجاح! 🤝`, {
       description: 'تمت إضافته فوراً إلى قائمة أصدقائك'
     });
     try {
       await acceptFriendRequestInDB(
         currentUser.id,
         {
-          id: req.senderId,
-          name: req.senderName,
-          avatar: req.senderAvatar
+          id: senderId,
+          name: senderName,
+          avatar: senderAvatar
         },
         currentUser,
         req.id
