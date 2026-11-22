@@ -208,9 +208,14 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
     if (isMe || friendRequestSent || isAlreadyFriend) return;
     // Optimistic UI update
     setFriendRequestSent(true);
-    toast.social(`تم إرسال طلب صداقة إلى ${user.name} بنجاح 🤝`);
     try {
-      await sendFriendRequest(currentUser, user.id);
+      const ok = await sendFriendRequest(currentUser, user.id);
+      if (ok) {
+        toast.social(`تم إرسال طلب صداقة إلى ${user.name} بنجاح 🤝`);
+      } else {
+        setFriendRequestSent(false);
+        toast.error('تعذر إرسال طلب الصداقة حالياً');
+      }
     } catch {
       setFriendRequestSent(false);
       toast.error('تعذر إرسال طلب الصداقة حالياً');

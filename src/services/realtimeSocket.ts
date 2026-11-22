@@ -89,6 +89,7 @@ class RealtimeSocketManager {
   private latestCumulativeVisitorsCount = 15480;
   private latestGlobalUsers: User[] = [];
   private latestRoomPresence: Map<string, { count: number; users: User[] }> = new Map();
+  private pendingQueue: Array<{ type: string; payload: any }> = [];
 
   setTokenProvider(provider: (forceRefresh?: boolean) => Promise<string | null>) {
     this.tokenProvider = provider;
@@ -292,6 +293,16 @@ class RealtimeSocketManager {
           this.send('JOIN_ROOM', { roomId: this.currentRoomId, user: this.currentUser });
         }
 
+        // Flush critical queued events sent while connecting/reconnecting
+        if (this.pendingQueue.length > 0 && this.socket && this.socket.readyState === WebSocket.OPEN) {
+          const queued = this.pendingQueue.splice(0, this.pendingQueue.length);
+          for (const item of queued) {
+            try {
+              this.socket.send(JSON.stringify(item));
+            } catch {}
+          }
+        }
+
         if (reconnected) {
           this.reconnectSuccessListeners.forEach((cb) => {
             try {
@@ -354,6 +365,28 @@ class RealtimeSocketManager {
     if (this.socket && this.socket.readyState === WebSocket.OPEN) {
       this.socket.send(JSON.stringify({ type, payload }));
     } else {
+      const queueableTypes = new Set([
+        'JOIN_ROOM',
+        'LEAVE_ROOM',
+        'SEND_MESSAGE',
+        'DIRECT_MESSAGE',
+        'FRIEND_REQUEST',
+        'DIRECT_MESSAGE_READ',
+        'ROOM_MESSAGES_READ',
+        'MESSAGE_REACTION',
+        'UPDATE_PROFILE',
+        'DELETE_ROOM_MESSAGE',
+        'CLEAR_ROOM_MESSAGES'
+      ]);
+      if (queueableTypes.has(type)) {
+        if (type === 'JOIN_ROOM' || type === 'LEAVE_ROOM' || type === 'UPDATE_PROFILE') {
+          this.pendingQueue = this.pendingQueue.filter((item) => item.type !== type);
+        }
+        if (this.pendingQueue.length >= 50) {
+          this.pendingQueue.shift();
+        }
+        this.pendingQueue.push({ type, payload });
+      }
       // Auto connect if not connected
       this.connect();
     }

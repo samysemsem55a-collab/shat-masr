@@ -2718,8 +2718,12 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
                   onClick={async () => {
                     const targetId = activeJoinNotice.userId;
                     const targetName = activeJoinNotice.name;
-                    await sendFriendRequest(currentUser, targetId);
-                    toast.success(`تم إرسال طلب صداقة إلى ${targetName} 🤝`);
+                    const ok = await sendFriendRequest(currentUser, targetId);
+                    if (ok) {
+                      toast.success(`تم إرسال طلب صداقة إلى ${targetName} 🤝`);
+                    } else {
+                      toast.error('تعذر إرسال طلب الصداقة حالياً');
+                    }
                     advanceJoinQueue();
                   }}
                   className="flex-1 py-1.5 px-1.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-700 text-[10.5px] font-black text-center cursor-pointer"

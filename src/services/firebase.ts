@@ -965,51 +965,56 @@ export async function sendFirestoreMessage(
   // 3. Save exclusively to Firestore `rooms/{roomId}/messages/{msgId}`
   if (db) {
     const msgDocRef = doc(db, 'rooms', roomId, 'messages', msgId);
-    await setDoc(
-      msgDocRef,
-      {
-        id: msgId,
-        tempId,
-        clientId: tempId,
-        text: newMsg.content,
-        content: newMsg.content,
-        userId: uid,
-        senderId: uid,
-        userName: newMsg.senderName,
-        senderName: newMsg.senderName,
-        userAvatar: newMsg.senderAvatar,
-        senderAvatar: newMsg.senderAvatar,
-        userVipTier: newMsg.senderRole,
-        senderRole: newMsg.senderRole,
-        userVipBadge: newMsg.senderVipBadge,
-        senderVipBadge: newMsg.senderVipBadge,
-        badges: newMsg.badges || [],
-        type: newMsg.type,
-        isPrivate: isPrivateMsg,
-        recipientId: newMsg.recipientId || null,
-        gift: newMsg.gift || null,
-        replyTo: newMsg.replyTo || null,
-        audioDuration: newMsg.audioDuration || null,
-        audioUrl: newMsg.audioUrl || null,
-        voiceUrl: newMsg.voiceUrl || null,
-        mediaUrl: newMsg.mediaUrl || null,
-        mediaType: newMsg.mediaType || null,
-        stickerId: newMsg.stickerId || null,
-        stickerEmoji: newMsg.stickerEmoji || null,
-        stickerLabel: newMsg.stickerLabel || null,
-        stickerAnimation: newMsg.stickerAnimation || null,
-        reactions: newMsg.reactions || {},
-        userReactions: newMsg.userReactions || {},
-        reactionUsers: newMsg.reactionUsers || {},
-        isHighlighted: Boolean(newMsg.isHighlighted),
-        highlightColor: newMsg.highlightColor || null,
-        expiresAt: newMsg.expiresAt,
-        status: 'sent',
-        timestamp: newMsg.timestamp,
-        createdAt: serverTimestamp()
-      },
-      { merge: true }
-    );
+    try {
+      await setDoc(
+        msgDocRef,
+        {
+          id: msgId,
+          tempId,
+          clientId: tempId,
+          text: newMsg.content,
+          content: newMsg.content,
+          userId: uid,
+          senderId: uid,
+          userName: newMsg.senderName,
+          senderName: newMsg.senderName,
+          userAvatar: newMsg.senderAvatar,
+          senderAvatar: newMsg.senderAvatar,
+          userVipTier: newMsg.senderRole,
+          senderRole: newMsg.senderRole,
+          userVipBadge: newMsg.senderVipBadge,
+          senderVipBadge: newMsg.senderVipBadge,
+          badges: newMsg.badges || [],
+          type: newMsg.type,
+          isPrivate: isPrivateMsg,
+          recipientId: newMsg.recipientId || null,
+          gift: newMsg.gift || null,
+          replyTo: newMsg.replyTo || null,
+          audioDuration: newMsg.audioDuration || null,
+          audioUrl: newMsg.audioUrl || null,
+          voiceUrl: newMsg.voiceUrl || null,
+          mediaUrl: newMsg.mediaUrl || null,
+          mediaType: newMsg.mediaType || null,
+          stickerId: newMsg.stickerId || null,
+          stickerEmoji: newMsg.stickerEmoji || null,
+          stickerLabel: newMsg.stickerLabel || null,
+          stickerAnimation: newMsg.stickerAnimation || null,
+          reactions: newMsg.reactions || {},
+          userReactions: newMsg.userReactions || {},
+          reactionUsers: newMsg.reactionUsers || {},
+          isHighlighted: Boolean(newMsg.isHighlighted),
+          highlightColor: newMsg.highlightColor || null,
+          expiresAt: newMsg.expiresAt,
+          status: 'sent',
+          timestamp: newMsg.timestamp,
+          createdAt: serverTimestamp()
+        },
+        { merge: true }
+      );
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, `rooms/${roomId}/messages/${msgId}`);
+      throw err;
+    }
 
     if (newMsg.type !== 'system_welcome' && !isPrivateMsg) {
       const previewContent =
@@ -2000,7 +2005,7 @@ export async function sendFriendRequest(
         createdAt: serverTimestamp()
       });
     } catch (e) {
-      console.warn('Firestore friend request write error:', e);
+      handleFirestoreError(e, OperationType.WRITE, `friendRequests/${reqId}`);
       return false;
     }
   }
@@ -3120,6 +3125,7 @@ export function subscribeToDirectMessages(
   const convId = getConversationId(userId1, userId2);
   const localKey = `direct_messages_${convId}`;
   const localMsgsMap = new Map<string, Message>();
+  const wsMsgsMap = new Map<string, Message>();
   const fsMsgsMap = new Map<string, Message>();
   const tempIdToRealId = new Map<string, string>();
   const deletedIds = new Set<string>();
@@ -3129,11 +3135,13 @@ export function subscribeToDirectMessages(
 
   const emit = () => {
     const merged = new Map<string, Message>();
-    localMsgsMap.forEach((m, id) => {
-      if (!m || !id || deletedIds.has(id)) return;
-      const mappedRealId = m.tempId ? tempIdToRealId.get(m.tempId) : undefined;
-      if (mappedRealId && fsMsgsMap.has(mappedRealId)) return;
-      merged.set(id, mergeTwoMessages(merged.get(id), m));
+    [localMsgsMap, wsMsgsMap].forEach((sourceMap) => {
+      sourceMap.forEach((m, id) => {
+        if (!m || !id || deletedIds.has(id)) return;
+        const mappedRealId = m.tempId ? tempIdToRealId.get(m.tempId) : undefined;
+        if (mappedRealId && fsMsgsMap.has(mappedRealId)) return;
+        merged.set(id, mergeTwoMessages(merged.get(id), m));
+      });
     });
     fsMsgsMap.forEach((m, id) => {
       if (!m || !id || deletedIds.has(id)) return;
@@ -3186,6 +3194,7 @@ export function subscribeToDirectMessages(
             if (msgItem.tempId) {
               tempIdToRealId.set(msgItem.tempId, msgItem.id);
               localMsgsMap.delete(msgItem.tempId);
+              wsMsgsMap.delete(msgItem.tempId);
             }
             fsMsgsMap.set(msgItem.id, msgItem);
           });
@@ -3194,6 +3203,7 @@ export function subscribeToDirectMessages(
             seenFsIds.forEach((oldId) => {
               if (!nextFsIds.has(oldId) && snapshot.docs.length < initialLimit) {
                 localMsgsMap.delete(oldId);
+                wsMsgsMap.delete(oldId);
               }
             });
             seenFsIds = nextFsIds;
@@ -3209,11 +3219,39 @@ export function subscribeToDirectMessages(
     }
   }
 
-  // 2. WebSocket instant DM read receipt sync
+  // 2. WebSocket instant incoming DM sync (covers open chat immediately)
+  const ingestSocketDm = (incoming: Message, msgConvId?: string) => {
+    if (!incoming || !incoming.id || deletedIds.has(incoming.id)) return;
+    const isDirectPairMatch =
+      msgConvId === convId ||
+      (incoming.senderId === userId2 && (incoming.recipientId === userId1 || !incoming.recipientId)) ||
+      (incoming.senderId === userId1 && incoming.recipientId === userId2);
+    if (!isDirectPairMatch) return;
+    const normalized: Message = {
+      ...incoming,
+      isPrivate: true,
+      content: incoming.content || incoming.text || '',
+      text: incoming.text || incoming.content || '',
+      createdAt: incoming.createdAt || incoming.timestamp || Date.now(),
+      timestamp: incoming.timestamp || incoming.createdAt || Date.now(),
+      status: incoming.status || 'delivered'
+    };
+    wsMsgsMap.set(normalized.id, mergeTwoMessages(wsMsgsMap.get(normalized.id), normalized));
+    emit();
+  };
+
+  const unsubConvSocket = realtimeSocket.subscribeToDirectMessages(convId, (msg, cId) => {
+    ingestSocketDm(msg, cId);
+  });
+  const unsubGlobalDmSocket = realtimeSocket.subscribeToGlobalDirectMessages((msg, cId) => {
+    ingestSocketDm(msg, cId);
+  });
+
+  // 3. WebSocket instant DM read receipt sync
   const unsubReadSocket = realtimeSocket.subscribeToDirectMessagesRead(convId, (messageIds) => {
     let changed = false;
     messageIds.forEach((id) => {
-      [localMsgsMap, fsMsgsMap].forEach((map) => {
+      [localMsgsMap, wsMsgsMap, fsMsgsMap].forEach((map) => {
         const existing = map.get(id);
         if (existing && existing.status !== 'seen' && existing.status !== 'read') {
           map.set(id, { ...existing, status: 'seen' });
@@ -3224,7 +3262,7 @@ export function subscribeToDirectMessages(
     if (changed) emit();
   });
 
-  // 3. Cross-tab broadcast
+  // 4. Cross-tab broadcast
   const handleBroadcast = (e: MessageEvent) => {
     if (
       (e.data?.type === 'DIRECT_MESSAGE_UPDATE' ||
@@ -3236,13 +3274,14 @@ export function subscribeToDirectMessages(
         const targetId = String(e.data.messageId);
         deletedIds.add(targetId);
         localMsgsMap.delete(targetId);
+        wsMsgsMap.delete(targetId);
         fsMsgsMap.delete(targetId);
       } else if (e.data.message?.id) {
         deletedIds.delete(e.data.message.id);
         localMsgsMap.set(e.data.message.id, e.data.message);
       } else if (e.data.type === 'DIRECT_MESSAGE_READ_UPDATE' && Array.isArray(e.data.messageIds)) {
         e.data.messageIds.forEach((id: string) => {
-          [localMsgsMap, fsMsgsMap].forEach((map) => {
+          [localMsgsMap, wsMsgsMap, fsMsgsMap].forEach((map) => {
             const existing = map.get(id);
             if (existing) map.set(id, { ...existing, status: 'seen' });
           });
@@ -3254,6 +3293,8 @@ export function subscribeToDirectMessages(
   liveChatBus?.addEventListener('message', handleBroadcast);
 
   return () => {
+    unsubConvSocket();
+    unsubGlobalDmSocket();
     unsubReadSocket();
     if (firestoreUnsub) firestoreUnsub();
     liveChatBus?.removeEventListener('message', handleBroadcast);
@@ -3498,49 +3539,7 @@ export async function sendDirectMessage(
     Object.entries(newMsg).filter(([, v]) => v !== undefined)
   );
 
-  // Persist to Firestore `privateChats/{convId}/messages/{messageId}` & parent `privateChats/{convId}`
-  if (db) {
-    const batch = writeBatch(db);
-    const parentDocRef = doc(db, 'privateChats', convId);
-    batch.set(
-      parentDocRef,
-      {
-        chatId: convId,
-        participants: [userId1, userId2].sort(),
-        participantDetails: {
-          [userId1]: {
-            id: userId1,
-            name: newMsg.senderName,
-            avatar: newMsg.senderAvatar
-          },
-          [userId2]: {
-            id: userId2,
-            name: message.recipientName || 'عضو شات مصر',
-            avatar: message.recipientAvatar || ''
-          }
-        },
-        lastMessage: previewText,
-        lastMessageId: newMsg.id,
-        lastMessageStatus: 'sent',
-        lastSenderId: userId1,
-        lastSenderName: newMsg.senderName,
-        lastTimestamp: now,
-        [`unread_${userId1}`]: 0,
-        [`unread_${userId2}`]: increment(1),
-        updatedAt: serverTimestamp()
-      },
-      { merge: true }
-    );
-
-    const msgDocRef = doc(db, 'privateChats', convId, 'messages', newMsg.id);
-    batch.set(msgDocRef, {
-      ...cleanMsgPayload,
-      createdAt: serverTimestamp()
-    });
-
-    await batch.commit();
-  }
-
+  // 1. Immediate optimistic cache + real-time WebSocket + cross-tab broadcast (0ms)
   try {
     const saved = localStorage.getItem(localKey);
     const list: Message[] = saved ? JSON.parse(saved) : [];
@@ -3560,6 +3559,54 @@ export async function sendDirectMessage(
   liveChatBus?.postMessage({
     type: 'DIRECT_CHATS_UPDATED'
   });
+
+  // 2. Persist to Firestore `privateChats/{convId}/messages/{messageId}` & parent `privateChats/{convId}`
+  if (db) {
+    try {
+      const batch = writeBatch(db);
+      const parentDocRef = doc(db, 'privateChats', convId);
+      batch.set(
+        parentDocRef,
+        {
+          chatId: convId,
+          participants: [userId1, userId2].sort(),
+          participantDetails: {
+            [userId1]: {
+              id: userId1,
+              name: newMsg.senderName,
+              avatar: newMsg.senderAvatar
+            },
+            [userId2]: {
+              id: userId2,
+              name: message.recipientName || 'عضو شات مصر',
+              avatar: message.recipientAvatar || ''
+            }
+          },
+          lastMessage: previewText,
+          lastMessageId: newMsg.id,
+          lastMessageStatus: 'sent',
+          lastSenderId: userId1,
+          lastSenderName: newMsg.senderName,
+          lastTimestamp: now,
+          [`unread_${userId1}`]: 0,
+          [`unread_${userId2}`]: increment(1),
+          updatedAt: serverTimestamp()
+        },
+        { merge: true }
+      );
+
+      const msgDocRef = doc(db, 'privateChats', convId, 'messages', newMsg.id);
+      batch.set(msgDocRef, {
+        ...cleanMsgPayload,
+        createdAt: serverTimestamp()
+      });
+
+      await batch.commit();
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, `privateChats/${convId}/messages/${newMsg.id}`);
+      throw err;
+    }
+  }
 
   return newMsg;
 }

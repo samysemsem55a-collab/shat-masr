@@ -878,26 +878,47 @@ export default function App() {
     // Listen to incoming friend requests over instant WebSocket (merges cleanly sorted newest-first)
     const unsubFriend = realtimeSocket.subscribeToFriendRequests((req) => {
       const me = currentUserRef.current;
-      if (req && req.receiverId === me.id && req.status === 'pending') {
-        if (!seenFriendBannerIdsRef.current.has(req.id)) {
-          seenFriendBannerIdsRef.current.add(req.id);
+      const targetId = req?.toId || req?.receiverId;
+      const sId = req?.fromId || req?.senderId;
+      const sName = req?.fromName || req?.senderName || 'عضو شات مصر';
+      const sAvatar = req?.fromAvatar || req?.senderAvatar || '';
+      if (
+        req &&
+        (targetId === me.id || (Boolean(me.sessionId) && targetId === me.sessionId)) &&
+        req.status === 'pending' &&
+        sId &&
+        sId !== me.id
+      ) {
+        const normalizedReq: FriendRequest = {
+          ...req,
+          fromId: sId,
+          fromName: sName,
+          fromAvatar: sAvatar,
+          toId: targetId || me.id,
+          senderId: sId,
+          senderName: sName,
+          senderAvatar: sAvatar,
+          receiverId: targetId || me.id,
+        };
+        if (!seenFriendBannerIdsRef.current.has(normalizedReq.id)) {
+          seenFriendBannerIdsRef.current.add(normalizedReq.id);
           sounds.playNotificationChime();
-          setFriendReqBanner(req);
+          setFriendReqBanner(normalizedReq);
           if (friendReqBannerTimerRef.current) clearTimeout(friendReqBannerTimerRef.current);
           friendReqBannerTimerRef.current = setTimeout(() => {
-            setFriendReqBanner((curr) => (curr?.id === req.id ? null : curr));
+            setFriendReqBanner((curr) => (curr?.id === normalizedReq.id ? null : curr));
           }, 10000);
           if (typeof document !== 'undefined' && document.hidden) {
             triggerExternalBrowserNotification(
-              `طلب صداقة جديد من ${req.senderName}`,
+              `طلب صداقة جديد من ${sName}`,
               'اضغط لقبول أو رفض طلب الصداقة',
-              { senderId: req.senderId }
+              { senderId: sId }
             );
           }
         }
         setPendingFriendRequests(prev => {
-          const filtered = prev.filter(r => r.id !== req.id && r.senderId !== req.senderId);
-          return [req, ...filtered].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+          const filtered = prev.filter(r => r.id !== normalizedReq.id && r.senderId !== sId && r.fromId !== sId);
+          return [normalizedReq, ...filtered].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
         });
       }
     });
@@ -1340,9 +1361,9 @@ export default function App() {
               }
             });
 
-            // Keep any live WS-only unread entries created in the last few seconds not yet flushed to Firestore
+            // Keep any live WS-only unread entries created recently while Firestore sync catches up
             Object.entries(prev).forEach(([peerId, entry]) => {
-              if (!dbIds.has(peerId) && now - (entry.lastTimestamp || 0) < 4000) {
+              if (!dbIds.has(peerId) && now - (entry.lastTimestamp || 0) < 30000) {
                 const clearedAt = recentlyClearedPeerRef.current.get(peerId) || 0;
                 if (now - clearedAt >= 2500) {
                   next[peerId] = entry;
@@ -2706,8 +2727,12 @@ export default function App() {
                   <button
                     type="button"
                     onClick={async () => {
-                      await sendFriendRequest(currentUserRef.current, globalJoinBanner.id);
-                      toast.success(`تم إرسال طلب صداقة إلى ${globalJoinBanner.name} 🤝`);
+                      const ok = await sendFriendRequest(currentUserRef.current, globalJoinBanner.id);
+                      if (ok) {
+                        toast.success(`تم إرسال طلب صداقة إلى ${globalJoinBanner.name} 🤝`);
+                      } else {
+                        toast.error('تعذر إرسال طلب الصداقة حالياً');
+                      }
                       setIsGlobalJoinMenuOpen(false);
                       setGlobalJoinBanner(null);
                     }}

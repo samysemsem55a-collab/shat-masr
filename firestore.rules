@@ -49,6 +49,10 @@ service cloud.firestore {
     // 24-hour Stories
     match /stories/{storyId} {
       allow read, write: if true;
+
+      match /{document=**} {
+        allow read, write: if true;
+      }
     }
 
     // Daily Automated & Manual System Backups
