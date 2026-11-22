@@ -52,6 +52,7 @@ import { ArabicMusicPlayerModal } from './ArabicMusicPlayerModal';
 import { ChatWallpapersModal } from './ChatWallpapersModal';
 import { AvatarWithFrame } from './AvatarWithFrame';
 import { MessageStatusIcon } from './MessageStatusIcon';
+import { BlurredChatImage } from './BlurredChatImage';
 import { getRankDisplayMeta } from '../utils/userRanks';
 import { ANIMATED_INLINE_EMOJIS, InlineRichText } from './InlineRichText';
 import { offlineQueue } from '../services/offlineQueue';
@@ -465,23 +466,14 @@ const RoomPublicMessageRow = React.memo<RoomPublicMessageRowProps>(({
               <span className={`font-black mx-0.5 ${isDarkRoomBg ? 'text-slate-100 chat-text-outline-dark' : 'text-slate-950 chat-text-outline-light'}`}>:</span>
               <span className={`text-xs font-bold ${isDarkRoomBg ? 'text-white/90' : 'text-slate-700'}`}>أرسل صورة 🖼️</span>
             </div>
-            <div
-              onClick={(e) => {
-                e.stopPropagation();
-                const targetUrl = msg.mediaUrl || msg.imageUrl;
-                if (targetUrl) onOpenLightbox(targetUrl);
-              }}
-              className="relative max-w-[240px] sm:max-w-[280px] rounded-xl overflow-hidden border border-slate-200/80 shadow-sm cursor-zoom-in group/img bg-slate-100"
-            >
-              <img
-                src={msg.mediaUrl || msg.imageUrl}
+            <div className="relative max-w-[240px] sm:max-w-[280px] rounded-xl overflow-hidden border border-slate-200/80 shadow-sm bg-slate-100">
+              <BlurredChatImage
+                src={msg.mediaUrl || msg.imageUrl || ''}
                 alt="صورة مرسلة في الغرفة"
+                autoReveal={false}
+                onOpenFull={(url) => onOpenLightbox(url)}
                 className="max-h-56 w-full object-cover rounded-xl"
-                loading="lazy"
               />
-              <span className="absolute bottom-1.5 left-1.5 p-1 rounded-lg bg-slate-900/65 text-white opacity-85 group-hover/img:opacity-100">
-                <Maximize2 className="w-3.5 h-3.5" />
-              </span>
             </div>
           </div>
         ) : msg.type === 'sticker' ? (
@@ -869,6 +861,11 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
     };
   }, [room.id, currentUser.id]);
 
+  const isUserBannedNow = Boolean(
+    currentUser.isBanned ||
+    (typeof currentUser.bannedUntil === 'number' && currentUser.bannedUntil > Date.now())
+  );
+
   const handleInputChange = (val: string) => {
     setInputText(val);
     if (typeof window !== 'undefined') {
@@ -879,12 +876,12 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
       }
     }
 
-    if (currentUser.isBanned || currentUser.isMuted) return;
+    if (isUserBannedNow || currentUser.isMuted) return;
 
-    // Trigger typing state (throttled true emits + 3s stop-typing debounce)
+    // Trigger typing state (throttled >= 2000ms + 3s stop-typing debounce)
     if (val.trim().length > 0) {
       const now = Date.now();
-      if (now - lastTypingEmitRef.current >= 1500) {
+      if (now - lastTypingEmitRef.current >= 2000) {
         lastTypingEmitRef.current = now;
         setRoomTyping(room.id, currentUser, true);
       }
@@ -1303,7 +1300,7 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
     const el = messagesScrollRef.current;
     if (!el) return;
     const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-    const nearBottom = distanceFromBottom < 120;
+    const nearBottom = distanceFromBottom <= 100;
     isNearBottomRef.current = nearBottom;
     setShowScrollDownBtn(!nearBottom);
     if (el.scrollTop < 48 && hasMoreOlderMessages && !isLoadingOlderMessages && onLoadOlderMessages) {
@@ -1416,6 +1413,14 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
   // Send Text Message (2s anti-spam throttle + offline queue + smart @مساعد reply)
   const handleSendText = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
+    if (isUserBannedNow) {
+      toast.error('حسابك محظور ولا يمكنك إرسال رسائل 🚫');
+      return;
+    }
+    if (currentUser.isMuted) {
+      toast.warning('أنت مكتوم حالياً بواسطة الإدارة 🔇');
+      return;
+    }
     const text = inputText.trim();
     if (!text) return;
 
@@ -1426,7 +1431,11 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
     }
     lastSentSpamRef.current = { text, ts: now };
 
+    const tempId = `room_${now}_${Math.random().toString(36).slice(2, 7)}`;
     const msgPayload: Partial<Message> = {
+      id: tempId,
+      tempId,
+      clientId: tempId,
       roomId: room.id,
       senderId: currentUser.id,
       senderName: currentUser.name,
@@ -1445,17 +1454,17 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
         content: replyingTo.content || replyingTo.text || '',
         type: replyingTo.type
       } : undefined,
+      createdAt: now,
       timestamp: now,
       status: navigator.onLine === false ? 'pending_offline' : 'sent'
     };
 
     if (typeof navigator !== 'undefined' && navigator.onLine === false) {
-      const pendingId = `offline_room_${now}_${Math.random().toString(36).slice(2, 6)}`;
       offlineQueue.enqueue({
-        id: pendingId,
+        id: tempId,
         targetType: 'room',
         targetId: room.id,
-        message: { ...(msgPayload as Message), id: pendingId, roomId: room.id, status: 'pending_offline' },
+        message: { ...(msgPayload as Message), id: tempId, tempId, roomId: room.id, status: 'pending_offline' },
         queuedAt: now,
       });
       toast.info('انقطع الاتصال — تم حفظ الرسالة وسيتم إرسالها تلقائياً عند العودة ⏳');
@@ -1496,12 +1505,12 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
     setIsEmojiPickerOpen(false);
   };
 
-  // Unrestricted Room Image Upload Handler
+  // Unrestricted Room Image Upload Handler (compressed <= 800px & < 300KB)
   const handleRoomImageSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file) return;
-    if (currentUser.isBanned || currentUser.isMuted) {
+    if (isUserBannedNow || currentUser.isMuted) {
       toast.warning('غير مسموح بإرسال صور أثناء الكتم أو الحظر');
       return;
     }
@@ -1517,14 +1526,19 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
     setIsUploadingRoomImage(true);
     try {
       const { blob } = await compressImageFileToBlob(file, {
-        maxWidth: 960,
-        maxBytes: 220 * 1024,
+        maxWidth: 800,
+        maxBytes: 295 * 1024,
       });
       const baseName = file.name.replace(/\.[^.]+$/, '') || 'room_photo';
       const uploadFile = new File([blob], `${baseName}.jpg`, { type: 'image/jpeg' });
       const { url } = await uploadPrivateChatMedia(uploadFile, `room_${room.id}`);
       sounds.playMessageSent();
+      const now = Date.now();
+      const tempId = `room_img_${now}_${Math.random().toString(36).slice(2, 7)}`;
       onSendMessage({
+        id: tempId,
+        tempId,
+        clientId: tempId,
         roomId: room.id,
         senderId: currentUser.id,
         senderName: currentUser.name,
@@ -1544,7 +1558,8 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
           content: replyingTo.content || replyingTo.text || '',
           type: replyingTo.type
         } : undefined,
-        timestamp: Date.now(),
+        createdAt: now,
+        timestamp: now,
         status: navigator.onLine === false ? 'pending_offline' : 'sent',
       });
       updateReplyingTo(null);
@@ -1576,9 +1591,14 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
 
   // Instant Welcoming Phrase Sender (الجمل الترحيبية)
   const handleSendWelcomePhrase = (phrase: string) => {
-    if (currentUser.isBanned || currentUser.isMuted) return;
+    if (isUserBannedNow || currentUser.isMuted) return;
     sounds.playMessageSent();
+    const now = Date.now();
+    const tempId = `room_phr_${now}_${Math.random().toString(36).slice(2, 7)}`;
     onSendMessage({
+      id: tempId,
+      tempId,
+      clientId: tempId,
       roomId: room.id,
       senderId: currentUser.id,
       senderName: currentUser.name,
@@ -1595,7 +1615,8 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
         content: replyingTo.content || replyingTo.text || '',
         type: replyingTo.type
       } : undefined,
-      timestamp: Date.now(),
+      createdAt: now,
+      timestamp: now,
       status: navigator.onLine === false ? 'pending_offline' : 'sent'
     });
     updateReplyingTo(null);
@@ -3132,8 +3153,8 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
         ))}
       </div>
 
-      {/* 9. BOTTOM INPUT BAR (Pinned, Optional Highlight Toggle + Dynamic Mic/Send) */}
-      <div className="relative bg-white/95 dark:bg-slate-900/95 border-t border-sky-200/75 dark:border-slate-800 p-1.5 sm:p-2 pb-[calc(env(safe-area-inset-bottom,0px)+0.4rem)] flex items-center gap-1 sm:gap-1.5 shrink-0 z-20">
+      {/* 9. BOTTOM INPUT BAR (Pinned, Comfortable Composer + Dynamic Mic/Send) */}
+      <div className="relative bg-white/95 dark:bg-slate-900/95 border-t border-sky-200/75 dark:border-slate-800 p-1.5 sm:p-2 pb-[calc(env(safe-area-inset-bottom,0px)+0.4rem)] flex items-center gap-1.5 sm:gap-2 shrink-0 z-20">
         <input
           ref={roomImageInputRef}
           type="file"
@@ -3146,7 +3167,7 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
         <button
           type="button"
           onClick={handleOpenGiftWithReminder}
-          className="p-2 rounded-xl bg-gradient-to-tr from-pink-500 to-rose-500 text-white hover:scale-105 active:scale-95 transition-transform shrink-0 shadow-sm min-h-[38px] min-w-[38px] flex items-center justify-center"
+          className="p-2 rounded-xl bg-gradient-to-tr from-pink-500 to-rose-500 text-white hover:scale-105 active:scale-95 transition-transform shrink-0 shadow-sm min-h-[42px] min-w-[40px] flex items-center justify-center"
           title="إرسال هدية فاخرة"
         >
           <Gift className="w-4 h-4" />
@@ -3156,8 +3177,8 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
         <button
           type="button"
           onClick={() => roomImageInputRef.current?.click()}
-          disabled={isUploadingRoomImage || currentUser.isBanned || currentUser.isMuted}
-          className="p-2 rounded-xl bg-sky-50 hover:bg-sky-100 border border-sky-200 text-[#1E96E8] active:scale-95 transition-all shrink-0 min-h-[38px] min-w-[38px] flex items-center justify-center disabled:opacity-45 cursor-pointer"
+          disabled={isUploadingRoomImage || isUserBannedNow || currentUser.isMuted}
+          className="p-2 rounded-xl bg-sky-50 hover:bg-sky-100 border border-sky-200 text-[#1E96E8] active:scale-95 transition-all shrink-0 min-h-[42px] min-w-[40px] flex items-center justify-center disabled:opacity-45 cursor-pointer"
           title="رفع وإرسال صورة"
         >
           {isUploadingRoomImage ? (
@@ -3167,40 +3188,7 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
           )}
         </button>
 
-        {/* Optional Highlight / Important Message Color Cycler */}
-        <button
-          type="button"
-          disabled={currentUser.isBanned || currentUser.isMuted}
-          onClick={() => {
-            const order: Array<HighlightPaletteKey | null> = [null, 'sky', 'amber', 'rose', 'emerald'];
-            const nextIdx = (order.indexOf(highlightColor) + 1) % order.length;
-            const nextVal = order[nextIdx];
-            setHighlightColor(nextVal);
-            if (nextVal) {
-              const found = HIGHLIGHT_OPTIONS.find((h) => h.key === nextVal);
-              toast.info(`تم تفعيل تمييز الرسالة (${found?.label || ''}) ✨`, { duration: 1800 });
-            }
-          }}
-          className={`p-2 rounded-xl border transition-all shrink-0 min-h-[38px] min-w-[36px] flex items-center justify-center active:scale-95 cursor-pointer disabled:opacity-45 ${
-            highlightColor
-              ? 'bg-[#1E96E8]/15 border-[#1E96E8] text-[#1E96E8]'
-              : 'bg-slate-100 hover:bg-slate-200 border-slate-200 text-slate-600'
-          }`}
-          title={highlightColor ? 'تغيير لون تمييز الرسالة أو إلغاؤه' : 'تمييز الرسالة بلون هادئ'}
-        >
-          <span className="relative flex items-center justify-center">
-            <Sparkles className="w-4 h-4" />
-            {highlightColor && (
-              <span
-                className={`absolute -top-1 -right-1 w-2 h-2 rounded-full border border-white ${
-                  HIGHLIGHT_OPTIONS.find((h) => h.key === highlightColor)?.dotClass || 'bg-sky-500'
-                }`}
-              />
-            )}
-          </span>
-        </button>
-
-        {/* Text Composer (No <form>/<input> so Android Chrome hides the black autofill bar) */}
+        {/* Text Composer (Comfortable & balanced width without extra AI/stars icon) */}
         <div className="flex-1 min-w-0 flex items-center">
           <textarea
             ref={inputRef}
@@ -3219,7 +3207,7 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
             data-bwignore="true"
             data-form-type="other"
             value={inputText}
-            disabled={currentUser.isBanned || currentUser.isMuted}
+            disabled={isUserBannedNow || currentUser.isMuted}
             onChange={(e) => handleInputChange(e.target.value)}
             onFocus={() => {
               if (isNearBottomRef.current) {
@@ -3235,17 +3223,15 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
               }
             }}
             placeholder={
-              currentUser.isBanned
+              isUserBannedNow
                 ? "عفواً، حسابك محظور من الإدارة 🚫"
                 : currentUser.isMuted
                 ? "أنت مكتوم حالياً بواسطة الإدارة 🔇"
-                : highlightColor
-                ? "اكتب رسالة مميزة..."
                 : "اكتب رسالتك في المجلس..."
             }
-            className={`w-full min-w-0 bg-slate-100 hover:bg-slate-100 focus:bg-white border rounded-xl px-3 py-2 text-xs sm:text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none min-h-[38px] max-h-24 leading-[1.4] resize-none overflow-y-auto transition-colors ${
-              highlightColor ? 'border-sky-400 bg-sky-50/50' : 'border-slate-200 focus:border-[#1E96E8]'
-            } ${currentUser.isBanned || currentUser.isMuted ? 'opacity-50 cursor-not-allowed bg-slate-200' : ''}`}
+            className={`w-full min-w-0 bg-slate-100 hover:bg-slate-100 focus:bg-white border border-slate-200 focus:border-[#1E96E8] rounded-2xl px-3.5 py-2.5 text-xs sm:text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none min-h-[42px] max-h-24 leading-[1.45] resize-none overflow-y-auto transition-colors shadow-inner ${
+              isUserBannedNow || currentUser.isMuted ? 'opacity-50 cursor-not-allowed bg-slate-200' : ''
+            }`}
           />
         </div>
 
@@ -3254,8 +3240,8 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
           <button
             type="button"
             onClick={() => setIsEmojiPickerOpen(!isEmojiPickerOpen)}
-            disabled={currentUser.isBanned || currentUser.isMuted}
-            className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-amber-600 active:scale-95 transition-all shrink-0 min-h-[38px] min-w-[38px] flex items-center justify-center"
+            disabled={isUserBannedNow || currentUser.isMuted}
+            className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-amber-600 active:scale-95 transition-all shrink-0 min-h-[42px] min-w-[40px] flex items-center justify-center"
             title="إيموجيات وتعبيرات"
           >
             <span className="text-sm sm:text-base">😊</span>

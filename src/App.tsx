@@ -105,6 +105,10 @@ function isNewerVersion(remote: string, local: string): boolean {
   return false;
 }
 
+function isUserBannedNow(u?: Partial<User> | null): boolean {
+  return Boolean(u?.isBanned || (typeof u?.bannedUntil === 'number' && u.bannedUntil > Date.now()));
+}
+
 function areUserListsEqual(a: User[], b: User[]): boolean {
   if (a === b) return true;
   if (a.length !== b.length) return false;
@@ -118,6 +122,8 @@ function areUserListsEqual(a: User[], b: User[]): boolean {
       u1.status !== u2.status ||
       u1.role !== u2.role ||
       u1.vipBadge !== u2.vipBadge ||
+      (u1.coins || 0) !== (u2.coins || 0) ||
+      (u1.bannedUntil || 0) !== (u2.bannedUntil || 0) ||
       Boolean(u1.isOnline) !== Boolean(u2.isOnline) ||
       Boolean(u1.isBanned) !== Boolean(u2.isBanned) ||
       Boolean(u1.isMuted) !== Boolean(u2.isMuted)
@@ -147,6 +153,8 @@ function hasUserVisibleChange(prev: User, patch: Partial<User>): boolean {
 
 const isMatchingRoomMessage = (existing: Message, incoming: Message): boolean => {
   if (existing.id === incoming.id) return true;
+  if (existing.tempId && incoming.tempId && existing.tempId === incoming.tempId) return true;
+  if (existing.clientId && incoming.clientId && existing.clientId === incoming.clientId) return true;
   const textA = (existing.content || existing.text || '').trim();
   const textB = (incoming.content || incoming.text || '').trim();
   if (
@@ -271,8 +279,12 @@ export default function App() {
 
   const clearAllUnreadMessages = useCallback(() => {
     recentlyClearedAllAtRef.current = Date.now();
-    setUnreadSendersMap({});
-    resetAllDirectChatsUnreadInDB(currentUserRef.current.id).catch(() => {});
+    let knownPeerIds: string[] = [];
+    setUnreadSendersMap((prev) => {
+      knownPeerIds = Object.keys(prev);
+      return {};
+    });
+    resetAllDirectChatsUnreadInDB(currentUserRef.current.id, knownPeerIds).catch(() => {});
   }, []);
 
   const unreadMessagesBySender = useMemo(
@@ -638,10 +650,19 @@ export default function App() {
     }
   }, [currentUser]);
 
-  // Subscribe to real-time User Profile updates from Firebase Realtime Database (silent equality check)
+  // Subscribe to real-time User Profile updates from Firestore (silent equality check + instant ban enforcement)
   useEffect(() => {
     if (!isProfileReady) return;
     const unsub = subscribeToUserProfile(currentUser.id, (profileUpdate) => {
+      const wasBanned = isUserBannedNow(currentUserRef.current);
+      const mergedCheck = { ...currentUserRef.current, ...profileUpdate };
+      const nowBanned = isUserBannedNow(mergedCheck);
+      if (!wasBanned && nowBanned) {
+        if (activeRoomRef.current) {
+          setActiveRoom(null);
+        }
+        toast.error('تم حظر حسابك بواسطة الإدارة ولا يمكنك دخول الغرف أو الإرسال 🚫');
+      }
       setCurrentUser(prev => {
         if (!hasUserVisibleChange(prev, profileUpdate)) return prev;
         return { ...prev, ...profileUpdate };
@@ -1594,21 +1615,30 @@ export default function App() {
       }
     );
 
-    // Also attach Firebase listener (last 30 messages) with deletion reconciliation
-    let prevFirebaseIds = new Set<string>();
+    // Also attach Firebase listener (last 30 messages) with window-safe deletion reconciliation
+    let prevFirebaseMsgs = new Map<string, number>();
     const unsubFirebase = subscribeToRoomMessages(activeRoom.id, (msgs) => {
       const incomingList = Array.isArray(msgs) ? msgs : [];
       if (incomingList.length >= 30) {
         setHasMoreRoomMessages(true);
       }
-      const nextFirebaseIds = new Set(incomingList.map((m) => m.id));
+      const nextFirebaseMsgs = new Map<string, number>();
+      let minIncomingTs = Infinity;
+      incomingList.forEach((m) => {
+        const ts = typeof m.timestamp === 'number' ? m.timestamp : 0;
+        nextFirebaseMsgs.set(m.id, ts);
+        if (ts > 0 && ts < minIncomingTs) minIncomingTs = ts;
+      });
       const deletedFromFirebase = new Set<string>();
-      prevFirebaseIds.forEach((oldId) => {
-        if (!nextFirebaseIds.has(oldId)) {
-          deletedFromFirebase.add(oldId);
+      prevFirebaseMsgs.forEach((oldTs, oldId) => {
+        if (!nextFirebaseMsgs.has(oldId)) {
+          // Only treat as deleted if within active 30-message window (not slid out into older history)
+          if (incomingList.length < 30 || oldTs >= minIncomingTs) {
+            deletedFromFirebase.add(oldId);
+          }
         }
       });
-      prevFirebaseIds = nextFirebaseIds;
+      prevFirebaseMsgs = nextFirebaseMsgs;
 
       setActiveRoomMessages(prev => {
         const filteredPrev = deletedFromFirebase.size > 0
@@ -1769,8 +1799,9 @@ export default function App() {
   const handleSendMessage = async (msgData: Partial<Message>) => {
     if (!activeRoom) return;
 
-    if (currentUser.isBanned) {
-      showAppNotice('عفواً، حسابك محظور من قِبل الإدارة ولا يمكنك إرسال الرسائل 🚫', 'error');
+    if (isUserBannedNow(currentUser)) {
+      const reasonText = currentUser.banReason ? ` (${currentUser.banReason})` : '';
+      showAppNotice(`عفواً، حسابك محظور من قِبل الإدارة ولا يمكنك إرسال الرسائل${reasonText} 🚫`, 'error');
       return;
     }
 
@@ -1784,8 +1815,12 @@ export default function App() {
 
     try {
       sounds.playMessageSent();
+      const generatedId = msgData.id || `msg_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+      const tempId = msgData.tempId || msgData.clientId || generatedId;
       const newMsg: Message = {
-        id: msgData.id || `msg_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+        id: generatedId,
+        tempId,
+        clientId: tempId,
         roomId: activeRoom.id,
         senderId: currentUser.id,
         senderName: currentUser.name,
@@ -1822,7 +1857,7 @@ export default function App() {
 
       // Optimistically add to active messages so sender immediately sees their message
       setActiveRoomMessages(prev => {
-        if (prev.some(m => m.id === newMsg.id)) return prev;
+        if (prev.some(m => m.id === newMsg.id || (m.tempId && m.tempId === newMsg.tempId))) return prev;
         return [...prev, newMsg];
       });
 
@@ -1854,15 +1889,18 @@ export default function App() {
       // 1. Broadcast via WebSocket directly to ALL other connected devices in real time
       realtimeSocket.sendMessage(activeRoom.id, newMsg);
 
-      // 2. Also send to Firebase Realtime Database & Firestore and promote status to delivered
+      // 2. Also send to Firebase Firestore and keep accurate sent/failed state
       sendFirestoreMessage(activeRoom.id, newMsg)
         .then(() => {
           setActiveRoomMessages(prev =>
-            prev.map(m => (m.id === newMsg.id && m.status === 'sent' ? { ...m, status: 'delivered' } : m))
+            prev.map(m => (m.id === newMsg.id && m.status === 'pending_offline' ? { ...m, status: 'sent' } : m))
           );
         })
         .catch(err => {
-          console.warn("Realtime DB message write notice:", err);
+          console.warn("Firestore room message write notice:", err);
+          setActiveRoomMessages(prev =>
+            prev.map(m => (m.id === newMsg.id ? { ...m, status: 'failed' } : m))
+          );
         });
 
       // 3. Track Daily Mission, Shared Room Daily Mission, and XP progress
@@ -1989,9 +2027,15 @@ export default function App() {
     setIsLogoutModalOpen(false);
   }, []);
 
-  // Enter Room Handler with Room Lock & Private Room Protection
+  // Enter Room Handler with Ban Check, Room Lock & Private Room Protection
   const handleSelectRoom = useCallback((room: Room) => {
     const me = currentUserRef.current;
+    if (isUserBannedNow(me)) {
+      toast.error('🚫 حسابك محظور حالياً', {
+        description: me.banReason || 'لا يمكنك دخول الغرف العامة أثناء سريان الحظر.',
+      });
+      return;
+    }
     const canManageRoom =
       isUserAdminOrOwner(me) ||
       room.ownerId === me.id ||
@@ -2846,28 +2890,36 @@ export default function App() {
       )}
 
       {/* Banned Alert Banner */}
-      {currentUser.isBanned && (
+      {isUserBannedNow(currentUser) && (
         <div className="bg-rose-600 text-white px-4 py-2.5 text-center text-xs font-black flex flex-wrap items-center justify-center gap-2 shadow-lg sticky top-0 z-[300] animate-in slide-in-from-top">
-          <span>🚫 حسابك محظور حالياً من قِبل إدارة شات مصر والعرب.</span>
-          <button
-            onClick={openAdmin}
-            className="px-2.5 py-1 rounded-lg bg-white/20 hover:bg-white/30 text-white text-[11px] font-bold border border-white/30 transition-all"
-          >
-            فتح لوحة الإدارة لفك الحظر
-          </button>
+          <span>
+            {!currentUser.isBanned && currentUser.bannedUntil
+              ? `🚫 حسابك محظور مؤقتاً حتى ${new Date(currentUser.bannedUntil).toLocaleString('ar-EG')}${currentUser.banReason ? ` (${currentUser.banReason})` : ''}`
+              : `🚫 حسابك محظور حالياً من قِبل إدارة شات مصر والعرب${currentUser.banReason ? ` (${currentUser.banReason})` : ''}.`}
+          </span>
+          {isUserAdminOrOwner(currentUser) && (
+            <button
+              onClick={openAdmin}
+              className="px-2.5 py-1 rounded-lg bg-white/20 hover:bg-white/30 text-white text-[11px] font-bold border border-white/30 transition-all"
+            >
+              فتح لوحة الإدارة لفك الحظر
+            </button>
+          )}
         </div>
       )}
 
       {/* Muted Alert Banner */}
-      {currentUser.isMuted && !currentUser.isBanned && (
+      {currentUser.isMuted && !isUserBannedNow(currentUser) && (
         <div className="bg-amber-400 text-slate-950 px-4 py-1.5 text-center text-xs font-black flex items-center justify-center gap-2 shadow sticky top-0 z-[300]">
           <span>🔇 أنت مكتوم حالياً بواسطة الإدارة، يمكنك الاستماع فقط ولا يمكنك إرسال الرسائل.</span>
-          <button
-            onClick={openAdmin}
-            className="px-2 py-0.5 rounded bg-black/15 hover:bg-black/25 text-slate-950 text-[10px] underline font-bold"
-          >
-            إلغاء الكتم من الإدارة
-          </button>
+          {isUserAdminOrOwner(currentUser) && (
+            <button
+              onClick={openAdmin}
+              className="px-2 py-0.5 rounded bg-black/15 hover:bg-black/25 text-slate-950 text-[10px] underline font-bold"
+            >
+              إلغاء الكتم من الإدارة
+            </button>
+          )}
         </div>
       )}
 

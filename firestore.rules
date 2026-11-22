@@ -89,6 +89,19 @@ service cloud.firestore {
       }
     }
 
+    // Canonical Private Chats collection: privateChats/{chatId}/messages/{messageId}
+    match /privateChats/{chatId} {
+      allow read, write: if true;
+
+      match /messages/{messageId} {
+        allow read, write: if true;
+      }
+
+      match /{document=**} {
+        allow read, write: if true;
+      }
+    }
+
     match /payment_requests/{orderId} {
       allow read, write: if true;
     }

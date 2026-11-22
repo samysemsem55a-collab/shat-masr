@@ -25,10 +25,18 @@ import {
   BadgeCheck,
   HardDrive,
   RotateCcw,
+  UserCog,
+  Clock,
+  Edit3,
+  Plus,
+  Minus,
+  Upload,
+  Users,
 } from 'lucide-react';
 import { User, UserRole, UserReport, Message, BackupSnapshot } from '../types/chat';
 import {
   adminUpdateUser,
+  adminAdjustUserCoins,
   subscribeToAllUsers,
   sendFirestoreMessage,
   subscribeToPendingPayments,
@@ -53,6 +61,8 @@ import {
 import { realtimeSocket } from '../services/realtimeSocket';
 import { isUserAdminOrOwner, PRIMARY_OWNER_EMAIL, VIP_TIERS } from '../data/seedData';
 import { getRankDisplayMeta } from '../utils/userRanks';
+import { compressImageFile } from '../utils/imageCompression';
+import { isUserTrulyOnline, getServerNowMs } from '../utils/presenceStatus';
 import { AvatarWithFrame } from './AvatarWithFrame';
 import { AdminBadWordsManager } from './AdminBadWordsManager';
 import { ActivityReport } from './ActivityReport';
@@ -66,6 +76,7 @@ const ROLE_OPTIONS: Array<{ value: UserRole; label: string; badge: string }> = [
   { value: 'vip_gold', label: 'VIP ذهبي 👑', badge: 'VIP ذهبي 👑' },
   { value: 'vip_diamond', label: 'VIP ماسي 💎', badge: 'VIP ماسي 💎' },
   { value: 'admin', label: 'مشرف عام 🛡️', badge: 'مشرف عام 🛡️' },
+  { value: 'super_admin', label: 'مراقب سوبر ⚡', badge: 'مراقب سوبر ⚡' },
 ];
 
 interface AdminControlPanelModalProps {
@@ -92,6 +103,7 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
     'users' | 'user_reports' | 'payments' | 'bad_words' | 'reports' | 'secret_pms' | 'backups'
   >('users');
   const [searchQuery, setSearchQuery] = useState('');
+  const [userFilter, setUserFilter] = useState<'all' | 'online' | 'privileged' | 'restricted'>('all');
   const [broadcastText, setBroadcastText] = useState('');
   const [appUpdateMsg, setAppUpdateMsg] = useState('');
   const [remoteNotifsEnabled, setRemoteNotifsEnabled] = useState(true);
@@ -99,6 +111,20 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
   const [usersList, setUsersList] = useState<User[]>(allUsers);
   const [pendingPayments, setPendingPayments] = useState<PendingPaymentOrder[]>([]);
   const [userReports, setUserReports] = useState<UserReport[]>([]);
+
+  // Selected Member Full-Control Modal State
+  const [selectedMemberId, setSelectedMemberId] = useState<string | null>(null);
+  const [editName, setEditName] = useState('');
+  const [editAvatar, setEditAvatar] = useState('');
+  const [editBio, setEditBio] = useState('');
+  const [editCountryFlag, setEditCountryFlag] = useState('🇪🇬');
+  const [editStatus, setEditStatus] = useState<User['status']>('online');
+  const [editRole, setEditRole] = useState<UserRole>('member');
+  const [editVipBadge, setEditVipBadge] = useState('');
+  const [banReasonInput, setBanReasonInput] = useState('');
+  const [coinsAmountInput, setCoinsAmountInput] = useState('500');
+  const [coinsNoteInput, setCoinsNoteInput] = useState('');
+  const [isSavingMemberEdit, setIsSavingMemberEdit] = useState(false);
 
   // Live Health Status
   const [healthChecking, setHealthChecking] = useState(false);
@@ -156,24 +182,11 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
 
     const unsubUsers = subscribeToAllUsers((liveUsers) => {
       if (liveUsers && liveUsers.length > 0) {
-        setUsersList((prev) => {
-          const prevMap = new Map<string, User>();
-          prev.forEach((u) => {
-            if (u?.id) prevMap.set(u.id, u);
-          });
-          const deduped = new Map<string, User>();
-          liveUsers.forEach((u) => {
-            if (!u?.id) return;
-            const prevUser = prevMap.get(u.id);
-            deduped.set(u.id, {
-              ...u,
-              isOnline: prevUser?.isOnline ?? u.isOnline,
-              status: prevUser?.status ?? u.status,
-              lastSeen: prevUser?.lastSeen ?? u.lastSeen,
-            });
-          });
-          return Array.from(deduped.values());
+        const deduped = new Map<string, User>();
+        liveUsers.forEach((u) => {
+          if (u?.id) deduped.set(u.id, u);
         });
+        setUsersList(Array.from(deduped.values()));
       }
     });
 
@@ -272,6 +285,8 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
     const frameStyle =
       newRole === 'owner'
         ? 'border-amber-400 shadow-[0_0_20px_rgba(245,158,11,0.85)]'
+        : newRole === 'super_admin'
+        ? 'border-purple-500 shadow-[0_0_18px_rgba(168,85,247,0.75)]'
         : newRole === 'admin'
         ? 'border-indigo-400 shadow-[0_0_18px_rgba(99,102,241,0.7)]'
         : newRole === 'vip_diamond'
@@ -300,19 +315,92 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
     );
   };
 
-  // Ban / Unban
-  const handleToggleBan = async (targetUser: User) => {
-    const isNowBanned = !targetUser.isBanned;
-    const updates = { isBanned: isNowBanned };
+  const isMemberBannedNow = (u: User): boolean =>
+    Boolean(u.isBanned || (typeof u.bannedUntil === 'number' && u.bannedUntil > Date.now()));
+
+  // Permanent Ban / Unban
+  const handleToggleBan = async (targetUser: User, reason?: string) => {
+    const currentlyBanned = isMemberBannedNow(targetUser);
+    const updates: Partial<User> = currentlyBanned
+      ? { isBanned: false, bannedUntil: null, banReason: '' }
+      : { isBanned: true, bannedUntil: null, banReason: reason?.trim() || 'مخالفة قوانين المنصة' };
 
     await adminUpdateUser(targetUser.id, updates);
     setUsersList((prev) => prev.map((u) => (u.id === targetUser.id ? { ...u, ...updates } : u)));
     if (onUserModified) onUserModified({ id: targetUser.id, ...updates });
     showNotification(
-      isNowBanned
+      !currentlyBanned
         ? `تم حظر ${targetUser.name} من المنصة فورياً 🚫`
         : `تم فك حظر ${targetUser.name} بنجاح ✅`
     );
+  };
+
+  // Temporary Ban (1h / 24h / 7d)
+  const handleTempBan = async (targetUser: User, durationMs: number, label: string, reason?: string) => {
+    const bannedUntil = Date.now() + durationMs;
+    const updates: Partial<User> = {
+      isBanned: false,
+      bannedUntil,
+      banReason: reason?.trim() || `حظر مؤقت (${label})`,
+    };
+    await adminUpdateUser(targetUser.id, updates);
+    setUsersList((prev) => prev.map((u) => (u.id === targetUser.id ? { ...u, ...updates } : u)));
+    if (onUserModified) onUserModified({ id: targetUser.id, ...updates });
+    showNotification(`تم حظر ${targetUser.name} مؤقتاً لمدة ${label} ⏳`);
+  };
+
+  // Open Full Member Editor Modal
+  const openMemberControlModal = (member: User) => {
+    setSelectedMemberId(member.id);
+    setEditName(member.name || '');
+    setEditAvatar(member.avatar || '');
+    setEditBio(member.bio || '');
+    setEditCountryFlag(member.countryFlag || '🇪🇬');
+    setEditStatus(member.status || 'online');
+    setEditRole(member.role || 'member');
+    setEditVipBadge(member.vipBadge || '');
+    setBanReasonInput(member.banReason || '');
+    setCoinsAmountInput('500');
+    setCoinsNoteInput('');
+  };
+
+  const handleUploadMemberAvatar = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const compressedDataUrl = await compressImageFile(file, {
+        maxWidth: 400,
+        maxHeight: 400,
+        maxBytes: 120 * 1024,
+        initialQuality: 0.8,
+      });
+      setEditAvatar(compressedDataUrl);
+      showNotification('تم ضغط الصورة وتجهيزها — اضغط حفظ لتطبيق التعديل 📸');
+    } catch {
+      showNotification('تعذر قراءة الصورة المختارة');
+    } finally {
+      e.target.value = '';
+    }
+  };
+
+  const handleSaveMemberProfileEdits = async (member: User) => {
+    if (!editName.trim() || isSavingMemberEdit) return;
+    setIsSavingMemberEdit(true);
+    try {
+      const updates: Partial<User> = {
+        name: editName.trim(),
+        avatar: editAvatar.trim(),
+        bio: editBio.trim(),
+        countryFlag: editCountryFlag.trim() || '🇪🇬',
+        status: editStatus,
+      };
+      await adminUpdateUser(member.id, updates);
+      setUsersList((prev) => prev.map((u) => (u.id === member.id ? { ...u, ...updates } : u)));
+      if (onUserModified) onUserModified({ id: member.id, ...updates });
+      showNotification(`تم حفظ بيانات العضو "${updates.name}" لحظياً ✅`);
+    } finally {
+      setIsSavingMemberEdit(false);
+    }
   };
 
   // Mute / Unmute
@@ -374,15 +462,36 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
     }
   };
 
-  // Grant Coins
-  const handleAddCoins = async (targetUser: User, amount: number) => {
-    const newCoins = (targetUser.coins || 0) + amount;
-    const updates = { coins: newCoins };
-
-    await adminUpdateUser(targetUser.id, updates);
+  // Adjust Coins (Add / Deduct / Set via Atomic Firestore Transaction + Log)
+  const handleAdjustCoins = async (
+    targetUser: User,
+    amount: number,
+    mode: 'add' | 'deduct' | 'set',
+    note: string = ''
+  ) => {
+    if (!Number.isFinite(amount) || amount < 0) return;
+    const res = await adminAdjustUserCoins(targetUser.id, amount, mode, currentUser.name, note);
+    const nextCoins = res.success
+      ? res.newCoins
+      : mode === 'add'
+      ? (targetUser.coins || 0) + amount
+      : mode === 'deduct'
+      ? Math.max(0, (targetUser.coins || 0) - amount)
+      : Math.max(0, amount);
+    const updates = { coins: nextCoins };
     setUsersList((prev) => prev.map((u) => (u.id === targetUser.id ? { ...u, ...updates } : u)));
     if (onUserModified) onUserModified({ id: targetUser.id, ...updates });
-    showNotification(`تمت إضافة +${amount.toLocaleString()} كوينز إلى حساب ${targetUser.name} 🪙`);
+    showNotification(
+      mode === 'add'
+        ? `تمت إضافة +${amount.toLocaleString()} كوينز إلى حساب ${targetUser.name} 🪙`
+        : mode === 'deduct'
+        ? `تم خصم -${amount.toLocaleString()} كوينز من حساب ${targetUser.name} 🪙`
+        : `تم تعديل رصيد ${targetUser.name} إلى ${nextCoins.toLocaleString()} كوينز 🪙`
+    );
+  };
+
+  const handleAddCoins = async (targetUser: User, amount: number) => {
+    await handleAdjustCoins(targetUser, amount, 'add', 'منحة إدارية سريعة');
   };
 
   // Award Badge
@@ -463,13 +572,41 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
 
   const pendingReportsCount = userReports.filter((r) => r.status === 'pending').length;
   const pendingPaymentsCount = pendingPayments.filter((p) => p.status === 'pending').length;
+  const nowServerMs = getServerNowMs();
 
-  const filteredUsers = usersList.filter(
-    (u) =>
-      u.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      u.username?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      u.role?.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const onlineMembersCount = usersList.filter((u) => isUserTrulyOnline(u, nowServerMs)).length;
+  const privilegedMembersCount = usersList.filter((u) => u.role && u.role !== 'member').length;
+  const restrictedMembersCount = usersList.filter(
+    (u) => isMemberBannedNow(u) || Boolean(u.isMuted)
+  ).length;
+
+  const filteredUsers = usersList
+    .filter((u) => {
+      if (userFilter === 'online' && !isUserTrulyOnline(u, nowServerMs)) return false;
+      if (userFilter === 'privileged' && (!u.role || u.role === 'member')) return false;
+      if (userFilter === 'restricted' && !isMemberBannedNow(u) && !u.isMuted) return false;
+
+      const q = searchQuery.trim().toLowerCase();
+      if (!q) return true;
+      return (
+        u.name?.toLowerCase().includes(q) ||
+        u.username?.toLowerCase().includes(q) ||
+        u.id?.toLowerCase().includes(q) ||
+        u.role?.toLowerCase().includes(q) ||
+        u.vipBadge?.toLowerCase().includes(q) ||
+        u.bio?.toLowerCase().includes(q)
+      );
+    })
+    .sort((a, b) => {
+      const aOnline = isUserTrulyOnline(a, nowServerMs) ? 1 : 0;
+      const bOnline = isUserTrulyOnline(b, nowServerMs) ? 1 : 0;
+      if (aOnline !== bOnline) return bOnline - aOnline;
+      return (b.coins || 0) - (a.coins || 0);
+    });
+
+  const selectedMember = selectedMemberId
+    ? usersList.find((u) => u.id === selectedMemberId) || null
+    : null;
 
   // Strict Security Gate (placed after all hooks to preserve React hook call order)
   return (
@@ -586,14 +723,14 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
         <div className="flex flex-wrap sm:flex-nowrap overflow-x-auto p-1.5 bg-slate-100 border-b border-slate-200 text-xs font-bold gap-1 shrink-0">
           <button
             onClick={() => setActiveTab('users')}
-            className={`py-2 px-3 rounded-xl transition-all flex items-center justify-center gap-1.5 shrink-0 ${
+            className={`py-2 px-3 rounded-xl transition-all flex items-center justify-center gap-1.5 shrink-0 cursor-pointer ${
               activeTab === 'users'
                 ? 'bg-white text-indigo-700 font-black shadow-sm border border-slate-200'
                 : 'text-slate-600 hover:text-slate-900'
             }`}
           >
-            <ShieldCheck className="w-3.5 h-3.5 shrink-0" />
-            <span>الأعضاء ({usersList.length})</span>
+            <Users className="w-3.5 h-3.5 shrink-0" />
+            <span>كل الأعضاء ({usersList.length})</span>
           </button>
 
           <button
@@ -1225,24 +1362,73 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
                 )}
               </div>
 
-              {/* Search Bar */}
-              <div className="relative">
-                <Search className="w-4 h-4 absolute right-3.5 top-2.5 text-slate-400" />
-                <input
-                  type="text"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="ابحث عن عضو بالاسم أو المعرف أو الرتبة..."
-                  className="w-full bg-white border border-slate-200 rounded-xl pr-10 pl-4 py-2 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-indigo-400"
-                />
+              {/* Search Bar + Filter Pills */}
+              <div className="space-y-2">
+                <div className="relative">
+                  <Search className="w-4 h-4 absolute right-3.5 top-2.5 text-slate-400" />
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="ابحث عن عضو بالاسم أو المعرف أو الرتبة..."
+                    className="w-full bg-white border border-slate-200 rounded-xl pr-10 pl-4 py-2 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-indigo-400"
+                  />
+                </div>
+
+                <div className="flex flex-wrap items-center gap-1.5 text-[11px] font-bold">
+                  <button
+                    type="button"
+                    onClick={() => setUserFilter('all')}
+                    className={`px-3 py-1 rounded-xl border transition cursor-pointer ${
+                      userFilter === 'all'
+                        ? 'bg-indigo-600 text-white border-indigo-600'
+                        : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'
+                    }`}
+                  >
+                    الكل ({usersList.length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setUserFilter('online')}
+                    className={`px-3 py-1 rounded-xl border transition cursor-pointer ${
+                      userFilter === 'online'
+                        ? 'bg-emerald-600 text-white border-emerald-600'
+                        : 'bg-white text-emerald-700 border-emerald-200 hover:bg-emerald-50'
+                    }`}
+                  >
+                    🟢 متصلون الآن ({onlineMembersCount})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setUserFilter('privileged')}
+                    className={`px-3 py-1 rounded-xl border transition cursor-pointer ${
+                      userFilter === 'privileged'
+                        ? 'bg-amber-500 text-white border-amber-500'
+                        : 'bg-white text-amber-800 border-amber-200 hover:bg-amber-50'
+                    }`}
+                  >
+                    👑 الإدارة و VIP ({privilegedMembersCount})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setUserFilter('restricted')}
+                    className={`px-3 py-1 rounded-xl border transition cursor-pointer ${
+                      userFilter === 'restricted'
+                        ? 'bg-rose-600 text-white border-rose-600'
+                        : 'bg-white text-rose-700 border-rose-200 hover:bg-rose-50'
+                    }`}
+                  >
+                    🚫 محظورون / مكتومون ({restrictedMembersCount})
+                  </button>
+                </div>
               </div>
 
               {/* Users List */}
               <div className="space-y-2.5">
                 <div className="flex items-center justify-between text-xs text-slate-600 font-bold px-1">
-                  <span>الأعضاء المسجلون والمتصلون ({filteredUsers.length}):</span>
+                  <span>كل الأعضاء المسجلين ({filteredUsers.length}):</span>
                   <span className="text-[11px] text-emerald-700 font-bold">
-                    التغييرات تنفذ لحظياً في Firestore + WebSocket
+                    تحديث لحظي مباشر عبر Firestore onSnapshot + RTDB
                   </span>
                 </div>
 
@@ -1253,11 +1439,16 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
                 ) : (
                   filteredUsers.map((user) => {
                     const rankMeta = getRankDisplayMeta(user.role, user.vipBadge);
+                    const userBannedNow = isMemberBannedNow(user);
+                    const isTempBanned =
+                      !user.isBanned &&
+                      typeof user.bannedUntil === 'number' &&
+                      user.bannedUntil > nowServerMs;
                     return (
                     <div
                       key={user.id}
                       className={`p-3.5 rounded-2xl border bg-white transition-all shadow-2xs ${
-                        user.isBanned
+                        userBannedNow
                           ? 'border-rose-300 bg-rose-50/40'
                           : user.isMuted
                           ? 'border-amber-300 bg-amber-50/40'
@@ -1287,7 +1478,13 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
 
                               {user.isBanned && (
                                 <span className="px-1.5 py-0.5 rounded bg-rose-600 text-white font-black text-[9px]">
-                                  محظور 🚫
+                                  حظر دائم 🚫
+                                </span>
+                              )}
+
+                              {isTempBanned && user.bannedUntil && (
+                                <span className="px-1.5 py-0.5 rounded bg-rose-500 text-white font-black text-[9px]">
+                                  حظر مؤقت حتى {new Date(user.bannedUntil).toLocaleString('ar-EG')} ⏳
                                 </span>
                               )}
 
@@ -1313,8 +1510,17 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
                           </div>
                         </div>
 
-                        {/* Admin Action Buttons + Direct Role Dropdown */}
+                        {/* Admin Action Buttons + Direct Role Dropdown + Full Control Drawer */}
                         <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => openMemberControlModal(user)}
+                            className="px-2.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] font-black flex items-center gap-1 shadow-xs active:scale-95 transition-all cursor-pointer"
+                          >
+                            <UserCog className="w-3.5 h-3.5" />
+                            <span>تحكم وتعديل</span>
+                          </button>
+
                           <select
                             aria-label={`تغيير رتبة ${user.name}`}
                             value={user.role || 'member'}
@@ -1337,27 +1543,9 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
                           </select>
 
                           <button
-                            onClick={() => handleSetRole(user, 'vip_gold', 'VIP ذهبي 👑')}
-                            title="ترقية إلى VIP ذهبي"
-                            className="px-2 py-1.5 rounded-xl bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-800 text-[10px] font-black flex items-center gap-1 active:scale-95 transition-all"
-                          >
-                            <Crown className="w-3 h-3 text-amber-500" />
-                            <span>ذهبي</span>
-                          </button>
-
-                          <button
-                            onClick={() => handleSetRole(user, 'vip_diamond', 'VIP ماسي 💎')}
-                            title="ترقية إلى VIP ماسي"
-                            className="px-2 py-1.5 rounded-xl bg-cyan-50 hover:bg-cyan-100 border border-cyan-200 text-cyan-800 text-[10px] font-black flex items-center gap-1 active:scale-95 transition-all"
-                          >
-                            <Crown className="w-3 h-3 text-cyan-600" />
-                            <span>ماسي</span>
-                          </button>
-
-                          <button
                             onClick={() => handleAddCoins(user, 1000)}
                             title="إضافة 1,000 كوينز للحساب"
-                            className="px-2 py-1.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-700 text-[10px] font-black flex items-center gap-1 active:scale-95 transition-all"
+                            className="px-2 py-1.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-700 text-[10px] font-black flex items-center gap-1 active:scale-95 transition-all cursor-pointer"
                           >
                             <span>+1,000</span>
                             <span>🪙</span>
@@ -1381,7 +1569,7 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
                           <button
                             onClick={() => handleToggleMute(user)}
                             title={user.isMuted ? 'إلغاء الكتم' : 'كتم العضو'}
-                            className={`p-1.5 rounded-xl border text-xs font-bold active:scale-95 transition-all ${
+                            className={`p-1.5 rounded-xl border text-xs font-bold active:scale-95 transition-all cursor-pointer ${
                               user.isMuted
                                 ? 'bg-amber-500 text-white border-amber-500'
                                 : 'bg-slate-100 text-slate-600 hover:text-slate-900 border-slate-200'
@@ -1396,31 +1584,16 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
 
                           <button
                             onClick={() => handleToggleBan(user)}
-                            title={user.isBanned ? 'فك الحظر' : 'حظر العضو'}
-                            className={`px-2.5 py-1.5 rounded-xl border text-[10px] font-black flex items-center gap-1 active:scale-95 transition-all ${
-                              user.isBanned
+                            title={userBannedNow ? 'فك الحظر' : 'حظر العضو'}
+                            className={`px-2.5 py-1.5 rounded-xl border text-[10px] font-black flex items-center gap-1 active:scale-95 transition-all cursor-pointer ${
+                              userBannedNow
                                 ? 'bg-rose-600 text-white border-rose-600'
                                 : 'bg-rose-50 hover:bg-rose-100 text-rose-700 border-rose-200'
                             }`}
                           >
                             <Ban className="w-3 h-3" />
-                            <span>{user.isBanned ? 'فك الحظر' : 'حظر'}</span>
+                            <span>{userBannedNow ? 'فك الحظر' : 'حظر'}</span>
                           </button>
-
-                          <div className="flex items-center gap-1">
-                            <button
-                              onClick={() => handleAddBadge(user, 'أكثر الهدايا')}
-                              className="px-1.5 py-1 rounded-lg bg-pink-50 border border-pink-200 text-pink-700 text-[9px] font-bold"
-                            >
-                              🎁 أكثر الهدايا
-                            </button>
-                            <button
-                              onClick={() => handleAddBadge(user, 'صوت ماسي')}
-                              className="px-1.5 py-1 rounded-lg bg-sky-50 border border-sky-200 text-sky-700 text-[9px] font-bold"
-                            >
-                              🎙️ صوت ماسي
-                            </button>
-                          </div>
                         </div>
                       </div>
                     </div>
@@ -1445,6 +1618,383 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
             إغلاق
           </button>
         </div>
+
+        {/* Full Member Control Modal (Edit Profile + Roles + Temp/Perm Ban + Coins) */}
+        {selectedMember && (
+          <div
+            onClick={() => setSelectedMemberId(null)}
+            className="fixed inset-0 z-[215] flex items-center justify-center bg-slate-950/60 backdrop-blur-xs p-2 sm:p-4"
+            dir="rtl"
+          >
+            <div
+              onClick={(e) => e.stopPropagation()}
+              className="w-full max-w-xl bg-white border border-slate-200 rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
+            >
+              <div className="px-4 py-3 bg-gradient-to-l from-indigo-50 via-white to-amber-50 border-b border-slate-200 flex items-center justify-between gap-2 shrink-0">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <AvatarWithFrame user={selectedMember} size="sm" showOnlineDot />
+                  <div className="min-w-0">
+                    <h4 className="text-sm font-black text-slate-900 truncate flex items-center gap-1.5">
+                      <span>تحكم إداري كامل: {selectedMember.name}</span>
+                      <VerifiedBadge verified={selectedMember.verified} size="xs" />
+                    </h4>
+                    <p className="text-[10px] text-slate-500 font-mono truncate">
+                      ID: {selectedMember.id} • الرصيد: {(selectedMember.coins || 0).toLocaleString()} 🪙
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSelectedMemberId(null)}
+                  className="p-1.5 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-600 cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-slate-50/50 text-right">
+                {/* 1. Edit Profile & Settings */}
+                <div className="bg-white border border-slate-200 rounded-2xl p-3.5 space-y-3 shadow-2xs">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-black text-slate-900 flex items-center gap-1.5">
+                      <Edit3 className="w-3.5 h-3.5 text-indigo-600" />
+                      <span>تعديل البيانات والإعدادات</span>
+                    </span>
+                    {isPrimaryOwner && (
+                      <button
+                        type="button"
+                        onClick={() => handleToggleVerified(selectedMember)}
+                        className={`px-2.5 py-1 rounded-xl text-[10px] font-black border flex items-center gap-1 cursor-pointer ${
+                          selectedMember.verified
+                            ? 'bg-sky-600 text-white border-sky-600'
+                            : 'bg-sky-50 text-sky-700 border-sky-200'
+                        }`}
+                      >
+                        <BadgeCheck className="w-3 h-3" />
+                        <span>{selectedMember.verified ? 'حساب موثق ✓' : 'منح التوثيق'}</span>
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-600 block mb-1">الاسم المعروض</label>
+                      <input
+                        type="text"
+                        value={editName}
+                        onChange={(e) => setEditName(e.target.value)}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs text-slate-900 focus:outline-none focus:border-indigo-400"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-600 block mb-1">الحالة وعلم الدولة</label>
+                      <div className="flex items-center gap-1.5">
+                        <select
+                          value={editStatus || 'online'}
+                          onChange={(e) => setEditStatus(e.target.value as User['status'])}
+                          className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1.5 text-xs text-slate-900 focus:outline-none focus:border-indigo-400"
+                        >
+                          <option value="online">متصل 🟢</option>
+                          <option value="away">بالخارج 🌙</option>
+                          <option value="busy">مشغول ⛔</option>
+                          <option value="offline">غير متصل ⚪</option>
+                        </select>
+                        <input
+                          type="text"
+                          value={editCountryFlag}
+                          onChange={(e) => setEditCountryFlag(e.target.value)}
+                          placeholder="🇪🇬"
+                          className="w-14 text-center bg-slate-50 border border-slate-200 rounded-xl px-2 py-1.5 text-xs"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-600 block mb-1">الصورة الشخصية (رابط أو رفع مضغوط)</label>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        value={editAvatar}
+                        onChange={(e) => setEditAvatar(e.target.value)}
+                        placeholder="https://..."
+                        dir="ltr"
+                        className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs text-slate-900 focus:outline-none focus:border-indigo-400"
+                      />
+                      <label className="px-3 py-1.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 text-[11px] font-black flex items-center gap-1 cursor-pointer shrink-0">
+                        <Upload className="w-3.5 h-3.5" />
+                        <span>رفع صورة</span>
+                        <input type="file" accept="image/*" onChange={handleUploadMemberAvatar} className="hidden" />
+                      </label>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-600 block mb-1">النبذة التعريفية (Bio)</label>
+                    <input
+                      type="text"
+                      value={editBio}
+                      onChange={(e) => setEditBio(e.target.value)}
+                      placeholder="نبذة عن العضو..."
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs text-slate-900 focus:outline-none focus:border-indigo-400"
+                    />
+                  </div>
+
+                  <button
+                    type="button"
+                    disabled={isSavingMemberEdit || !editName.trim()}
+                    onClick={() => handleSaveMemberProfileEdits(selectedMember)}
+                    className="w-full py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-black flex items-center justify-center gap-1.5 shadow-sm disabled:opacity-50 cursor-pointer"
+                  >
+                    {isSavingMemberEdit ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                    <span>حفظ تعديلات البيانات فوراً</span>
+                  </button>
+                </div>
+
+                {/* 2. Role & VIP Permissions */}
+                <div className="bg-white border border-slate-200 rounded-2xl p-3.5 space-y-2.5 shadow-2xs">
+                  <span className="text-xs font-black text-slate-900 flex items-center gap-1.5">
+                    <Crown className="w-3.5 h-3.5 text-amber-500" />
+                    <span>الترقية وتغيير الرتبة والصلاحيات</span>
+                  </span>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <select
+                      value={editRole}
+                      disabled={selectedMember.role === 'owner' && !isPrimaryOwner}
+                      onChange={(e) => {
+                        const r = e.target.value as UserRole;
+                        setEditRole(r);
+                        const opt = ROLE_OPTIONS.find((o) => o.value === r);
+                        setEditVipBadge(opt?.badge || (r === 'owner' ? 'المالك 👑' : ''));
+                      }}
+                      className="bg-indigo-50 border border-indigo-200 rounded-xl px-3 py-2 text-xs font-black text-indigo-900"
+                    >
+                      {isPrimaryOwner && <option value="owner">المالك 👑</option>}
+                      {ROLE_OPTIONS.map((opt) => (
+                        <option key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </select>
+                    <input
+                      type="text"
+                      value={editVipBadge}
+                      onChange={(e) => setEditVipBadge(e.target.value)}
+                      placeholder="مسمى الشارة / اللقب (اختياري)"
+                      className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900"
+                    />
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => handleSetRole(selectedMember, editRole, editVipBadge)}
+                      className="px-3.5 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-white text-xs font-black flex items-center gap-1 shadow-xs cursor-pointer"
+                    >
+                      <Check className="w-3.5 h-3.5" />
+                      <span>تطبيق الرتبة واللقب</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleAddBadge(selectedMember, 'أكثر الهدايا')}
+                      className="px-2.5 py-1.5 rounded-xl bg-pink-50 border border-pink-200 text-pink-700 text-[11px] font-bold cursor-pointer"
+                    >
+                      + شارة 🎁 أكثر الهدايا
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleAddBadge(selectedMember, 'صوت ماسي')}
+                      className="px-2.5 py-1.5 rounded-xl bg-sky-50 border border-sky-200 text-sky-700 text-[11px] font-bold cursor-pointer"
+                    >
+                      + شارة 🎙️ صوت ماسي
+                    </button>
+                  </div>
+                </div>
+
+                {/* 3. Ban (Temp / Permanent) & Unban & Mute */}
+                <div className="bg-white border border-slate-200 rounded-2xl p-3.5 space-y-2.5 shadow-2xs">
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <span className="text-xs font-black text-slate-900 flex items-center gap-1.5">
+                      <Ban className="w-3.5 h-3.5 text-rose-600" />
+                      <span>الحظر وفك الحظر والكتم</span>
+                    </span>
+                    {isMemberBannedNow(selectedMember) ? (
+                      <span className="px-2 py-0.5 rounded-full bg-rose-100 text-rose-800 text-[10px] font-black">
+                        {selectedMember.isBanned
+                          ? '🚫 محظور دائماً'
+                          : `⏳ محظور مؤقتاً حتى ${new Date(selectedMember.bannedUntil || 0).toLocaleString('ar-EG')}`}
+                      </span>
+                    ) : (
+                      <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 text-[10px] font-black">
+                        ✅ حساب نشط غير محظور
+                      </span>
+                    )}
+                  </div>
+
+                  <input
+                    type="text"
+                    value={banReasonInput}
+                    onChange={(e) => setBanReasonInput(e.target.value)}
+                    placeholder="سبب الحظر (اختياري)..."
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs text-slate-900"
+                  />
+
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => handleTempBan(selectedMember, 60 * 60 * 1000, 'ساعة واحدة', banReasonInput)}
+                      className="px-2.5 py-1.5 rounded-xl bg-amber-50 hover:bg-amber-100 border border-amber-300 text-amber-800 text-[11px] font-black flex items-center gap-1 cursor-pointer"
+                    >
+                      <Clock className="w-3 h-3" />
+                      <span>حظر 1 ساعة</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleTempBan(selectedMember, 24 * 60 * 60 * 1000, '24 ساعة', banReasonInput)}
+                      className="px-2.5 py-1.5 rounded-xl bg-orange-50 hover:bg-orange-100 border border-orange-300 text-orange-800 text-[11px] font-black flex items-center gap-1 cursor-pointer"
+                    >
+                      <Clock className="w-3 h-3" />
+                      <span>حظر 24 ساعة</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleTempBan(selectedMember, 7 * 24 * 60 * 60 * 1000, '7 أيام', banReasonInput)}
+                      className="px-2.5 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 text-[11px] font-black flex items-center gap-1 cursor-pointer"
+                    >
+                      <Clock className="w-3 h-3" />
+                      <span>حظر 7 أيام</span>
+                    </button>
+
+                    {!selectedMember.isBanned && (
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          const updates: Partial<User> = {
+                            isBanned: true,
+                            bannedUntil: null,
+                            banReason: banReasonInput.trim() || 'حظر دائم من الإدارة',
+                          };
+                          await adminUpdateUser(selectedMember.id, updates);
+                          setUsersList((prev) => prev.map((u) => (u.id === selectedMember.id ? { ...u, ...updates } : u)));
+                          if (onUserModified) onUserModified({ id: selectedMember.id, ...updates });
+                          showNotification(`تم حظر ${selectedMember.name} دائماً 🚫`);
+                        }}
+                        className="px-3 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-[11px] font-black flex items-center gap-1 cursor-pointer"
+                      >
+                        <Ban className="w-3 h-3" />
+                        <span>حظر دائم 🚫</span>
+                      </button>
+                    )}
+
+                    {isMemberBannedNow(selectedMember) && (
+                      <button
+                        type="button"
+                        onClick={() => handleToggleBan(selectedMember)}
+                        className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-black flex items-center gap-1 cursor-pointer"
+                      >
+                        <Check className="w-3 h-3" />
+                        <span>فك الحظر الآن ✅</span>
+                      </button>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={() => handleToggleMute(selectedMember)}
+                      className={`px-2.5 py-1.5 rounded-xl border text-[11px] font-black flex items-center gap-1 cursor-pointer ${
+                        selectedMember.isMuted
+                          ? 'bg-amber-500 text-white border-amber-500'
+                          : 'bg-slate-100 text-slate-700 border-slate-200 hover:bg-slate-200'
+                      }`}
+                    >
+                      {selectedMember.isMuted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
+                      <span>{selectedMember.isMuted ? 'إلغاء الكتم' : 'كتم العضو'}</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* 4. Coins Management */}
+                <div className="bg-white border border-slate-200 rounded-2xl p-3.5 space-y-2.5 shadow-2xs">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-black text-slate-900 flex items-center gap-1.5">
+                      <Coins className="w-3.5 h-3.5 text-amber-500" />
+                      <span>إدارة الكوينز والرصيد (سجل فوري)</span>
+                    </span>
+                    <span className="px-2.5 py-0.5 rounded-full bg-amber-50 border border-amber-200 text-amber-800 text-xs font-black">
+                      {(selectedMember.coins || 0).toLocaleString()} 🪙
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <input
+                      type="number"
+                      min={0}
+                      value={coinsAmountInput}
+                      onChange={(e) => setCoinsAmountInput(e.target.value)}
+                      placeholder="المبلغ بالكوينز..."
+                      className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-bold text-slate-900"
+                    />
+                    <input
+                      type="text"
+                      value={coinsNoteInput}
+                      onChange={(e) => setCoinsNoteInput(e.target.value)}
+                      placeholder="ملاحظة العملية (اختياري)..."
+                      className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs text-slate-900"
+                    />
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {[100, 500, 1000, 5000].map((preset) => (
+                      <button
+                        key={preset}
+                        type="button"
+                        onClick={() => setCoinsAmountInput(String(preset))}
+                        className="px-2 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-[10px] font-bold cursor-pointer"
+                      >
+                        {preset.toLocaleString()} 🪙
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const amt = Math.max(0, Math.floor(Number(coinsAmountInput) || 0));
+                        if (amt > 0) handleAdjustCoins(selectedMember, amt, 'add', coinsNoteInput.trim());
+                      }}
+                      className="py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black flex items-center justify-center gap-1 cursor-pointer"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>إضافة</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const amt = Math.max(0, Math.floor(Number(coinsAmountInput) || 0));
+                        if (amt > 0) handleAdjustCoins(selectedMember, amt, 'deduct', coinsNoteInput.trim());
+                      }}
+                      className="py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-black flex items-center justify-center gap-1 cursor-pointer"
+                    >
+                      <Minus className="w-3.5 h-3.5" />
+                      <span>خصم</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const amt = Math.max(0, Math.floor(Number(coinsAmountInput) || 0));
+                        handleAdjustCoins(selectedMember, amt, 'set', coinsNoteInput.trim());
+                      }}
+                      className="py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-black flex items-center justify-center gap-1 cursor-pointer"
+                    >
+                      <span>تعيين (=)</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Backup Restore Confirmation Dialog */}
         {confirmRestoreSnapshot && (

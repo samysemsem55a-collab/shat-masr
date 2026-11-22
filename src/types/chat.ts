@@ -37,6 +37,8 @@ export interface User {
   giftsReceivedCount: number;
   allowPrivateMessages?: boolean;
   isBanned?: boolean;
+  bannedUntil?: number | null;
+  banReason?: string;
   isMuted?: boolean;
   badges?: string[];
   ratingPoints?: number;
@@ -102,6 +104,10 @@ export interface FriendRequest {
   senderName: string;
   senderAvatar: string;
   receiverId: string;
+  fromId?: string;
+  fromName?: string;
+  fromAvatar?: string;
+  toId?: string;
   createdAt: number;
   status: 'pending' | 'accepted' | 'declined';
 }
@@ -250,7 +256,9 @@ export interface Message {
   expiresAt?: number;
   createdAt?: number;
   timestamp: number;
-  status: 'sent' | 'delivered' | 'read' | 'pending_offline';
+  tempId?: string;
+  clientId?: string;
+  status: 'sent' | 'delivered' | 'seen' | 'read' | 'pending_offline' | 'failed';
   isHighlighted?: boolean;
   highlightColor?: 'sky' | 'amber' | 'rose' | 'emerald';
   likes?: number;

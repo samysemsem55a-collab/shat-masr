@@ -470,11 +470,19 @@
     },
     "/direct_chats/{chatId}": {
       "schema": "DirectChat",
-      "description": "One-on-one direct message conversations"
+      "description": "Legacy direct message conversations"
     },
     "/direct_chats/{chatId}/messages/{messageId}": {
       "schema": "DirectMessage",
-      "description": "Messages inside a direct chat (auto-expires after 7 days)"
+      "description": "Legacy direct messages"
+    },
+    "/privateChats/{chatId}": {
+      "schema": "DirectChat",
+      "description": "Canonical one-on-one private chat conversation metadata"
+    },
+    "/privateChats/{chatId}/messages/{messageId}": {
+      "schema": "DirectMessage",
+      "description": "Canonical private chat messages with tempId, serverTimestamp, and read/seen states"
     },
     "/stats/{statId}": {
       "schema": "VisitorStat",

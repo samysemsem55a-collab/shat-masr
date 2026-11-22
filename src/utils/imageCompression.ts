@@ -1,6 +1,6 @@
 /**
  * Image Compression & Banner Cropping Utilities
- * Compresses images client-side before upload to max 800px width and under 200KB.
+ * Compresses images client-side via <canvas> before upload to max 800px width and under 300KB.
  */
 
 export interface CompressImageOptions {
@@ -16,7 +16,7 @@ export async function compressImageFile(
 ): Promise<string> {
   const maxWidth = options.maxWidth ?? 800;
   const maxHeight = options.maxHeight ?? 800;
-  const maxBytes = options.maxBytes ?? 200 * 1024; // 200KB
+  const maxBytes = options.maxBytes ?? 295 * 1024; // < 300KB
   let quality = options.initialQuality ?? 0.84;
 
   const dataUrl = await new Promise<string>((resolve, reject) => {

@@ -38,6 +38,7 @@ import { User, Message, Friend, GiftItem, UnreadSenderSummary } from '../types/c
 import { sounds } from '../utils/soundEffects';
 import { 
   subscribeToDirectMessages, 
+  fetchOlderDirectMessages,
   sendDirectMessage, 
   deleteDirectMessage,
   subscribeToFriendsList,
@@ -58,6 +59,7 @@ import { toast } from '../utils/appToast';
 import { getWallpaperStyleById } from '../data/wallpapers';
 import { AvatarWithFrame } from './AvatarWithFrame';
 import { MessageStatusIcon } from './MessageStatusIcon';
+import { BlurredChatImage } from './BlurredChatImage';
 import { getRankDisplayMeta } from '../utils/userRanks';
 import { ANIMATED_INLINE_EMOJIS, InlineRichText } from './InlineRichText';
 import { VerifiedBadge } from '../utils/verifiedBadge';
@@ -283,6 +285,9 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
         cost: gift.cost,
         recipientName: activeContact.name,
       }
+    }).catch((err) => {
+      console.warn('Direct gift send error:', err);
+      toast.error('تعذر إرسال الهدية في المحادثة الخاصة');
     });
   };
 
@@ -322,32 +327,90 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
       };
       setActiveContact(targetContact);
     }
-  }, [targetUser, currentUser.id, globalOnlineUsers, onMarkSenderRead]);
+  }, [targetUser?.id, currentUser.id]);
 
-  // 4. Real-time Messages for Active 1-on-1 Chat
-  const [messages, setMessages] = useState<Message[]>([]);
+  // 4. Real-time Messages for Active 1-on-1 Chat (latest 30 + cursor pagination for older)
+  const [liveMessages, setLiveMessages] = useState<Message[]>([]);
+  const [olderMessages, setOlderMessages] = useState<Message[]>([]);
+  const [hasMoreOlderDm, setHasMoreOlderDm] = useState<boolean>(true);
+  const [isLoadingOlderDm, setIsLoadingOlderDm] = useState<boolean>(false);
+  const loadingOlderDmGuardRef = useRef<boolean>(false);
   const [searchQuery, setSearchQuery] = useState('');
 
   useEffect(() => {
     if (!activeContact) {
-      setMessages([]);
+      setLiveMessages([]);
+      setOlderMessages([]);
+      setHasMoreOlderDm(false);
       return;
     }
-    setMessages([]);
+    setLiveMessages([]);
+    setOlderMessages([]);
+    setHasMoreOlderDm(true);
     const unsub = subscribeToDirectMessages(currentUser.id, activeContact.id, (loadedMsgs) => {
-      setMessages(loadedMsgs || []);
-    });
+      setLiveMessages(loadedMsgs || []);
+      if ((loadedMsgs || []).length < 30) {
+        setHasMoreOlderDm(false);
+      }
+    }, 30);
     return () => unsub();
   }, [activeContact?.id, currentUser.id]);
 
-  // Mark incoming messages as read in Firestore + RTDB + WebSocket + app unread counter when opening/viewing conversation
+  const setMessages: React.Dispatch<React.SetStateAction<Message[]>> = setLiveMessages;
+
+  const messages = React.useMemo(() => {
+    if (olderMessages.length === 0) return liveMessages;
+    const byKey = new Map<string, Message>();
+    [...olderMessages, ...liveMessages].forEach((m) => {
+      if (!m || !m.id) return;
+      byKey.set(m.id, m);
+    });
+    return Array.from(byKey.values()).sort(
+      (a, b) => (a.createdAt || a.timestamp || 0) - (b.createdAt || b.timestamp || 0)
+    );
+  }, [olderMessages, liveMessages]);
+
+  const triggerLoadOlderDm = async () => {
+    if (!activeContact?.id || loadingOlderDmGuardRef.current || isLoadingOlderDm || !hasMoreOlderDm) return;
+    const container = messagesScrollRef.current;
+    const prevHeight = container?.scrollHeight || 0;
+    const prevTop = container?.scrollTop || 0;
+    loadingOlderDmGuardRef.current = true;
+    setIsLoadingOlderDm(true);
+    try {
+      const older = await fetchOlderDirectMessages(currentUser.id, activeContact.id, 30);
+      if (!older || older.length === 0) {
+        setHasMoreOlderDm(false);
+      } else {
+        setOlderMessages((prev) => {
+          const seen = new Set(prev.map((m) => m.id));
+          const uniqueOlder = older.filter((m) => !seen.has(m.id));
+          return [...uniqueOlder, ...prev];
+        });
+        if (older.length < 30) setHasMoreOlderDm(false);
+        requestAnimationFrame(() => {
+          const el = messagesScrollRef.current;
+          if (!el) return;
+          const diff = el.scrollHeight - prevHeight;
+          if (diff > 0) el.scrollTop = prevTop + diff;
+        });
+      }
+    } finally {
+      setIsLoadingOlderDm(false);
+      loadingOlderDmGuardRef.current = false;
+    }
+  };
+
+  // Mark incoming messages as 'seen' in Firestore + WebSocket when viewing conversation
   useEffect(() => {
     if (!activeContact?.id || !currentUser?.id) return;
     if ((unreadBySender[activeContact.id] || 0) > 0) {
       onMarkSenderRead?.(activeContact.id);
     }
     if (messages.length === 0) return;
-    const hasUnread = messages.some(m => m.senderId !== currentUser.id && m.status !== 'read');
+    const hasUnread = messages.some(
+      (m) => m.senderId !== currentUser.id && m.status !== 'seen' && m.status !== 'read'
+    );
     if (hasUnread) {
       markDirectMessagesAsRead(currentUser.id, activeContact.id, messages);
     }
@@ -509,7 +572,7 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
     const peerSessionId = getActivePeerSessionId();
     if (val.trim().length > 0) {
       const now = Date.now();
-      if (now - lastPrivateTypingEmitRef.current >= 1400) {
+      if (now - lastPrivateTypingEmitRef.current >= 2000) {
         lastPrivateTypingEmitRef.current = now;
         setPrivateTyping(currentUser.id, activeContact.id, currentUser.name, true, peerSessionId);
       }
@@ -541,7 +604,10 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
     const el = messagesScrollRef.current;
     if (!el) return;
     const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-    isNearBottomRef.current = distanceFromBottom <= 140;
+    isNearBottomRef.current = distanceFromBottom <= 100;
+    if (el.scrollTop < 48 && hasMoreOlderDm && !isLoadingOlderDm) {
+      triggerLoadOlderDm();
+    }
   };
 
   useEffect(() => {
@@ -639,14 +705,14 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
     const convId = [currentUser.id, activeContact.id].sort().join('_');
     setIsUploadingMedia(true);
     setUploadProgress(5);
-    const tempId = `dm_media_opt_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const tempId = `dm_media_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
     let localPreviewUrl: string | null = null;
     try {
       let uploadFile: File = file;
       if (isImage) {
         const { blob: compressedBlob } = await compressImageFileToBlob(file, {
           maxWidth: 800,
-          maxBytes: 195 * 1024,
+          maxBytes: 295 * 1024,
         });
         const cleanBase = file.name.replace(/\.[^.]+$/, '') || 'photo';
         uploadFile = new File([compressedBlob], `${cleanBase}.jpg`, { type: 'image/jpeg' });
@@ -655,6 +721,8 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
       const optimisticType: 'image' | 'video' = isVideo ? 'video' : 'image';
       const optimisticMsg: Message = {
         id: tempId,
+        tempId,
+        clientId: tempId,
         roomId: convId,
         senderId: currentUser.id,
         senderName: currentUser.name,
@@ -680,6 +748,9 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
       });
       sounds.playMessageSent();
       const newMsg: Partial<Message> & { recipientName?: string; recipientAvatar?: string; recipientSessionId?: string } = {
+        id: tempId,
+        tempId,
+        clientId: tempId,
         senderId: currentUser.id,
         senderName: currentUser.name,
         senderAvatar: currentUser.avatar,
@@ -699,14 +770,10 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
         status: 'sent'
       };
       const sent = await sendDirectMessage(currentUser.id, activeContact.id, newMsg);
-      setMessages(prev => {
-        const exists = prev.some(m => m.id === sent.id);
-        if (exists) return prev.filter(m => m.id !== tempId);
-        return prev.map(m => (m.id === tempId ? { ...sent, status: sent.status === 'read' ? 'read' : 'delivered' } : m));
-      });
+      setMessages(prev => prev.map(m => (m.id === tempId || m.tempId === tempId ? sent : m)));
       toast.success(mediaType === 'video' ? 'تم إرسال الفيديو بنجاح 🎬' : 'تم إرسال الصورة بنجاح 🖼️');
     } catch (err: any) {
-      setMessages(prev => prev.filter(m => m.id !== tempId));
+      setMessages(prev => prev.map(m => (m.id === tempId ? { ...m, status: 'failed' } : m)));
       toast.error(err?.message || 'حدث خطأ أثناء رفع الوسائط.');
     } finally {
       if (localPreviewUrl) {
@@ -717,8 +784,42 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
     }
   };
 
+  const handleRetryFailedMessage = async (failedMsg: Message) => {
+    if (!activeContact) return;
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+      toast.warning('لا يزال الاتصال منقطعاً — سيتم الإرسال عند توفر الإنترنت');
+      return;
+    }
+    const retryTempId = failedMsg.tempId || failedMsg.id;
+    setMessages((prev) =>
+      prev.map((m) => (m.id === failedMsg.id ? { ...m, status: 'sent' } : m))
+    );
+    try {
+      const sent = await sendDirectMessage(currentUser.id, activeContact.id, {
+        ...failedMsg,
+        id: retryTempId,
+        tempId: retryTempId,
+        clientId: retryTempId,
+        recipientName: activeContact.name,
+        recipientAvatar: activeContact.avatar,
+        recipientSessionId: getActivePeerSessionId(),
+        status: 'sent'
+      });
+      setMessages((prev) => prev.map((m) => (m.id === failedMsg.id ? sent : m)));
+    } catch {
+      setMessages((prev) =>
+        prev.map((m) => (m.id === failedMsg.id ? { ...m, status: 'failed' } : m))
+      );
+      toast.error('تعذر إعادة الإرسال، تأكد من الاتصال');
+    }
+  };
+
   const handleSendMessage = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
+    if (currentUser.isBanned || (typeof currentUser.bannedUntil === 'number' && currentUser.bannedUntil > Date.now())) {
+      toast.error('تم حظر حسابك من إرسال الرسائل 🚫');
+      return;
+    }
     if (!inputText.trim() || !activeContact) return;
 
     if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
@@ -742,7 +843,11 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
       onClearPrefilledDraft?.();
     }
 
+    const tempId = `dm_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
     const newMsg: Partial<Message> & { recipientName?: string; recipientAvatar?: string; recipientSessionId?: string } = {
+      id: tempId,
+      tempId,
+      clientId: tempId,
       senderId: currentUser.id,
       senderName: currentUser.name,
       senderAvatar: currentUser.avatar,
@@ -756,6 +861,7 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
       content: content,
       text: content,
       replyTo: activeReply,
+      createdAt: Date.now(),
       timestamp: Date.now(),
       status: 'sent'
     };
@@ -763,16 +869,16 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
     const convId = [currentUser.id, activeContact.id].sort().join('_');
 
     if (typeof navigator !== 'undefined' && navigator.onLine === false) {
-      const pendingId = `offline_dm_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
       const offlineMsg: Message = {
         ...(newMsg as Message),
-        id: pendingId,
+        id: tempId,
+        tempId,
         roomId: convId,
         status: 'pending_offline',
       };
       setMessages(prev => [...prev, offlineMsg]);
       offlineQueue.enqueue({
-        id: pendingId,
+        id: tempId,
         targetType: 'dm',
         targetId: convId,
         recipientId: activeContact.id,
@@ -784,10 +890,10 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
       return;
     }
 
-    const tempId = `dm_opt_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
     const optimisticMsg: Message = {
       ...(newMsg as Message),
       id: tempId,
+      tempId,
       roomId: convId,
       status: 'sent',
     };
@@ -796,21 +902,11 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
 
     try {
       const sent = await sendDirectMessage(currentUser.id, activeContact.id, newMsg);
-      setMessages(prev => {
-        const alreadyPersisted = prev.some(m => m.id === sent.id);
-        if (alreadyPersisted) {
-          return prev.filter(m => m.id !== tempId);
-        }
-        return prev.map(m =>
-          m.id === tempId
-            ? { ...sent, status: sent.status === 'read' ? 'read' : 'delivered' }
-            : m
-        );
-      });
+      setMessages(prev => prev.map(m => (m.id === tempId || m.tempId === tempId ? sent : m)));
     } catch (err) {
-      console.warn("Direct message send fallback:", err);
-      toast.error('تعذر إرسال الرسالة، حاول مجدداً');
-      setMessages(prev => prev.filter(m => m.id !== tempId));
+      console.warn('Direct message send failed:', err);
+      toast.error('تعذر إرسال الرسالة — اضغط على 🌍❌ لإعادة المحاولة');
+      setMessages(prev => prev.map(m => (m.id === tempId ? { ...m, status: 'failed' } : m)));
     }
   };
 
@@ -1644,6 +1740,25 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
             onScroll={handleMessagesScroll}
             className="flex-1 overflow-y-auto overflow-x-hidden overscroll-contain p-3 space-y-2.5"
           >
+            {hasMoreOlderDm && (
+              <div className="flex justify-center py-1">
+                <button
+                  type="button"
+                  onClick={triggerLoadOlderDm}
+                  disabled={isLoadingOlderDm}
+                  className="px-3 py-1 rounded-full bg-white/90 hover:bg-sky-50 border border-sky-200 text-sky-800 text-[11px] font-bold flex items-center gap-1.5 shadow-2xs transition cursor-pointer disabled:opacity-60"
+                >
+                  {isLoadingOlderDm ? (
+                    <>
+                      <Loader2 className="w-3 h-3 animate-spin" />
+                      <span>جاري تحميل رسائل أقدم...</span>
+                    </>
+                  ) : (
+                    <span>تحميل رسائل أقدم ↑</span>
+                  )}
+                </button>
+              </div>
+            )}
             {(() => {
               const filteredMessages = messageSearchQuery.trim()
                 ? messages.filter(m =>
@@ -1872,23 +1987,13 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                       </p>
                     ) : msg.type === 'image' && (msg.mediaUrl || msg.imageUrl) ? (
                       <div className="space-y-1.5">
-                        <div
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setLightboxImageUrl(msg.mediaUrl || msg.imageUrl || null);
-                          }}
-                          className="relative rounded-xl overflow-hidden border border-white/25 bg-black/10 group cursor-zoom-in"
-                        >
-                          <img
-                            src={msg.mediaUrl || msg.imageUrl}
-                            alt="صورة مرسلة"
-                            className="max-h-60 w-full object-cover rounded-xl"
-                            loading="lazy"
-                          />
-                          <span className="absolute bottom-1.5 left-1.5 p-1 rounded-lg bg-slate-900/60 text-white opacity-80 group-hover:opacity-100">
-                            <Maximize2 className="w-3.5 h-3.5" />
-                          </span>
-                        </div>
+                        <BlurredChatImage
+                          src={msg.mediaUrl || msg.imageUrl || ''}
+                          alt="صورة مرسلة"
+                          autoReveal={false}
+                          onOpenFull={(url) => setLightboxImageUrl(url)}
+                          className="max-h-60 w-full object-cover rounded-xl border border-white/25"
+                        />
                       </div>
                     ) : msg.type === 'video' && msg.mediaUrl ? (
                       <div className="space-y-1">
@@ -1964,6 +2069,11 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                         <MessageStatusIcon
                           status={msg.status}
                           variant={msg.type === 'sticker' ? 'dm-sticker' : 'dm-sent'}
+                          onRetry={
+                            (msg.status === 'failed' || msg.status === 'pending_offline')
+                              ? () => handleRetryFailedMessage(msg)
+                              : undefined
+                          }
                         />
                       )}
                     </div>
