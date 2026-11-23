@@ -49,8 +49,7 @@ import {
   setPrivateTyping,
   subscribeToPrivateTyping,
   submitUserReport,
-  recordGiftRecipientStats,
-  toggleDirectMessageReaction
+  recordGiftRecipientStats
 } from '../services/firebase';
 import { FriendsList } from './FriendsList';
 import { LuxuryGiftModal } from './LuxuryGiftModal';
@@ -170,10 +169,6 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
   const isNearBottomRef = useRef<boolean>(true);
   const hasInitialScrolledRef = useRef<boolean>(false);
   const prevLastDmIdRef = useRef<string | null>(null);
-  const [pulsingDmMessages, setPulsingDmMessages] = useState<Record<string, { emoji: string; key: number }>>({});
-  const prevDmReactionsRef = useRef<Map<string, Record<string, number>>>(new Map());
-  const dmPulseTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
-  const dmLastTapRef = useRef<{ msgId: string; ts: number }>({ msgId: '', ts: 0 });
 
   const scrollToMessage = (msgId?: string) => {
     if (!msgId) return;
@@ -675,84 +670,6 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
     }
   }, [messages, activeContact?.id, currentUser.id]);
 
-  // Trigger heart/like pulse animation when a DM message receives a reaction (local or via onSnapshot)
-  const triggerDmLikePulse = (msgId: string, emoji: string) => {
-    if (!msgId) return;
-    if (dmPulseTimersRef.current[msgId]) {
-      clearTimeout(dmPulseTimersRef.current[msgId]);
-    }
-    setPulsingDmMessages(prev => ({
-      ...prev,
-      [msgId]: { emoji, key: Date.now() }
-    }));
-    dmPulseTimersRef.current[msgId] = setTimeout(() => {
-      setPulsingDmMessages(prev => {
-        const next = { ...prev };
-        delete next[msgId];
-        return next;
-      });
-      delete dmPulseTimersRef.current[msgId];
-    }, 1100);
-  };
-
-  useEffect(() => {
-    prevDmReactionsRef.current.clear();
-    Object.values(dmPulseTimersRef.current).forEach(t => clearTimeout(t));
-    dmPulseTimersRef.current = {};
-    setPulsingDmMessages({});
-  }, [activeContact?.id]);
-
-  useEffect(() => {
-    return () => {
-      Object.values(dmPulseTimersRef.current).forEach(t => clearTimeout(t));
-    };
-  }, []);
-
-  useEffect(() => {
-    const prevMap = prevDmReactionsRef.current;
-    const isInitialLoad = prevMap.size === 0 && messages.length > 0;
-    for (const m of messages) {
-      if (!m.id) continue;
-      const currReactions = m.reactions || {};
-      const prevReactions = prevMap.get(m.id);
-      if (!isInitialLoad && prevReactions) {
-        let increasedEmoji: string | null = null;
-        for (const em of Object.keys(currReactions)) {
-          if ((currReactions[em] || 0) > (prevReactions[em] || 0)) {
-            increasedEmoji = em;
-            if (em === '❤️' || em === '👍') break;
-          }
-        }
-        if (increasedEmoji) {
-          triggerDmLikePulse(m.id, increasedEmoji);
-        }
-      }
-      prevMap.set(m.id, { ...currReactions });
-    }
-  }, [messages]);
-
-  const handleToggleDmReaction = (msg: Message, emoji: string) => {
-    if (!activeContact || !msg?.id) return;
-    const alreadyPicked = msg.userReactions?.[currentUser.id] === emoji;
-    if (!alreadyPicked) {
-      if (emoji === '❤️') {
-        sounds.playCoinsReward();
-      } else {
-        sounds.playMessageSent();
-      }
-      triggerDmLikePulse(msg.id, emoji);
-    }
-    toggleDirectMessageReaction(
-      currentUser.id,
-      activeContact.id,
-      msg.id,
-      emoji,
-      currentUser.id,
-      currentUser.name,
-      msg
-    );
-  };
-
   // Close Emoji/Sticker drawer when clicking outside
   useEffect(() => {
     if (!isEmojiStickerOpen) return;
@@ -792,36 +709,7 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
     setCallModalState({ isOpen: true, callType });
   };
 
-  // Canvas-based image resizing & compression before uploading to Firebase to reduce data usage
-  const handleImageUpload = async (file: File): Promise<File> => {
-    const isDataSaver = Boolean(currentUser.dataSaverMode);
-    const maxDimension = isDataSaver ? 720 : 960;
-    const maxBytes = isDataSaver ? 105 * 1024 : 170 * 1024;
-    const initialQuality = isDataSaver ? 0.68 : 0.76;
-
-    const { blob: compressedBlob } = await compressImageFileToBlob(file, {
-      maxWidth: maxDimension,
-      maxHeight: maxDimension,
-      maxBytes,
-      initialQuality,
-    });
-
-    if (
-      file.type === 'image/jpeg' &&
-      compressedBlob.size >= file.size &&
-      file.size <= maxBytes
-    ) {
-      return file;
-    }
-
-    const cleanBase = file.name.replace(/\.[^.]+$/, '') || 'photo';
-    return new File([compressedBlob], `${cleanBase}.jpg`, {
-      type: 'image/jpeg',
-      lastModified: Date.now(),
-    });
-  };
-
-  // WhatsApp-style Media file picker: 0ms blob preview + fast canvas compression + live progress
+  // WhatsApp-style Media file picker: 0ms blob preview + fast client compression + live progress
   const handleMediaFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = '';
@@ -874,7 +762,14 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
     try {
       let uploadFile: File = file;
       if (isImage) {
-        uploadFile = await handleImageUpload(file);
+        const { blob: compressedBlob } = await compressImageFileToBlob(file, {
+          maxWidth: 1080,
+          maxHeight: 1080,
+          maxBytes: 220 * 1024,
+          initialQuality: 0.8,
+        });
+        const cleanBase = file.name.replace(/\.[^.]+$/, '') || 'photo';
+        uploadFile = new File([compressedBlob], `${cleanBase}.jpg`, { type: 'image/jpeg' });
         setUploadProgress(20);
         setMessages(prev => prev.map(m => (m.id === tempId || m.tempId === tempId) ? { ...m, uploadProgress: 20 } : m));
       }
@@ -2096,19 +1991,10 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                         setSwipeState(null);
                       }
                     }}
-                    onTouchEnd={(e) => {
+                    onTouchEnd={() => {
                       if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
-                      const didSwipeReply = Boolean(swipeState?.msgId === msg.id && swipeState.offsetX >= 48);
-                      if (didSwipeReply) {
+                      if (swipeState?.msgId === msg.id && swipeState.offsetX >= 48) {
                         triggerReplyTo(msg);
-                      } else if (!swipeMovedRef.current && !((e.target as HTMLElement).closest('button, video, a'))) {
-                        const now = Date.now();
-                        if (dmLastTapRef.current.msgId === msg.id && now - dmLastTapRef.current.ts < 280) {
-                          dmLastTapRef.current = { msgId: '', ts: 0 };
-                          handleToggleDmReaction(msg, '❤️');
-                        } else {
-                          dmLastTapRef.current = { msgId: msg.id, ts: now };
-                        }
                       }
                       swipeStartRef.current = null;
                       setSwipeState(null);
@@ -2118,28 +2004,18 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                       swipeStartRef.current = null;
                       setSwipeState(null);
                     }}
-                    onDoubleClick={(e) => {
-                      if ((e.target as HTMLElement).closest('button, video, a')) return;
-                      handleToggleDmReaction(msg, '❤️');
-                    }}
                     onContextMenu={(e) => {
                       e.preventDefault();
                       setActiveContextMenu({ msg, x: e.clientX, y: e.clientY });
                     }}
                     className={`max-w-[85%] sm:max-w-[75%] rounded-2xl px-3.5 py-2.5 text-xs sm:text-sm space-y-1 cursor-pointer select-text transition-transform active:scale-[0.99] ${
-                    pulsingDmMessages[msg.id]
-                      ? pulsingDmMessages[msg.id].emoji === '❤️'
-                        ? 'animate-like-msg-pulse'
-                        : 'animate-like-msg-pulse-sky'
-                      : ''
-                    } ${
                     msg.type === 'sticker'
                       ? 'bg-white/95 backdrop-blur-md text-slate-900 border border-sky-200/80 shadow-xs'
                       : isMe
                       ? 'bg-gradient-to-l from-[#1E96E8] to-[#2196F3] text-white border border-sky-400/30 rounded-tr-none shadow-sm'
                       : 'bg-white/95 dark:bg-slate-800/95 backdrop-blur-md text-slate-900 dark:text-slate-100 border border-sky-100 dark:border-slate-700 rounded-tl-none shadow-xs'
                   }`}
-                    title="انقر مرتين للإعجاب ❤️ أو اسحب يميناً للرد أو اضغط مطولاً للخيارات"
+                    title="اسحب يميناً للرد السريع أو اضغط مطولاً للخيارات"
                   >
                     {msg.replyTo && (
                       <div
@@ -2243,77 +2119,21 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                       </p>
                     )}
 
-                    <div className="flex items-center justify-between gap-2 pt-0.5">
-                      <div className="flex items-center gap-1 flex-wrap">
-                        {msg.reactions && Object.entries(msg.reactions).map(([emoji, count]) => {
-                          if (count <= 0) return null;
-                          const isPicked = msg.userReactions?.[currentUser.id] === emoji;
-                          const isHeartOrLike = emoji === '❤️' || emoji === '👍';
-                          const pulseInfo = pulsingDmMessages[msg.id];
-                          const isPulsingThis = pulseInfo?.emoji === emoji;
-                          return (
-                            <button
-                              key={emoji}
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleToggleDmReaction(msg, emoji);
-                              }}
-                              className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-black transition-transform active:scale-90 cursor-pointer ${
-                                isMe && msg.type !== 'sticker'
-                                  ? isPicked
-                                    ? 'bg-white/25 text-white border border-white/40'
-                                    : 'bg-white/15 text-white/95 border border-white/25'
-                                  : isPicked
-                                  ? 'bg-rose-50 text-rose-600 border border-rose-200'
-                                  : 'bg-slate-100 text-slate-700 border border-slate-200'
-                              }`}
-                              title="اضغط للتفاعل"
-                            >
-                              <span className="relative inline-flex items-center justify-center">
-                                {isPulsingThis && (
-                                  <span
-                                    key={pulseInfo.key}
-                                    aria-hidden="true"
-                                    className={`absolute -inset-1.5 rounded-full pointer-events-none animate-like-ring-ripple ${
-                                      emoji === '❤️' ? 'bg-rose-400/55' : 'bg-sky-400/55'
-                                    }`}
-                                  />
-                                )}
-                                <span
-                                  className={`text-[11px] leading-none relative z-[1] ${
-                                    isPulsingThis
-                                      ? 'animate-like-heart-burst'
-                                      : isHeartOrLike
-                                      ? 'animate-like-heart-gentle'
-                                      : ''
-                                  }`}
-                                >
-                                  {emoji}
-                                </span>
-                              </span>
-                              {count > 1 && <span className="tabular-nums">{count}</span>}
-                            </button>
-                          );
-                        })}
-                      </div>
-
-                      <div className={`flex items-center justify-end gap-1 text-[10px] ${
-                        isMe && msg.type !== 'sticker' ? 'text-white/85' : 'text-slate-500'
-                      }`}>
-                        <span>{new Date(msg.timestamp).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })}</span>
-                        {isMe && (
-                          <MessageStatusIcon
-                            status={msg.status}
-                            variant={msg.type === 'sticker' ? 'dm-sticker' : 'dm-sent'}
-                            onRetry={
-                              (msg.status === 'failed' || msg.status === 'pending_offline')
-                                ? () => handleRetryFailedMessage(msg)
-                                : undefined
-                            }
-                          />
-                        )}
-                      </div>
+                    <div className={`flex items-center justify-end gap-1 text-[10px] ${
+                      isMe && msg.type !== 'sticker' ? 'text-white/85' : 'text-slate-500'
+                    }`}>
+                      <span>{new Date(msg.timestamp).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })}</span>
+                      {isMe && (
+                        <MessageStatusIcon
+                          status={msg.status}
+                          variant={msg.type === 'sticker' ? 'dm-sticker' : 'dm-sent'}
+                          onRetry={
+                            (msg.status === 'failed' || msg.status === 'pending_offline')
+                              ? () => handleRetryFailedMessage(msg)
+                              : undefined
+                          }
+                        />
+                      )}
                     </div>
                   </div>
                 </motion.div>
@@ -2625,29 +2445,6 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                   <button onClick={() => setActiveContextMenu(null)} className="text-slate-400 hover:text-slate-800 p-1">
                     <X className="w-3.5 h-3.5" />
                   </button>
-                </div>
-
-                {/* Quick Reactions */}
-                <div className="flex items-center justify-around py-1.5 bg-slate-50 rounded-xl border border-slate-200">
-                  {(['❤️', '👍', '😂', '🔥'] as const).map((em) => {
-                    const isPicked = activeContextMenu.msg.userReactions?.[currentUser.id] === em;
-                    return (
-                      <button
-                        key={em}
-                        type="button"
-                        onClick={() => {
-                          const targetMsg = activeContextMenu.msg;
-                          setActiveContextMenu(null);
-                          handleToggleDmReaction(targetMsg, em);
-                        }}
-                        className={`text-xl hover:scale-125 active:scale-95 transition-transform p-1 rounded-lg ${
-                          isPicked ? 'bg-rose-100/80 scale-110' : ''
-                        }`}
-                      >
-                        {em}
-                      </button>
-                    );
-                  })}
                 </div>
 
                 {/* Reply Option */}
