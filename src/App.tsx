@@ -1132,21 +1132,31 @@ export default function App() {
     return () => unsub();
   }, [deviceId]);
 
+  const currentTabRef = useRef(currentTab);
+  currentTabRef.current = currentTab;
+  const isPrivateChatDrawerOpenRef = useRef(isPrivateChatDrawerOpen);
+  isPrivateChatDrawerOpenRef.current = isPrivateChatDrawerOpen;
+  const isInsidePrivateChatRef = useRef(isInsidePrivateChat);
+  isInsidePrivateChatRef.current = isInsidePrivateChat;
+  const targetChatUserRef = useRef(targetChatUser);
+  targetChatUserRef.current = targetChatUser;
+
   // Listen for real-time incoming direct messages across the entire app (supports registered users & online guests via ID/sessionId)
   useEffect(() => {
     const getConvId = (u1: string, u2: string) => [u1, u2].sort().join('_');
 
     const handleIncomingDm = (rawMsg: any) => {
       if (!rawMsg) return;
+      const me = currentUserRef.current;
       const isForMe =
-        rawMsg.recipientId === currentUser.id ||
-        (!!currentUser.sessionId && rawMsg.recipientId === currentUser.sessionId);
+        rawMsg.recipientId === me.id ||
+        (!!me.sessionId && rawMsg.recipientId === me.sessionId);
 
-      if (rawMsg.senderId !== currentUser.id && isForMe) {
+      if (rawMsg.senderId !== me.id && isForMe) {
         const isViewingThisSender =
-          (isPrivateChatDrawerOpen || currentTab === 'chat') &&
-          isInsidePrivateChat &&
-          targetChatUser?.id === rawMsg.senderId;
+          (isPrivateChatDrawerOpenRef.current || currentTabRef.current === 'chat') &&
+          isInsidePrivateChatRef.current &&
+          targetChatUserRef.current?.id === rawMsg.senderId;
 
         // Track per-sender unread incoming message count (deduplicated across WebSocket + BroadcastChannel)
         const dmDedupKey = rawMsg.id || `${rawMsg.senderId}_${rawMsg.timestamp || Date.now()}_${rawMsg.content || ''}`;
@@ -1168,7 +1178,7 @@ export default function App() {
             const existing = prev[rawMsg.senderId];
             const nextCount = (existing?.count || 0) + 1;
             const senderDisplayName = rawMsg.senderName || existing?.senderName || 'عضو شات مصر';
-            const dmPrefsEnabled = currentUser.notificationPrefs?.directMessages !== false;
+            const dmPrefsEnabled = me.notificationPrefs?.directMessages !== false;
             if (dmPrefsEnabled) {
               toast.social(
                 nextCount > 1
@@ -1228,10 +1238,10 @@ export default function App() {
         } catch {}
 
         // Check user notification preferences for DMs & Gifts
-        let dmNotifsEnabled = currentUser.notificationPrefs?.directMessages !== false;
-        let giftNotifsEnabled = currentUser.notificationPrefs?.gifts !== false;
+        let dmNotifsEnabled = me.notificationPrefs?.directMessages !== false;
+        let giftNotifsEnabled = me.notificationPrefs?.gifts !== false;
         try {
-          const prefsRaw = localStorage.getItem(`user_notification_prefs_${currentUser.id}`);
+          const prefsRaw = localStorage.getItem(`user_notification_prefs_${me.id}`);
           if (prefsRaw) {
             const parsedPrefs = JSON.parse(prefsRaw);
             dmNotifsEnabled = parsedPrefs.directMessages !== false;
@@ -1318,9 +1328,9 @@ export default function App() {
               const clearedAt = recentlyClearedPeerRef.current.get(rec.senderId) || 0;
               if (now - clearedAt < 2500) return;
               const isViewingPeer =
-                (isPrivateChatDrawerOpen || currentTab === 'chat') &&
-                isInsidePrivateChat &&
-                targetChatUser?.id === rec.senderId;
+                (isPrivateChatDrawerOpenRef.current || currentTabRef.current === 'chat') &&
+                isInsidePrivateChatRef.current &&
+                targetChatUserRef.current?.id === rec.senderId;
               if (isViewingPeer) return;
 
               dbIds.add(rec.senderId);
@@ -1343,7 +1353,7 @@ export default function App() {
               ) {
                 processedUnreadDmIdsRef.current.add(rec.lastMessageId);
                 processedBannerDmIdsRef.current.add(rec.lastMessageId);
-                const dmNotifsEnabled = currentUser.notificationPrefs?.directMessages !== false;
+                const dmNotifsEnabled = currentUserRef.current.notificationPrefs?.directMessages !== false;
                 if (dmNotifsEnabled) {
                   sounds.playNotificationChime();
                   setDmTopBanner({
@@ -1393,7 +1403,7 @@ export default function App() {
       unsubDbUnread();
       bus?.close();
     };
-  }, [currentUser.id, currentUser.sessionId, currentUser.notificationPrefs?.directMessages, currentUser.notificationPrefs?.gifts, currentTab, isPrivateChatDrawerOpen, isInsidePrivateChat, targetChatUser?.id, isProfileReady]);
+  }, [currentUser.id, currentUser.sessionId, isProfileReady]);
 
   // Initialize External Push Notifications (FCM / Service Worker / Browser Deep-Link)
   useEffect(() => {

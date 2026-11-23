@@ -405,9 +405,10 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
   };
 
   // Mark incoming messages as 'seen' in Firestore + WebSocket when viewing conversation
+  const activeUnreadCount = activeContact?.id ? (unreadBySender[activeContact.id] || 0) : 0;
   useEffect(() => {
     if (!activeContact?.id || !currentUser?.id) return;
-    if ((unreadBySender[activeContact.id] || 0) > 0) {
+    if (activeUnreadCount > 0) {
       onMarkSenderRead?.(activeContact.id);
     }
     if (messages.length === 0) return;
@@ -417,7 +418,7 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
     if (hasUnread) {
       markDirectMessagesAsRead(currentUser.id, activeContact.id, messages);
     }
-  }, [activeContact?.id, currentUser?.id, messages, unreadBySender, onMarkSenderRead]);
+  }, [activeContact?.id, currentUser?.id, messages, activeUnreadCount, onMarkSenderRead]);
 
   const [inputText, setInputText] = useState('');
   const [playingVoiceId, setPlayingVoiceId] = useState<string | null>(null);

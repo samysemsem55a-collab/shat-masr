@@ -256,9 +256,6 @@ class RealtimeSocketManager {
 
     this.isConnecting = true;
 
-    // Refresh Firebase ID token automatically before every connection attempt
-    const freshToken = await this.getValidToken(this.consecutiveFailures > 0);
-
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const host = window.location.host;
     const wsUrl = `${protocol}//${host}/ws`;
@@ -274,22 +271,20 @@ class RealtimeSocketManager {
         this.isConnecting = false;
         this.isConnectedState = true;
         this.reconnectAttempts = 0;
+        const hadPrevFailures = this.consecutiveFailures > 0;
         this.consecutiveFailures = 0;
         this.wasDisconnected = false;
         this.notifyStatusListeners(true);
         this.startHeartbeat();
 
-        if (freshToken) {
-          this.send('TOKEN_REFRESH', { token: freshToken, userId: this.currentUser?.id });
-        }
-
-        // Register user
+        // Register user immediately
         if (this.currentUser) {
           this.send('USER_REGISTER', { user: this.currentUser });
         }
 
-        // Rejoin room if was in one
+        // Rejoin active room once (avoid duplicate JOIN_ROOM from pendingQueue)
         if (this.currentRoomId && this.currentUser) {
+          this.pendingQueue = this.pendingQueue.filter((item) => item.type !== 'JOIN_ROOM');
           this.send('JOIN_ROOM', { roomId: this.currentRoomId, user: this.currentUser });
         }
 
@@ -302,6 +297,15 @@ class RealtimeSocketManager {
             } catch {}
           }
         }
+
+        // Refresh Firebase ID token asynchronously without blocking WebSocket open
+        this.getValidToken(hadPrevFailures)
+          .then((freshToken) => {
+            if (freshToken && this.socket && this.socket.readyState === WebSocket.OPEN) {
+              this.send('TOKEN_REFRESH', { token: freshToken, userId: this.currentUser?.id });
+            }
+          })
+          .catch(() => {});
 
         if (reconnected) {
           this.reconnectSuccessListeners.forEach((cb) => {
@@ -335,11 +339,11 @@ class RealtimeSocketManager {
           this.networkRecoveryHandler().catch(() => {});
         }
 
-        // Fixed 5-second Auto-Reconnect timer (never stays stuck offline)
+        const retryMs = Math.min(5000, 1200 + Math.min(3, this.consecutiveFailures) * 800);
         clearTimeout(this.reconnectTimer);
         this.reconnectTimer = setTimeout(() => {
           this.connect();
-        }, 5000);
+        }, retryMs);
       };
 
       this.socket.onerror = (err) => {
@@ -357,7 +361,7 @@ class RealtimeSocketManager {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = setTimeout(() => {
         this.connect();
-      }, 5000);
+      }, 2000);
     }
   }
 

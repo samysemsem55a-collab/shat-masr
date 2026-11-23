@@ -153,7 +153,7 @@ try {
     db = initializeFirestore(
       app,
       {
-        experimentalForceLongPolling: true,
+        experimentalAutoDetectLongPolling: true,
         ignoreUndefinedProperties: true
       },
       dbId || undefined
@@ -204,9 +204,16 @@ if (typeof window !== 'undefined') {
 
 export { db, rtdb, auth, storage, isFirebaseAvailable, currentAuthUid };
 
+let isBrowserMarkedOffline =
+  typeof navigator !== 'undefined' ? navigator.onLine === false : false;
+
 if (typeof window !== 'undefined' && db) {
+  window.addEventListener('offline', () => {
+    isBrowserMarkedOffline = true;
+  });
   window.addEventListener('online', () => {
-    if (db) {
+    if (isBrowserMarkedOffline && db) {
+      isBrowserMarkedOffline = false;
       enableNetwork(db).catch(() => {});
     }
   });
@@ -225,7 +232,8 @@ export async function getFreshAuthToken(forceRefresh: boolean = false): Promise<
 
 export async function recoverFirebaseNetwork(): Promise<void> {
   await getFreshAuthToken(true).catch(() => null);
-  if (db) {
+  if (db && isBrowserMarkedOffline && (typeof navigator === 'undefined' || navigator.onLine !== false)) {
+    isBrowserMarkedOffline = false;
     try {
       await enableNetwork(db);
     } catch {}
@@ -235,7 +243,7 @@ export async function recoverFirebaseNetwork(): Promise<void> {
 realtimeSocket.setTokenProvider(getFreshAuthToken);
 realtimeSocket.setNetworkRecoveryHandler(recoverFirebaseNetwork);
 
-// Validate connection per SKILL instructions
+// Validate connection per SKILL instructions (without disrupting active WatchStream targets)
 export async function testConnection() {
   if (!db) return;
   if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
@@ -244,14 +252,8 @@ export async function testConnection() {
   } catch (error) {
     if (error instanceof Error && error.message.includes('the client is offline')) {
       console.warn("Please check your Firebase configuration.");
-      enableNetwork(db).catch(() => {});
     }
   }
-}
-if (typeof window !== 'undefined') {
-  setTimeout(() => {
-    testConnection();
-  }, 1500);
 }
 
 export async function checkFirestoreHealth(): Promise<{ ok: boolean; latencyMs: number; projectId: string }> {
@@ -973,6 +975,7 @@ export async function sendFirestoreMessage(
         msgDocRef,
         {
           id: msgId,
+          roomId,
           tempId,
           clientId: tempId,
           text: newMsg.content,
@@ -1231,43 +1234,33 @@ export async function updateUserActivityStatus(
   return true;
 }
 
-// Subscribe to ALL registered users in real time via Firestore `onSnapshot` + RTDB `presence` online join
-export function subscribeToAllUsers(
-  onUsers: (users: User[]) => void
-): () => void {
-  const fsUsersMap = new Map<string, User>();
-  const rtdbPresenceMap = new Map<string, { isOnline: boolean; lastSeen: number; status?: User['status']; currentRoom?: string | null }>();
+// Shared Firestore `users` + RTDB `presence` multiplexer so multiple views share 1 live Watch target
+type UsersSnapshotListener = (usersMap: Map<string, User>) => void;
+const sharedFsUsersListeners = new Set<UsersSnapshotListener>();
+const sharedFsUsersCache = new Map<string, User>();
+let sharedFsUsersUnsub: (() => void) | null = null;
+let sharedFsUsersHasInitial = false;
 
-  const emit = () => {
-    const now = getServerNowMs();
-    const result = Array.from(fsUsersMap.values()).map((u) => {
-      const p = rtdbPresenceMap.get(u.id);
-      const isOnline = Boolean(p && p.isOnline === true && now - p.lastSeen <= PRESENCE_OFFLINE_TIMEOUT_MS);
-      return {
-        ...u,
-        isOnline,
-        lastSeen: p?.lastSeen ?? u.lastSeen,
-        currentRoom: p?.currentRoom ?? u.currentRoom ?? null,
-        status: isOnline ? (p?.status || u.status || 'online') : 'offline'
-      } as User;
-    });
-    onUsers(result);
-  };
-
-  let unsubFirestore: (() => void) | null = null;
-  if (db) {
+function subscribeSharedFirestoreUsers(listener: UsersSnapshotListener): () => void {
+  sharedFsUsersListeners.add(listener);
+  if (sharedFsUsersHasInitial) {
     try {
-      const usersCol = collection(db, 'users');
-      unsubFirestore = onSnapshot(
-        usersCol,
+      listener(new Map(sharedFsUsersCache));
+    } catch {}
+  }
+  if (!sharedFsUsersUnsub && db) {
+    try {
+      sharedFsUsersUnsub = onSnapshot(
+        collection(db, 'users'),
         (snap) => {
-          fsUsersMap.clear();
+          sharedFsUsersHasInitial = true;
+          sharedFsUsersCache.clear();
           snap.docs.forEach((docSnap) => {
             const data = docSnap.data({ serverTimestamps: 'estimate' }) || {};
             const lastSeen =
               resolveTimestampMs(data.updatedAt) ??
               resolveTimestampMs(data.lastSeenMs ?? data.lastSeen);
-            fsUsersMap.set(docSnap.id, {
+            sharedFsUsersCache.set(docSnap.id, {
               id: docSnap.id,
               name: data.name || 'عضو شات مصر',
               username: data.username || 'user',
@@ -1302,7 +1295,11 @@ export function subscribeToAllUsers(
               isOnline: false
             } as User);
           });
-          emit();
+          sharedFsUsersListeners.forEach((cb) => {
+            try {
+              cb(new Map(sharedFsUsersCache));
+            } catch {}
+          });
         },
         (e) => {
           handleFirestoreError(e, OperationType.LIST, 'users');
@@ -1310,6 +1307,45 @@ export function subscribeToAllUsers(
       );
     } catch {}
   }
+
+  return () => {
+    sharedFsUsersListeners.delete(listener);
+    if (sharedFsUsersListeners.size === 0 && sharedFsUsersUnsub) {
+      sharedFsUsersUnsub();
+      sharedFsUsersUnsub = null;
+      sharedFsUsersHasInitial = false;
+      sharedFsUsersCache.clear();
+    }
+  };
+}
+
+// Subscribe to ALL registered users in real time via shared Firestore `onSnapshot` + RTDB `presence` online join
+export function subscribeToAllUsers(
+  onUsers: (users: User[]) => void
+): () => void {
+  let fsUsersMap = new Map<string, User>();
+  const rtdbPresenceMap = new Map<string, { isOnline: boolean; lastSeen: number; status?: User['status']; currentRoom?: string | null }>();
+
+  const emit = () => {
+    const now = getServerNowMs();
+    const result = Array.from(fsUsersMap.values()).map((u) => {
+      const p = rtdbPresenceMap.get(u.id);
+      const isOnline = Boolean(p && p.isOnline === true && now - p.lastSeen <= PRESENCE_OFFLINE_TIMEOUT_MS);
+      return {
+        ...u,
+        isOnline,
+        lastSeen: p?.lastSeen ?? u.lastSeen,
+        currentRoom: p?.currentRoom ?? u.currentRoom ?? null,
+        status: isOnline ? (p?.status || u.status || 'online') : 'offline'
+      } as User;
+    });
+    onUsers(result);
+  };
+
+  const unsubFirestore = subscribeSharedFirestoreUsers((nextMap) => {
+    fsUsersMap = nextMap;
+    emit();
+  });
 
   let unsubRtdbPresence: (() => void) | null = null;
   if (rtdb) {
@@ -1339,7 +1375,7 @@ export function subscribeToAllUsers(
   }
 
   return () => {
-    if (unsubFirestore) unsubFirestore();
+    unsubFirestore();
     if (unsubRtdbPresence) unsubRtdbPresence();
   };
 }
@@ -2005,6 +2041,7 @@ export async function sendFriendRequest(
         senderAvatar: sender.avatar || '',
         receiverId,
         status: 'pending',
+        timestamp: now,
         createdAt: serverTimestamp()
       });
     } catch (e) {
@@ -3255,17 +3292,20 @@ export function subscribeToDirectMessages(
             hasInitialCursor = true;
           }
 
-          orderedDocs.forEach((docSnap) => {
-            const msgItem = mapFirestoreDirectMessage(docSnap, 'privateChats', convId);
-            nextFsIds.add(msgItem.id);
-            deletedIds.delete(msgItem.id);
-            if (msgItem.tempId) {
-              tempIdToRealId.set(msgItem.tempId, msgItem.id);
-              localMsgsMap.delete(msgItem.tempId);
-              wsMsgsMap.delete(msgItem.tempId);
-            }
-            fsMsgsMap.set(msgItem.id, msgItem);
-          });
+            orderedDocs.forEach((docSnap) => {
+              const msgItem = mapFirestoreDirectMessage(docSnap, 'privateChats', convId);
+              nextFsIds.add(msgItem.id);
+              deletedIds.delete(msgItem.id);
+              if (msgItem.tempId) {
+                tempIdToRealId.set(msgItem.tempId, msgItem.id);
+                localMsgsMap.delete(msgItem.tempId);
+                wsMsgsMap.delete(msgItem.tempId);
+              }
+              if (msgItem.senderId !== userId1 && msgItem.status === 'sent') {
+                acknowledgePrivateMessageDelivered(convId, msgItem.id, 'privateChats').catch(() => {});
+              }
+              fsMsgsMap.set(msgItem.id, msgItem);
+            });
 
           if (!snapshot.metadata.fromCache) {
             seenFsIds.forEach((oldId) => {
@@ -3538,13 +3578,23 @@ export async function resetAllDirectChatsUnreadInDB(
   }
 }
 
+const acknowledgedDeliveredDmIds = new Set<string>();
+const markedReadDmIds = new Set<string>();
+
 export async function acknowledgePrivateMessageDelivered(
   convId: string,
   messageId: string,
   sourceCol?: 'privateChats' | 'direct_chats'
 ): Promise<void> {
   if (!db || !convId || !messageId) return;
-  const colName = sourceCol || dmDocSourceColMap.get(`${convId}::${messageId}`) || 'privateChats';
+  const dedupKey = `${convId}::${messageId}`;
+  if (acknowledgedDeliveredDmIds.has(dedupKey)) return;
+  acknowledgedDeliveredDmIds.add(dedupKey);
+  if (acknowledgedDeliveredDmIds.size > 500) {
+    const first = acknowledgedDeliveredDmIds.values().next().value;
+    if (first) acknowledgedDeliveredDmIds.delete(first);
+  }
+  const colName = sourceCol || dmDocSourceColMap.get(dedupKey) || 'privateChats';
   updateDoc(doc(db, colName, convId, 'messages', messageId), { status: 'delivered' }).catch(() => {});
   updateDoc(doc(db, colName, convId), { lastMessageStatus: 'delivered' }).catch(() => {});
 }
@@ -3561,11 +3611,22 @@ export async function markDirectMessagesAsRead(
   resetDirectChatUnreadInDB(currentUserId, peerId).catch(() => {});
 
   const unread = (messages || []).filter(
-    (m) => m.senderId !== currentUserId && m.status !== 'seen' && m.status !== 'read'
+    (m) =>
+      m.senderId !== currentUserId &&
+      m.status !== 'seen' &&
+      m.status !== 'read' &&
+      !markedReadDmIds.has(`${convId}::${m.id}`)
   );
   if (unread.length === 0) return;
 
   const unreadIds = unread.map((m) => m.id);
+  unreadIds.forEach((id) => {
+    markedReadDmIds.add(`${convId}::${id}`);
+    if (markedReadDmIds.size > 500) {
+      const first = markedReadDmIds.values().next().value;
+      if (first) markedReadDmIds.delete(first);
+    }
+  });
 
   try {
     const raw = localStorage.getItem(localKey);
@@ -3730,6 +3791,7 @@ export async function sendDirectMessage(
       const msgDocRef = doc(db, 'privateChats', convId, 'messages', newMsg.id);
       batch.set(msgDocRef, {
         ...cleanMsgPayload,
+        chatId: convId,
         createdAt: serverTimestamp()
       });
 
@@ -6794,6 +6856,53 @@ export function subscribeToRoomLockState(
   };
 }
 
+// Shared Firestore `rooms` collection multiplexer (locks + lastMessages share 1 Watch target)
+type RoomsDocMapListener = (docsById: Map<string, Record<string, any>>) => void;
+const sharedFsRoomsListeners = new Set<RoomsDocMapListener>();
+const sharedFsRoomsCache = new Map<string, Record<string, any>>();
+let sharedFsRoomsUnsub: (() => void) | null = null;
+let sharedFsRoomsHasInitial = false;
+
+function subscribeSharedFirestoreRooms(listener: RoomsDocMapListener): () => void {
+  sharedFsRoomsListeners.add(listener);
+  if (sharedFsRoomsHasInitial) {
+    try {
+      listener(new Map(sharedFsRoomsCache));
+    } catch {}
+  }
+  if (!sharedFsRoomsUnsub && db) {
+    try {
+      sharedFsRoomsUnsub = onSnapshot(
+        collection(db, 'rooms'),
+        (snap) => {
+          sharedFsRoomsHasInitial = true;
+          sharedFsRoomsCache.clear();
+          snap.docs.forEach((d) => {
+            sharedFsRoomsCache.set(d.id, d.data() || {});
+          });
+          sharedFsRoomsListeners.forEach((cb) => {
+            try {
+              cb(new Map(sharedFsRoomsCache));
+            } catch {}
+          });
+        },
+        (err) => {
+          handleFirestoreError(err, OperationType.LIST, 'rooms');
+        }
+      );
+    } catch {}
+  }
+  return () => {
+    sharedFsRoomsListeners.delete(listener);
+    if (sharedFsRoomsListeners.size === 0 && sharedFsRoomsUnsub) {
+      sharedFsRoomsUnsub();
+      sharedFsRoomsUnsub = null;
+      sharedFsRoomsHasInitial = false;
+      sharedFsRoomsCache.clear();
+    }
+  };
+}
+
 export function subscribeToAllRoomLocks(
   onUpdate: (locks: Record<string, boolean>) => void
 ): () => void {
@@ -6850,32 +6959,20 @@ export function subscribeToAllRoomLocks(
     } catch {}
   }
 
-  let unsubFirestore: (() => void) | null = null;
-  if (db) {
-    try {
-      unsubFirestore = onSnapshot(
-        collection(db, 'rooms'),
-        (snap) => {
-          snap.docs.forEach((d) => {
-            const data = d.data();
-            if (typeof data?.isLocked === 'boolean') {
-              if (data.isLocked) {
-                merged[d.id] = true;
-                try { localStorage.setItem(`room_lock_${d.id}`, 'true'); } catch {}
-              } else {
-                delete merged[d.id];
-                try { localStorage.removeItem(`room_lock_${d.id}`); } catch {}
-              }
-            }
-          });
-          emit();
-        },
-        (err) => {
-          handleFirestoreError(err, OperationType.LIST, 'rooms');
+  const unsubFirestore = subscribeSharedFirestoreRooms((docsById) => {
+    docsById.forEach((data, roomId) => {
+      if (typeof data?.isLocked === 'boolean') {
+        if (data.isLocked) {
+          merged[roomId] = true;
+          try { localStorage.setItem(`room_lock_${roomId}`, 'true'); } catch {}
+        } else {
+          delete merged[roomId];
+          try { localStorage.removeItem(`room_lock_${roomId}`); } catch {}
         }
-      );
-    } catch {}
-  }
+      }
+    });
+    emit();
+  });
 
   const handleBroadcast = (e: MessageEvent) => {
     if (e.data?.type === 'ROOM_LOCK_UPDATE' && e.data.roomId) {
@@ -7052,22 +7149,12 @@ export function subscribeToAllRoomLastMessages(
     emit();
   });
 
-  let unsubFirestore: (() => void) | null = null;
-  if (db) {
-    try {
-      unsubFirestore = onSnapshot(
-        collection(db, 'rooms'),
-        (snap) => {
-          snap.docs.forEach((d) => {
-            const data = d.data();
-            if (data?.lastMessage) mergeEntry(d.id, data.lastMessage);
-          });
-          emit();
-        },
-        () => {}
-      );
-    } catch {}
-  }
+  const unsubFirestore = subscribeSharedFirestoreRooms((docsById) => {
+    docsById.forEach((data, roomId) => {
+      if (data?.lastMessage) mergeEntry(roomId, data.lastMessage);
+    });
+    emit();
+  });
 
   const handleBroadcast = (e: MessageEvent) => {
     if (e.data?.type === 'ROOM_LAST_MESSAGE_UPDATED' && e.data.roomId && e.data.lastMessage) {
