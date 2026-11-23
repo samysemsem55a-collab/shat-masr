@@ -1,11 +1,15 @@
 import React, { useState } from 'react';
-import { Image as ImageIcon, RefreshCw, Eye } from 'lucide-react';
+import { Image as ImageIcon, RefreshCw, Eye, Download } from 'lucide-react';
+import { downloadImageToDevice } from '../utils/downloadImage';
+import { toast } from '../utils/appToast';
 
 interface BlurredChatImageProps {
   src: string;
   alt?: string;
   className?: string;
   autoReveal?: boolean;
+  uploadProgress?: number;
+  downloadFilename?: string;
   onOpenFull?: (src: string) => void;
 }
 
@@ -14,20 +18,25 @@ export const BlurredChatImage: React.FC<BlurredChatImageProps> = React.memo(({
   alt = 'صورة مرسلة',
   className = 'max-h-56 w-auto max-w-full rounded-xl object-cover border border-white/20',
   autoReveal = false,
+  uploadProgress,
+  downloadFilename,
   onOpenFull,
 }) => {
-  const [revealed, setRevealed] = useState(autoReveal);
+  const isUploading = typeof uploadProgress === 'number' && uploadProgress >= 0 && uploadProgress < 100;
+  const [revealed, setRevealed] = useState(autoReveal || isUploading);
   const [loading, setLoading] = useState(false);
   const [hasError, setHasError] = useState(false);
   const [retrySeed, setRetrySeed] = useState(0);
 
+  const isShown = revealed || isUploading;
+
   const handleRevealClick = (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!revealed) {
+    if (!isShown) {
       setHasError(false);
       setLoading(true);
       setRevealed(true);
-    } else if (!hasError && onOpenFull) {
+    } else if (!hasError && !isUploading && onOpenFull) {
       onOpenFull(src);
     }
   };
@@ -39,7 +48,17 @@ export const BlurredChatImage: React.FC<BlurredChatImageProps> = React.memo(({
     setRetrySeed((prev) => prev + 1);
   };
 
-  if (!revealed) {
+  const handleDownload = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      await downloadImageToDevice(src, downloadFilename || `chat_photo_${Date.now()}.jpg`);
+      toast.success('تم حفظ الصورة على جهازك 📥');
+    } catch {
+      toast.error('تعذر تحميل الصورة');
+    }
+  };
+
+  if (!isShown) {
     return (
       <button
         type="button"
@@ -89,11 +108,30 @@ export const BlurredChatImage: React.FC<BlurredChatImageProps> = React.memo(({
       : src;
 
   return (
-    <div className="relative inline-block max-w-full">
-      {loading && (
+    <div className="relative inline-block max-w-full group">
+      {loading && !isUploading && (
         <div className="absolute inset-0 flex items-center justify-center rounded-xl bg-slate-900/35 backdrop-blur-md z-10 pointer-events-none">
           <RefreshCw className="w-5 h-5 text-white animate-spin" />
         </div>
+      )}
+      {isUploading && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 rounded-xl bg-slate-900/45 backdrop-blur-[2px] z-10 pointer-events-none">
+          <RefreshCw className="w-5 h-5 text-white animate-spin" />
+          <span className="text-[11px] font-black text-white px-2 py-0.5 rounded-full bg-black/50">
+            {Math.round(uploadProgress)}%
+          </span>
+        </div>
+      )}
+      {!isUploading && !loading && (
+        <button
+          type="button"
+          onClick={handleDownload}
+          aria-label="تحميل الصورة"
+          title="حفظ الصورة على الجهاز"
+          className="absolute bottom-2 left-2 z-10 p-1.5 rounded-full bg-slate-900/65 hover:bg-slate-900/85 text-white shadow-md backdrop-blur-sm transition cursor-pointer"
+        >
+          <Download className="w-3.5 h-3.5" />
+        </button>
       )}
       <img
         src={imageSrcWithRetry}
@@ -105,7 +143,7 @@ export const BlurredChatImage: React.FC<BlurredChatImageProps> = React.memo(({
           setHasError(true);
         }}
         onClick={handleRevealClick}
-        className={`cursor-pointer transition-all duration-300 ${loading ? 'blur-md' : 'blur-0'} ${className}`}
+        className={`cursor-pointer transition-all duration-300 ${loading && !isUploading ? 'blur-md' : 'blur-0'} ${className}`}
       />
     </div>
   );
