@@ -3155,8 +3155,6 @@ export function getConversationId(userId1: string, userId2: string): string {
   return [userId1, userId2].sort().join('_');
 }
 
-const dmOlderCursorMap = new Map<string, QueryDocumentSnapshot<DocumentData> | null>();
-const legacyDmOlderCursorMap = new Map<string, QueryDocumentSnapshot<DocumentData> | null>();
 const dmDocSourceColMap = new Map<string, 'privateChats' | 'direct_chats'>();
 
 function mapFirestoreDirectMessage(
@@ -3213,11 +3211,11 @@ function mapFirestoreDirectMessage(
 export function subscribeToDirectMessages(
   userId1: string,
   userId2: string,
-  onMessages: (messages: Message[]) => void,
+  onMessages: (messages: Message[], meta?: { fromFirestore: boolean; fromCache: boolean }) => void,
   initialLimit: number = 30
 ): () => void {
   if (!userId1 || !userId2) {
-    onMessages([]);
+    onMessages([], { fromFirestore: false, fromCache: false });
     return () => {};
   }
   const convId = getConversationId(userId1, userId2);
@@ -3230,12 +3228,8 @@ export function subscribeToDirectMessages(
   const deletedIds = new Set<string>();
   let seenFsIds = new Set<string>();
   let seenLegacyIds = new Set<string>();
-  dmOlderCursorMap.delete(convId);
-  legacyDmOlderCursorMap.delete(convId);
-  let hasInitialCursor = false;
-  let hasLegacyInitialCursor = false;
 
-  const emit = () => {
+  const emit = (meta: { fromFirestore: boolean; fromCache: boolean } = { fromFirestore: false, fromCache: false }) => {
     const merged = new Map<string, Message>();
     [localMsgsMap, wsMsgsMap].forEach((sourceMap) => {
       sourceMap.forEach((m, id) => {
@@ -3261,7 +3255,7 @@ export function subscribeToDirectMessages(
     try {
       localStorage.setItem(localKey, JSON.stringify(list.slice(-60)));
     } catch {}
-    onMessages(list);
+    onMessages(list, meta);
   };
 
   try {
@@ -3287,10 +3281,6 @@ export function subscribeToDirectMessages(
           fsMsgsMap.clear();
 
           const orderedDocs = [...snapshot.docs].reverse();
-          if (!hasInitialCursor && snapshot.docs.length > 0) {
-            dmOlderCursorMap.set(convId, snapshot.docs[snapshot.docs.length - 1]);
-            hasInitialCursor = true;
-          }
 
             orderedDocs.forEach((docSnap) => {
               const msgItem = mapFirestoreDirectMessage(docSnap, 'privateChats', convId);
@@ -3316,7 +3306,7 @@ export function subscribeToDirectMessages(
             });
             seenFsIds = nextFsIds;
           }
-          emit();
+          emit({ fromFirestore: true, fromCache: snapshot.metadata.fromCache });
         },
         (error) => {
           handleFirestoreError(error, OperationType.LIST, `privateChats/${convId}/messages`);
@@ -3336,10 +3326,6 @@ export function subscribeToDirectMessages(
           legacyFsMsgsMap.clear();
 
           const orderedDocs = [...snapshot.docs].reverse();
-          if (!hasLegacyInitialCursor && snapshot.docs.length > 0) {
-            legacyDmOlderCursorMap.set(convId, snapshot.docs[snapshot.docs.length - 1]);
-            hasLegacyInitialCursor = true;
-          }
 
           orderedDocs.forEach((docSnap) => {
             const msgItem = mapFirestoreDirectMessage(docSnap, 'direct_chats', convId);
@@ -3362,7 +3348,7 @@ export function subscribeToDirectMessages(
             });
             seenLegacyIds = nextLegacyIds;
           }
-          emit();
+          emit({ fromFirestore: true, fromCache: snapshot.metadata.fromCache });
         },
         (error) => {
           handleFirestoreError(error, OperationType.LIST, `direct_chats/${convId}/messages`);
@@ -3455,72 +3441,6 @@ export function subscribeToDirectMessages(
     if (legacyFirestoreUnsub) legacyFirestoreUnsub();
     liveChatBus?.removeEventListener('message', handleBroadcast);
   };
-}
-
-export async function fetchOlderDirectMessages(
-  userId1: string,
-  userId2: string,
-  pageSize: number = 30
-): Promise<Message[]> {
-  if (!userId1 || !userId2 || !db) return [];
-  const convId = getConversationId(userId1, userId2);
-  const cursor = dmOlderCursorMap.get(convId);
-  const legacyCursor = legacyDmOlderCursorMap.get(convId);
-  if (!cursor && !legacyCursor) return [];
-
-  const combined = new Map<string, Message>();
-
-  if (cursor) {
-    try {
-      const q = query(
-        collection(db, 'privateChats', convId, 'messages'),
-        orderBy('createdAt', 'desc'),
-        startAfter(cursor),
-        limit(pageSize)
-      );
-      const snap = await getDocs(q);
-      if (snap.empty) {
-        dmOlderCursorMap.set(convId, null);
-      } else {
-        dmOlderCursorMap.set(convId, snap.docs[snap.docs.length - 1]);
-        snap.docs.forEach((d) => {
-          const msg = mapFirestoreDirectMessage(d, 'privateChats', convId);
-          combined.set(msg.id, msg);
-        });
-      }
-    } catch (err) {
-      handleFirestoreError(err, OperationType.LIST, `privateChats/${convId}/messages`);
-    }
-  }
-
-  if (legacyCursor) {
-    try {
-      const qLegacy = query(
-        collection(db, 'direct_chats', convId, 'messages'),
-        orderBy('createdAt', 'desc'),
-        startAfter(legacyCursor),
-        limit(pageSize)
-      );
-      const snapLegacy = await getDocs(qLegacy);
-      if (snapLegacy.empty) {
-        legacyDmOlderCursorMap.set(convId, null);
-      } else {
-        legacyDmOlderCursorMap.set(convId, snapLegacy.docs[snapLegacy.docs.length - 1]);
-        snapLegacy.docs.forEach((d) => {
-          const msg = mapFirestoreDirectMessage(d, 'direct_chats', convId);
-          if (!combined.has(msg.id)) {
-            combined.set(msg.id, msg);
-          }
-        });
-      }
-    } catch (err) {
-      handleFirestoreError(err, OperationType.LIST, `direct_chats/${convId}/messages`);
-    }
-  }
-
-  return Array.from(combined.values()).sort(
-    (a, b) => (a.createdAt || a.timestamp || 0) - (b.createdAt || b.timestamp || 0)
-  );
 }
 
 export async function resetDirectChatUnreadInDB(
@@ -3896,7 +3816,7 @@ export function subscribeToUnreadMessagesCount(
     unsubPrivate = onSnapshot(
       query(collection(db, 'privateChats'), where('participants', 'array-contains', currentUserId)),
       (snap) => ingestUnreadSnapshot(snap, 'privateChats', privateRecords),
-      (err) => console.warn('Firestore privateChats unread listener notice:', err)
+      (err) => handleFirestoreError(err, OperationType.LIST, 'privateChats')
     );
   } catch {}
 
@@ -3904,7 +3824,7 @@ export function subscribeToUnreadMessagesCount(
     unsubLegacy = onSnapshot(
       query(collection(db, 'direct_chats'), where('participants', 'array-contains', currentUserId)),
       (snap) => ingestUnreadSnapshot(snap, 'direct_chats', legacyRecords),
-      (err) => console.warn('Firestore direct_chats unread listener notice:', err)
+      (err) => handleFirestoreError(err, OperationType.LIST, 'direct_chats')
     );
   } catch {}
 
@@ -3999,7 +3919,7 @@ export function subscribeToUserRecentDirectChats(
       unsubFirestore = onSnapshot(
         query(collection(db, 'privateChats'), where('participants', 'array-contains', currentUserId)),
         (snap) => ingestChatsSnapshot(snap, privateFsMap),
-        (err) => console.warn('Firestore recent privateChats notice:', err)
+        (err) => handleFirestoreError(err, OperationType.LIST, 'privateChats')
       );
     } catch {}
 
@@ -4007,7 +3927,7 @@ export function subscribeToUserRecentDirectChats(
       unsubLegacyFirestore = onSnapshot(
         query(collection(db, 'direct_chats'), where('participants', 'array-contains', currentUserId)),
         (snap) => ingestChatsSnapshot(snap, legacyFsMap),
-        (err) => console.warn('Firestore recent direct_chats notice:', err)
+        (err) => handleFirestoreError(err, OperationType.LIST, 'direct_chats')
       );
     } catch {}
   }
@@ -5668,6 +5588,15 @@ async function compressImageToDataUrl(file: File, maxDim = 900, quality = 0.72):
   });
 }
 
+function fileBlobToDataUrl(file: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(new Error('تعذر قراءة الملف'));
+    reader.readAsDataURL(file);
+  });
+}
+
 export async function uploadPrivateChatMedia(
   file: File,
   convId: string,
@@ -5677,15 +5606,24 @@ export async function uploadPrivateChatMedia(
   const mediaType: 'image' | 'video' = isVideo ? 'video' : 'image';
   const safeName = `${Date.now()}_${file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
 
-  // Try Firebase Storage first
+  // Try Firebase Storage first with cache metadata & resumable progress
   if (storage) {
     try {
       const fileRef = storageRef(storage, `private_media/${convId}/${safeName}`);
       const url = await new Promise<string>((resolve, reject) => {
-        const task = uploadBytesResumable(fileRef, file);
+        const task = uploadBytesResumable(fileRef, file, {
+          contentType: file.type || (isVideo ? 'video/mp4' : 'image/jpeg'),
+          cacheControl: 'public, max-age=31536000',
+        });
+        let settled = false;
         const timeoutId = setTimeout(() => {
+          if (settled) return;
+          settled = true;
+          try {
+            task.cancel();
+          } catch {}
           reject(new Error('Storage upload timeout'));
-        }, 12000);
+        }, isVideo ? 20000 : 8000);
         task.on(
           'state_changed',
           (snapshot) => {
@@ -5694,10 +5632,14 @@ export async function uploadPrivateChatMedia(
             }
           },
           (err) => {
+            if (settled) return;
+            settled = true;
             clearTimeout(timeoutId);
             reject(err);
           },
           async () => {
+            if (settled) return;
+            settled = true;
             clearTimeout(timeoutId);
             try {
               const dl = await getDownloadURL(task.snapshot.ref);
@@ -5714,9 +5656,10 @@ export async function uploadPrivateChatMedia(
     }
   }
 
-  // Fallback for images when Storage CORS/rules block
+  // Fast fallback for images when Storage CORS/rules block: reuse already-compressed Blob directly
   if (!isVideo) {
-    const compressedUrl = await compressImageToDataUrl(file);
+    const compressedUrl =
+      file.size <= 350 * 1024 ? await fileBlobToDataUrl(file) : await compressImageToDataUrl(file);
     if (onProgress) onProgress(100);
     return { url: compressedUrl, mediaType: 'image' };
   }
@@ -7319,23 +7262,36 @@ export function subscribeToAppUpdateNotices(
 export async function sendFirestoreCallSignal(targetUserId: string, signal: any): Promise<void> {
   if (!targetUserId || !signal) return;
   const signalId = signal.signalId || `sig_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+  const now = Date.now();
   const payload = {
     ...signal,
     signalId,
     targetUserId,
-    createdAt: Date.now(),
-    expiresAt: Date.now() + 90_000,
+    createdAt: now,
+    expiresAt: now + 90_000,
   };
 
   if (db) {
     try {
       await setDoc(doc(db, 'users', targetUserId, 'call_signals', signalId), payload);
-    } catch {}
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, `users/${targetUserId}/call_signals/${signalId}`);
+    }
   }
   if (rtdb) {
     try {
       await set(ref(rtdb, `call_signals/${targetUserId}/${signalId}`), payload);
     } catch {}
+  }
+}
+
+export async function deleteFirestoreCallSignal(userId: string, signalId: string): Promise<void> {
+  if (!userId || !signalId) return;
+  if (db) {
+    deleteDoc(doc(db, 'users', userId, 'call_signals', signalId)).catch(() => {});
+  }
+  if (rtdb) {
+    remove(ref(rtdb, `call_signals/${userId}/${signalId}`)).catch(() => {});
   }
 }
 
@@ -7351,10 +7307,18 @@ export function subscribeToFirestoreCallSignals(
     if (!raw || typeof raw !== 'object') return;
     const id = String(raw.signalId || fallbackId || '');
     if (!id || seenIds.has(id)) return;
+    const now = Date.now();
     const createdAt = typeof raw.createdAt === 'number' ? raw.createdAt : 0;
+    if (typeof raw.expiresAt === 'number' && raw.expiresAt < now) {
+      deleteFirestoreCallSignal(userId, id);
+      return;
+    }
     if (createdAt > 0 && createdAt < mountTs) return;
-    if (typeof raw.expiresAt === 'number' && raw.expiresAt < Date.now()) return;
     seenIds.add(id);
+    if (seenIds.size > 300) {
+      const oldest = seenIds.values().next().value;
+      if (oldest) seenIds.delete(oldest);
+    }
     onSignal({ ...raw, signalId: id });
   };
 
@@ -7371,7 +7335,9 @@ export function subscribeToFirestoreCallSignals(
             }
           });
         },
-        () => {}
+        (err) => {
+          handleFirestoreError(err, OperationType.LIST, `users/${userId}/call_signals`);
+        }
       );
     } catch {}
   }

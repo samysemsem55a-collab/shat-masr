@@ -31,14 +31,15 @@ import {
   Maximize2,
   MoreVertical,
   Flag,
-  Reply
+  Reply,
+  Download
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { User, Message, Friend, GiftItem, UnreadSenderSummary } from '../types/chat';
 import { sounds } from '../utils/soundEffects';
 import { 
   subscribeToDirectMessages, 
-  fetchOlderDirectMessages,
+  getConversationId,
   sendDirectMessage, 
   deleteDirectMessage,
   subscribeToFriendsList,
@@ -65,6 +66,7 @@ import { getRankDisplayMeta } from '../utils/userRanks';
 import { ANIMATED_INLINE_EMOJIS, InlineRichText } from './InlineRichText';
 import { VerifiedBadge } from '../utils/verifiedBadge';
 import { compressImageFileToBlob } from '../utils/imageCompression';
+import { downloadImageToDevice } from '../utils/downloadImage';
 import { offlineQueue } from '../services/offlineQueue';
 import { globalRadioPlayer } from '../services/radioPlayer';
 import { realtimeSocket } from '../services/realtimeSocket';
@@ -332,76 +334,94 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
     }
   }, [targetUser?.id, currentUser.id]);
 
-  // 4. Real-time Messages for Active 1-on-1 Chat (latest 30 + cursor pagination for older)
+  // 4. Real-time Messages for Active 1-on-1 Chat (pure onSnapshot, expanding limit for older history without getDocs)
   const [liveMessages, setLiveMessages] = useState<Message[]>([]);
-  const [olderMessages, setOlderMessages] = useState<Message[]>([]);
-  const [hasMoreOlderDm, setHasMoreOlderDm] = useState<boolean>(true);
+  const [dmLimit, setDmLimit] = useState<number>(30);
+  const [hasMoreOlderDm, setHasMoreOlderDm] = useState<boolean>(false);
   const [isLoadingOlderDm, setIsLoadingOlderDm] = useState<boolean>(false);
   const loadingOlderDmGuardRef = useRef<boolean>(false);
+  const noMoreOlderDmRef = useRef<boolean>(false);
+  const prevDmConvKeyRef = useRef<string | null>(null);
+  const pendingScrollRestoreRef = useRef<{ prevHeight: number; prevTop: number } | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
 
   useEffect(() => {
-    if (!activeContact) {
+    if (!activeContact?.id || !currentUser?.id) {
+      prevDmConvKeyRef.current = null;
+      pendingScrollRestoreRef.current = null;
+      loadingOlderDmGuardRef.current = false;
+      noMoreOlderDmRef.current = false;
       setLiveMessages([]);
-      setOlderMessages([]);
+      setDmLimit(30);
       setHasMoreOlderDm(false);
+      setIsLoadingOlderDm(false);
       return;
     }
-    setLiveMessages([]);
-    setOlderMessages([]);
-    setHasMoreOlderDm(true);
-    const unsub = subscribeToDirectMessages(currentUser.id, activeContact.id, (loadedMsgs) => {
-      setLiveMessages(loadedMsgs || []);
-      if ((loadedMsgs || []).length < 30) {
-        setHasMoreOlderDm(false);
+
+    const convId = getConversationId(currentUser.id, activeContact.id);
+    const isNewConv = prevDmConvKeyRef.current !== convId;
+    if (isNewConv) {
+      prevDmConvKeyRef.current = convId;
+      pendingScrollRestoreRef.current = null;
+      loadingOlderDmGuardRef.current = false;
+      noMoreOlderDmRef.current = false;
+      setLiveMessages([]);
+      setHasMoreOlderDm(false);
+      setIsLoadingOlderDm(false);
+      if (dmLimit !== 30) {
+        setDmLimit(30);
+        return;
       }
-    }, 30);
+    }
+
+    const activeLimit = dmLimit;
+    const unsub = subscribeToDirectMessages(
+      currentUser.id,
+      activeContact.id,
+      (loadedMsgs, meta) => {
+        const next = loadedMsgs || [];
+        setLiveMessages(next);
+
+        if (meta?.fromFirestore && !meta.fromCache) {
+          if (next.length < activeLimit) {
+            noMoreOlderDmRef.current = true;
+            setHasMoreOlderDm(false);
+          } else if (!noMoreOlderDmRef.current) {
+            setHasMoreOlderDm(true);
+          }
+
+          if (pendingScrollRestoreRef.current) {
+            const { prevHeight, prevTop } = pendingScrollRestoreRef.current;
+            pendingScrollRestoreRef.current = null;
+            requestAnimationFrame(() => {
+              const el = messagesScrollRef.current;
+              if (!el) return;
+              const diff = el.scrollHeight - prevHeight;
+              if (diff > 0) el.scrollTop = prevTop + diff;
+            });
+          }
+          setIsLoadingOlderDm(false);
+          loadingOlderDmGuardRef.current = false;
+        }
+      },
+      activeLimit
+    );
     return () => unsub();
-  }, [activeContact?.id, currentUser.id]);
+  }, [activeContact?.id, currentUser.id, dmLimit]);
 
   const setMessages: React.Dispatch<React.SetStateAction<Message[]>> = setLiveMessages;
+  const messages = liveMessages;
 
-  const messages = React.useMemo(() => {
-    if (olderMessages.length === 0) return liveMessages;
-    const byKey = new Map<string, Message>();
-    [...olderMessages, ...liveMessages].forEach((m) => {
-      if (!m || !m.id) return;
-      byKey.set(m.id, m);
-    });
-    return Array.from(byKey.values()).sort(
-      (a, b) => (a.createdAt || a.timestamp || 0) - (b.createdAt || b.timestamp || 0)
-    );
-  }, [olderMessages, liveMessages]);
-
-  const triggerLoadOlderDm = async () => {
+  const triggerLoadOlderDm = () => {
     if (!activeContact?.id || loadingOlderDmGuardRef.current || isLoadingOlderDm || !hasMoreOlderDm) return;
     const container = messagesScrollRef.current;
-    const prevHeight = container?.scrollHeight || 0;
-    const prevTop = container?.scrollTop || 0;
+    pendingScrollRestoreRef.current = {
+      prevHeight: container?.scrollHeight || 0,
+      prevTop: container?.scrollTop || 0,
+    };
     loadingOlderDmGuardRef.current = true;
     setIsLoadingOlderDm(true);
-    try {
-      const older = await fetchOlderDirectMessages(currentUser.id, activeContact.id, 30);
-      if (!older || older.length === 0) {
-        setHasMoreOlderDm(false);
-      } else {
-        setOlderMessages((prev) => {
-          const seen = new Set(prev.map((m) => m.id));
-          const uniqueOlder = older.filter((m) => !seen.has(m.id));
-          return [...uniqueOlder, ...prev];
-        });
-        if (older.length < 30) setHasMoreOlderDm(false);
-        requestAnimationFrame(() => {
-          const el = messagesScrollRef.current;
-          if (!el) return;
-          const diff = el.scrollHeight - prevHeight;
-          if (diff > 0) el.scrollTop = prevTop + diff;
-        });
-      }
-    } finally {
-      setIsLoadingOlderDm(false);
-      loadingOlderDmGuardRef.current = false;
-    }
+    setDmLimit((prev) => prev + 30);
   };
 
   // Mark incoming messages as 'seen' in Firestore + WebSocket when viewing conversation
@@ -689,7 +709,7 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
     setCallModalState({ isOpen: true, callType });
   };
 
-  // Unrestricted Media file picker & upload handler (<200KB image compression)
+  // WhatsApp-style Media file picker: 0ms blob preview + fast client compression + live progress
   const handleMediaFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = '';
@@ -706,49 +726,60 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
       return;
     }
 
-    const convId = [currentUser.id, activeContact.id].sort().join('_');
+    const convId = getConversationId(currentUser.id, activeContact.id);
     setIsUploadingMedia(true);
     setUploadProgress(5);
     const tempId = `dm_media_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-    let localPreviewUrl: string | null = null;
+    const rawPreviewUrl = URL.createObjectURL(file);
+    const optimisticType: 'image' | 'video' = isVideo ? 'video' : 'image';
+    const now = Date.now();
+
+    const optimisticMsg: Message = {
+      id: tempId,
+      tempId,
+      clientId: tempId,
+      roomId: convId,
+      senderId: currentUser.id,
+      senderName: currentUser.name,
+      senderAvatar: currentUser.avatar,
+      senderRole: currentUser.role,
+      senderVipBadge: currentUser.vipBadge,
+      recipientId: activeContact.id,
+      type: optimisticType,
+      mediaUrl: rawPreviewUrl,
+      mediaType: optimisticType,
+      imageUrl: optimisticType === 'image' ? rawPreviewUrl : undefined,
+      content: optimisticType === 'video' ? '🎥 مقطع فيديو' : '🖼️ صورة مرفقة',
+      text: optimisticType === 'video' ? '🎥 مقطع فيديو' : '🖼️ صورة مرفقة',
+      uploadProgress: 5,
+      createdAt: now,
+      timestamp: now,
+      status: 'sent'
+    };
+    isNearBottomRef.current = true;
+    setMessages(prev => [...prev, optimisticMsg]);
+
     try {
       let uploadFile: File = file;
       if (isImage) {
         const { blob: compressedBlob } = await compressImageFileToBlob(file, {
-          maxWidth: 800,
-          maxBytes: 295 * 1024,
+          maxWidth: 1080,
+          maxHeight: 1080,
+          maxBytes: 220 * 1024,
+          initialQuality: 0.8,
         });
         const cleanBase = file.name.replace(/\.[^.]+$/, '') || 'photo';
         uploadFile = new File([compressedBlob], `${cleanBase}.jpg`, { type: 'image/jpeg' });
+        setUploadProgress(20);
+        setMessages(prev => prev.map(m => (m.id === tempId || m.tempId === tempId) ? { ...m, uploadProgress: 20 } : m));
       }
-      localPreviewUrl = URL.createObjectURL(uploadFile);
-      const optimisticType: 'image' | 'video' = isVideo ? 'video' : 'image';
-      const optimisticMsg: Message = {
-        id: tempId,
-        tempId,
-        clientId: tempId,
-        roomId: convId,
-        senderId: currentUser.id,
-        senderName: currentUser.name,
-        senderAvatar: currentUser.avatar,
-        senderRole: currentUser.role,
-        senderVipBadge: currentUser.vipBadge,
-        recipientId: activeContact.id,
-        type: optimisticType,
-        mediaUrl: localPreviewUrl,
-        mediaType: optimisticType,
-        imageUrl: optimisticType === 'image' ? localPreviewUrl : undefined,
-        content: optimisticType === 'video' ? '🎥 مقطع فيديو' : '🖼️ صورة مرفقة',
-        text: optimisticType === 'video' ? '🎥 مقطع فيديو' : '🖼️ صورة مرفقة',
-        createdAt: Date.now(),
-        timestamp: Date.now(),
-        status: 'sent'
-      };
-      isNearBottomRef.current = true;
-      setMessages(prev => [...prev, optimisticMsg]);
 
       const { url, mediaType } = await uploadPrivateChatMedia(uploadFile, convId, (pct) => {
-        setUploadProgress(pct);
+        const scaled = isImage
+          ? Math.min(98, Math.max(20, 20 + Math.round(pct * 0.78)))
+          : Math.min(98, Math.max(5, pct));
+        setUploadProgress(scaled);
+        setMessages(prev => prev.map(m => (m.id === tempId || m.tempId === tempId) ? { ...m, uploadProgress: scaled } : m));
       });
       sounds.playMessageSent();
       const newMsg: Partial<Message> & { recipientName?: string; recipientAvatar?: string; recipientSessionId?: string } = {
@@ -774,15 +805,22 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
         status: 'sent'
       };
       const sent = await sendDirectMessage(currentUser.id, activeContact.id, newMsg);
-      setMessages(prev => prev.map(m => (m.id === tempId || m.tempId === tempId ? sent : m)));
+      setMessages(prev => prev.map(m => {
+        if (m.id === tempId || m.tempId === tempId) {
+          const rank: Record<string, number> = { failed: 0, pending_offline: 1, sent: 2, delivered: 3, seen: 4, read: 5 };
+          const keepStatus = (rank[m.status || 'sent'] || 0) > (rank[sent.status || 'sent'] || 0);
+          return keepStatus ? { ...sent, status: m.status, uploadProgress: undefined } : { ...sent, uploadProgress: undefined };
+        }
+        return m;
+      }));
+      setTimeout(() => {
+        try { URL.revokeObjectURL(rawPreviewUrl); } catch {}
+      }, 1500);
       toast.success(mediaType === 'video' ? 'تم إرسال الفيديو بنجاح 🎬' : 'تم إرسال الصورة بنجاح 🖼️');
     } catch (err: any) {
-      setMessages(prev => prev.map(m => (m.id === tempId ? { ...m, status: 'failed' } : m)));
+      setMessages(prev => prev.map(m => (m.id === tempId || m.tempId === tempId) ? { ...m, status: 'failed', uploadProgress: undefined } : m));
       toast.error(err?.message || 'حدث خطأ أثناء رفع الوسائط.');
     } finally {
-      if (localPreviewUrl) {
-        try { URL.revokeObjectURL(localPreviewUrl); } catch {}
-      }
       setIsUploadingMedia(false);
       setUploadProgress(0);
     }
@@ -809,7 +847,14 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
         recipientSessionId: getActivePeerSessionId(),
         status: 'sent'
       });
-      setMessages((prev) => prev.map((m) => (m.id === failedMsg.id ? sent : m)));
+      setMessages((prev) => prev.map((m) => {
+        if (m.id === failedMsg.id || m.id === retryTempId || m.tempId === retryTempId) {
+          const rank: Record<string, number> = { failed: 0, pending_offline: 1, sent: 2, delivered: 3, seen: 4, read: 5 };
+          const keepStatus = (rank[m.status || 'sent'] || 0) > (rank[sent.status || 'sent'] || 0);
+          return keepStatus ? { ...sent, status: m.status } : sent;
+        }
+        return m;
+      }));
     } catch {
       setMessages((prev) =>
         prev.map((m) => (m.id === failedMsg.id ? { ...m, status: 'failed' } : m))
@@ -870,7 +915,7 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
       status: 'sent'
     };
 
-    const convId = [currentUser.id, activeContact.id].sort().join('_');
+    const convId = getConversationId(currentUser.id, activeContact.id);
 
     if (typeof navigator !== 'undefined' && navigator.onLine === false) {
       const offlineMsg: Message = {
@@ -906,7 +951,14 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
 
     try {
       const sent = await sendDirectMessage(currentUser.id, activeContact.id, newMsg);
-      setMessages(prev => prev.map(m => (m.id === tempId || m.tempId === tempId ? sent : m)));
+      setMessages(prev => prev.map(m => {
+        if (m.id === tempId || m.tempId === tempId) {
+          const rank: Record<string, number> = { failed: 0, pending_offline: 1, sent: 2, delivered: 3, seen: 4, read: 5 };
+          const keepStatus = (rank[m.status || 'sent'] || 0) > (rank[sent.status || 'sent'] || 0);
+          return keepStatus ? { ...sent, status: m.status } : sent;
+        }
+        return m;
+      }));
     } catch (err) {
       console.warn('Direct message send failed:', err);
       toast.error('تعذر إرسال الرسالة — اضغط على 🌍❌ لإعادة المحاولة');
@@ -1689,7 +1741,7 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                               reportedUserName: activeContact.name,
                               reason: 'إبلاغ من المحادثة الخاصة',
                               contextType: 'dm',
-                              contextId: [currentUser.id, activeContact.id].sort().join('_'),
+                              contextId: getConversationId(currentUser.id, activeContact.id),
                               timestamp: Date.now(),
                               createdAt: Date.now(),
                             });
@@ -1995,6 +2047,8 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                           src={msg.mediaUrl || msg.imageUrl || ''}
                           alt="صورة مرسلة"
                           autoReveal={false}
+                          uploadProgress={msg.uploadProgress}
+                          downloadFilename={`dm_${msg.id || Date.now()}.jpg`}
                           onOpenFull={(url) => setLightboxImageUrl(url)}
                           className="max-h-60 w-full object-cover rounded-xl border border-white/25"
                         />
@@ -2546,13 +2600,33 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
           onClick={() => setLightboxImageUrl(null)}
           className="fixed inset-0 z-[200] bg-slate-900/90 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in"
         >
-          <button
-            type="button"
-            onClick={() => setLightboxImageUrl(null)}
-            className="absolute top-4 left-4 p-2 rounded-full bg-white/15 hover:bg-white/25 text-white transition cursor-pointer"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          <div className="absolute top-4 left-4 flex items-center gap-2 z-10">
+            <button
+              type="button"
+              onClick={async (e) => {
+                e.stopPropagation();
+                try {
+                  await downloadImageToDevice(lightboxImageUrl, `chat_photo_${Date.now()}.jpg`);
+                  toast.success('تم حفظ الصورة على جهازك 📥');
+                } catch {
+                  toast.error('تعذر تحميل الصورة');
+                }
+              }}
+              aria-label="تحميل الصورة"
+              title="حفظ الصورة على الجهاز"
+              className="p-2 rounded-full bg-white/15 hover:bg-white/25 text-white transition cursor-pointer"
+            >
+              <Download className="w-5 h-5" />
+            </button>
+            <button
+              type="button"
+              onClick={() => setLightboxImageUrl(null)}
+              aria-label="إغلاق"
+              className="p-2 rounded-full bg-white/15 hover:bg-white/25 text-white transition cursor-pointer"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
           <img
             src={lightboxImageUrl}
             alt="معاينة الصورة"
