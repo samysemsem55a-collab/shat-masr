@@ -24,6 +24,7 @@ import {
   arrayRemove,
   deleteField,
   runTransaction,
+  startAfter,
   writeBatch,
   QueryDocumentSnapshot,
   DocumentData
@@ -290,7 +291,7 @@ export function subscribeToRoomPresence(
     const nowTs = getServerNowMs();
     const combined = new Map<string, User>();
     rtdbUsersMap.forEach((u, id) => {
-      const seen = resolveTimestampMs(u.lastSeen ?? (u as any).lastSeenMs) || 0;
+      const seen = resolveTimestampMs((u as any).lastSeenMs ?? u.lastSeen) || 0;
       if (u && u.id && u.isOnline === true && seen > 0 && nowTs - seen <= PRESENCE_OFFLINE_TIMEOUT_MS) {
         combined.set(id, { ...u, isOnline: true, lastSeen: seen });
       }
@@ -459,7 +460,7 @@ export function subscribeToGlobalPresence(
     rtdbUsersMap.forEach((u, id) => {
       if (!u || !id) return;
       if (u.status === 'offline' || u.isOnline !== true) return;
-      const seen = resolveTimestampMs(u.lastSeen ?? (u as any).lastSeenMs);
+      const seen = resolveTimestampMs((u as any).lastSeenMs ?? u.lastSeen);
       if (id !== user?.id && (typeof seen !== 'number' || nowTs - seen > PRESENCE_OFFLINE_TIMEOUT_MS)) {
         return;
       }
@@ -551,7 +552,7 @@ export function subscribeToGlobalPresence(
       const nowTs = getServerNowMs();
       const payload = buildOnlinePayload(nowTs);
       rtdbUsersMap.set(user.id, { ...rtdbUsersMap.get(user.id), ...user, isOnline: true, lastSeen: nowTs });
-      if (rtdbConnectedState || typeof navigator === 'undefined' || navigator.onLine !== false) {
+      if (rtdbConnectedState) {
         update(globalStatusRef, payload).catch(() => {});
       }
     };
@@ -681,6 +682,8 @@ function mergeTwoMessages(prev: Message | undefined, next: Message): Message {
   };
 }
 
+const roomOlderCursorMap = new Map<string, QueryDocumentSnapshot<DocumentData> | null>();
+
 function mapFirestoreRoomMessage(
   roomId: string,
   docSnap: QueryDocumentSnapshot<DocumentData>
@@ -733,7 +736,7 @@ function mapFirestoreRoomMessage(
 
 export function subscribeToRoomMessages(
   roomId: string,
-  onMessages: (messages: Message[], meta?: { fromFirestore: boolean; fromCache: boolean; serverCount: number }) => void,
+  onMessages: (messages: Message[]) => void,
   initialLimit: number = 30
 ): () => void {
   const localKey = `messages_room_${roomId}`;
@@ -741,8 +744,10 @@ export function subscribeToRoomMessages(
   const localMsgsMap = new Map<string, Message>();
   const tempIdToRealId = new Map<string, string>();
   const seenFsIds = new Set<string>();
+  roomOlderCursorMap.delete(roomId);
+  let hasInitialCursor = false;
 
-  const emitMerged = (meta?: { fromFirestore: boolean; fromCache: boolean; serverCount: number }) => {
+  const emitMerged = () => {
     const combined = new Map<string, Message>();
     localMsgsMap.forEach((m, id) => {
       if (!m || !id) return;
@@ -764,7 +769,7 @@ export function subscribeToRoomMessages(
     try {
       localStorage.setItem(localKey, JSON.stringify(list.slice(-60)));
     } catch {}
-    onMessages(list, meta);
+    onMessages(list);
   };
 
   try {
@@ -792,6 +797,10 @@ export function subscribeToRoomMessages(
 
           // Reverse descending server docs so chronological oldest -> newest order
           const orderedDocs = [...snapshot.docs].reverse();
+          if (!hasInitialCursor && snapshot.docs.length > 0) {
+            roomOlderCursorMap.set(roomId, snapshot.docs[snapshot.docs.length - 1]);
+            hasInitialCursor = true;
+          }
 
           orderedDocs.forEach((docSnap) => {
             const msgItem = mapFirestoreRoomMessage(roomId, docSnap);
@@ -813,11 +822,7 @@ export function subscribeToRoomMessages(
             });
           }
 
-          emitMerged({
-            fromFirestore: true,
-            fromCache: snapshot.metadata.fromCache,
-            serverCount: snapshot.docs.length
-          });
+          emitMerged();
         },
         (err) => {
           handleFirestoreError(err, OperationType.LIST, `rooms/${roomId}/messages`);
@@ -863,6 +868,39 @@ export function subscribeToRoomMessages(
   };
 }
 
+// Fetch older room messages using QueryDocumentSnapshot startAfter cursor
+export async function fetchOlderRoomMessages(
+  roomId: string,
+  _beforeTimestamp?: number,
+  pageSize: number = 30
+): Promise<Message[]> {
+  if (!roomId || !db) return [];
+  const cursor = roomOlderCursorMap.get(roomId);
+  if (!cursor) return [];
+
+  try {
+    const messagesRef = collection(db, 'rooms', roomId, 'messages');
+    const q = query(
+      messagesRef,
+      orderBy('createdAt', 'desc'),
+      startAfter(cursor),
+      limit(pageSize)
+    );
+    const snap = await getDocs(q);
+    if (snap.empty) {
+      roomOlderCursorMap.set(roomId, null);
+      return [];
+    }
+    roomOlderCursorMap.set(roomId, snap.docs[snap.docs.length - 1]);
+    return [...snap.docs]
+      .reverse()
+      .map((docSnap) => mapFirestoreRoomMessage(roomId, docSnap));
+  } catch (err) {
+    handleFirestoreError(err, OperationType.LIST, `rooms/${roomId}/messages`);
+    return [];
+  }
+}
+
 // Send Real Message to Firestore (`rooms/{roomId}/messages`) with serverTimestamp & tempId
 export async function sendFirestoreMessage(
   roomId: string,
@@ -870,7 +908,7 @@ export async function sendFirestoreMessage(
 ): Promise<Message> {
   const uid = message.senderId || currentAuthUid || 'usr_guest';
   const isPrivateMsg = !!message.isPrivate || message.type === 'private';
-  const deviceNow = getServerNowMs();
+  const deviceNow = Date.now();
   const tempId = message.tempId || message.clientId || message.id || `msg_${deviceNow}_${Math.random().toString(36).substring(2, 8)}`;
   const msgId = message.id || tempId;
   const newMsg: Message = {
@@ -2096,9 +2134,7 @@ export function subscribeToFriendRequests(
     snap: any,
     targetMap: Map<string, FriendRequest>
   ) => {
-    if (!snap.metadata?.fromCache || snap.docs.length > 0) {
-      hasServerSnapshot = true;
-    }
+    hasServerSnapshot = true;
     targetMap.clear();
     snap.docs.forEach((docSnap: QueryDocumentSnapshot<DocumentData>) => {
       const data = docSnap.data({ serverTimestamps: 'estimate' }) || {};
@@ -3948,7 +3984,7 @@ export async function setPrivateTyping(
     try {
       const typingRef = ref(rtdb, `typing/private/${convId}/${currentUserId}`);
       if (isTyping) {
-        await set(typingRef, { isTyping: true, name: senderName, updatedAt: rtdbServerTimestamp() });
+        await set(typingRef, { isTyping: true, name: senderName, updatedAt: now });
         try {
           onDisconnect(typingRef).remove();
         } catch {}
@@ -4050,7 +4086,7 @@ export async function setRoomTyping(
           id: user.id,
           name: user.name || 'عضو شات مصر',
           isTyping: true,
-          updatedAt: rtdbServerTimestamp()
+          updatedAt: now
         });
         try {
           onDisconnect(typingRef).remove();
@@ -4887,6 +4923,26 @@ export function subscribeToActiveStories(onUpdate: (stories: StoryItem[]) => voi
   onUpdate(readLocal());
 
   let unsubFs: (() => void) | null = null;
+  let unsubReconnect: (() => void) | null = null;
+
+  const refreshFromServer = async () => {
+    if (!db) return;
+    try {
+      const q = query(collection(db, 'stories'), orderBy('createdAt', 'desc'), limit(40));
+      const snap = await getDocs(q);
+      const items: StoryItem[] = snap.docs.map((d) => ({
+        id: d.id,
+        ...(d.data() as any)
+      }));
+      const valid = filterValid(items);
+      if (valid.length > 0 || realtimeSocket.getConnectionState() === 'connected') {
+        try {
+          localStorage.setItem(LOCAL_STORIES_KEY, JSON.stringify(valid));
+        } catch {}
+        onUpdate(valid);
+      }
+    } catch {}
+  };
 
   if (db) {
     try {
@@ -4916,6 +4972,9 @@ export function subscribeToActiveStories(onUpdate: (stories: StoryItem[]) => voi
           if (cached.length > 0) onUpdate(cached);
         }
       );
+      unsubReconnect = realtimeSocket.subscribeToReconnectSuccess(() => {
+        refreshFromServer();
+      });
     } catch {}
   }
 
@@ -4928,6 +4987,7 @@ export function subscribeToActiveStories(onUpdate: (stories: StoryItem[]) => voi
 
   return () => {
     if (unsubFs) unsubFs();
+    if (unsubReconnect) unsubReconnect();
     liveChatBus?.removeEventListener('message', handleBus);
   };
 }
@@ -7201,14 +7261,13 @@ export function subscribeToAppUpdateNotices(
 // ==========================================
 export async function sendFirestoreCallSignal(targetUserId: string, signal: any): Promise<void> {
   if (!targetUserId || !signal) return;
-  const now = getServerNowMs();
-  const signalId = signal.signalId || `sig_${now}_${Math.random().toString(36).slice(2, 7)}`;
+  const signalId = signal.signalId || `sig_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+  const now = Date.now();
   const payload = {
     ...signal,
     signalId,
     targetUserId,
     createdAt: now,
-    createdAtMs: now,
     expiresAt: now + 90_000,
   };
 
@@ -7241,17 +7300,15 @@ export function subscribeToFirestoreCallSignals(
   onSignal: (signal: any) => void
 ): () => void {
   if (!userId) return () => {};
-  const mountTs = getServerNowMs() - 25_000;
+  const mountTs = Date.now() - 12_000;
   const seenIds = new Set<string>();
 
   const deliver = (raw: any, fallbackId?: string) => {
     if (!raw || typeof raw !== 'object') return;
     const id = String(raw.signalId || fallbackId || '');
     if (!id || seenIds.has(id)) return;
-    const now = getServerNowMs();
-    const createdAt = typeof raw.createdAt === 'number'
-      ? raw.createdAt
-      : (typeof raw.createdAtMs === 'number' ? raw.createdAtMs : 0);
+    const now = Date.now();
+    const createdAt = typeof raw.createdAt === 'number' ? raw.createdAt : 0;
     if (typeof raw.expiresAt === 'number' && raw.expiresAt < now) {
       deleteFirestoreCallSignal(userId, id);
       return;
