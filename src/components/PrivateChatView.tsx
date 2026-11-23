@@ -91,6 +91,7 @@ interface PrivateChatViewProps {
   onCloseDrawer?: () => void;
   prefilledDraft?: string | null;
   onClearPrefilledDraft?: () => void;
+  onCallActiveChange?: (isActive: boolean) => void;
 }
 
 interface ChatContact {
@@ -123,7 +124,8 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
   isDrawer = false,
   onCloseDrawer,
   prefilledDraft = null,
-  onClearPrefilledDraft
+  onClearPrefilledDraft,
+  onCallActiveChange
 }) => {
   // Navigation tabs when in list view
   const [activeTab, setActiveTab] = useState<'chats' | 'friends' | 'online'>('chats');
@@ -144,6 +146,13 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
     isOpen: false,
     callType: 'audio'
   });
+
+  useEffect(() => {
+    onCallActiveChange?.(callModalState.isOpen);
+    return () => {
+      onCallActiveChange?.(false);
+    };
+  }, [callModalState.isOpen, onCallActiveChange]);
   const [isCoinsTransferOpen, setIsCoinsTransferOpen] = useState(false);
 
   // Emoji & Animated Emojis Picker + Media Upload + Lightbox + Swipe-to-Reply States
@@ -1049,7 +1058,13 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
   const sendVoiceMessagePayload = async (audioDataUrl: string, durationSec: number) => {
     if (!activeContact) return;
     sounds.playMessageSent();
+    const convId = getConversationId(currentUser.id, activeContact.id);
+    const tempId = `dm_voice_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    const now = Date.now();
     const newMsg: Partial<Message> & { recipientName?: string; recipientAvatar?: string; recipientSessionId?: string } = {
+      id: tempId,
+      tempId,
+      clientId: tempId,
       senderId: currentUser.id,
       senderName: currentUser.name,
       senderAvatar: currentUser.avatar,
@@ -1063,25 +1078,41 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
       voiceUrl: audioDataUrl,
       audioDuration: durationSec,
       content: `تسجيل صوتي (${durationSec} ثانية) 🎙️`,
-      timestamp: Date.now(),
+      text: `تسجيل صوتي (${durationSec} ثانية) 🎙️`,
+      createdAt: now,
+      timestamp: now,
       status: 'sent'
     };
 
+    const optimisticMsg: Message = {
+      ...(newMsg as Message),
+      id: tempId,
+      tempId,
+      roomId: convId,
+      status: 'sent'
+    };
+    isNearBottomRef.current = true;
+    setMessages(prev => [...prev, optimisticMsg]);
+
     try {
       const sent = await sendDirectMessage(currentUser.id, activeContact.id, newMsg);
-      setMessages(prev => {
-        if (prev.some(m => m.id === sent.id)) return prev;
-        return [...prev, sent];
-      });
+      setMessages(prev => prev.map(m => ((m.id === tempId || m.tempId === tempId) ? sent : m)));
     } catch (err) {
       console.warn("Direct voice send error:", err);
+      setMessages(prev => prev.map(m => (m.id === tempId ? { ...m, status: 'failed' } : m)));
     }
   };
 
   const handleSendVoiceFallback = async () => {
     if (!activeContact) return;
     sounds.playMessageSent();
+    const convId = getConversationId(currentUser.id, activeContact.id);
+    const tempId = `dm_vfb_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    const now = Date.now();
     const newMsg: Partial<Message> & { recipientName?: string; recipientAvatar?: string; recipientSessionId?: string } = {
+      id: tempId,
+      tempId,
+      clientId: tempId,
       senderId: currentUser.id,
       senderName: currentUser.name,
       senderAvatar: currentUser.avatar,
@@ -1093,18 +1124,29 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
       recipientSessionId: getActivePeerSessionId(),
       type: 'voice',
       content: 'رسالة صوتية خاصة 🎙️',
+      text: 'رسالة صوتية خاصة 🎙️',
       audioDuration: 4,
-      timestamp: Date.now(),
+      createdAt: now,
+      timestamp: now,
       status: 'sent'
     };
 
+    const optimisticMsg: Message = {
+      ...(newMsg as Message),
+      id: tempId,
+      tempId,
+      roomId: convId,
+      status: 'sent'
+    };
+    isNearBottomRef.current = true;
+    setMessages(prev => [...prev, optimisticMsg]);
+
     try {
       const sent = await sendDirectMessage(currentUser.id, activeContact.id, newMsg);
-      setMessages(prev => {
-        if (prev.some(m => m.id === sent.id)) return prev;
-        return [...prev, sent];
-      });
-    } catch (err) {}
+      setMessages(prev => prev.map(m => ((m.id === tempId || m.tempId === tempId) ? sent : m)));
+    } catch {
+      setMessages(prev => prev.map(m => (m.id === tempId ? { ...m, status: 'failed' } : m)));
+    }
   };
 
   const handleSelectFriendForChat = (friend: Friend) => {

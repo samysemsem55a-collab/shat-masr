@@ -25,10 +25,8 @@ import {
   MoreVertical,
   Share2,
   Radio,
-  Mic,
-  Download
+  Mic
 } from 'lucide-react';
-import { downloadImageToDevice } from '../utils/downloadImage';
 import { Room, User, ForumPost, ForumComment, SharedRoomMission, Friend } from '../types/chat';
 import {
   subscribeToForumPosts,
@@ -2194,33 +2192,14 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
           className="fixed inset-0 z-[200] bg-slate-950/90 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in"
           dir="rtl"
         >
-          <div className="fixed top-4 left-4 flex items-center gap-2 z-10">
-            <button
-              type="button"
-              onClick={async (e) => {
-                e.stopPropagation();
-                try {
-                  await downloadImageToDevice(lightboxImageUrl, `forum_photo_${Date.now()}.jpg`);
-                  toast.success('تم حفظ الصورة على جهازك 📥');
-                } catch {
-                  toast.error('تعذر تحميل الصورة');
-                }
-              }}
-              aria-label="تحميل الصورة"
-              title="حفظ الصورة على الجهاز"
-              className="w-10 h-10 rounded-full bg-white/15 hover:bg-white/25 text-white flex items-center justify-center transition cursor-pointer shadow-lg"
-            >
-              <Download className="w-5 h-5" />
-            </button>
-            <button
-              type="button"
-              onClick={() => setLightboxImageUrl(null)}
-              aria-label="إغلاق الصورة"
-              className="w-10 h-10 rounded-full bg-white/15 hover:bg-white/25 text-white flex items-center justify-center transition cursor-pointer shadow-lg"
-            >
-              <X className="w-5 h-5" />
-            </button>
-          </div>
+          <button
+            type="button"
+            onClick={() => setLightboxImageUrl(null)}
+            aria-label="إغلاق الصورة"
+            className="fixed top-4 left-4 w-10 h-10 rounded-full bg-white/15 hover:bg-white/25 text-white flex items-center justify-center transition cursor-pointer shadow-lg"
+          >
+            <X className="w-5 h-5" />
+          </button>
           <img
             src={lightboxImageUrl}
             alt="عرض الصورة بالحجم الكامل"

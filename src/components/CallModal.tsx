@@ -160,6 +160,16 @@ export const CallModal: React.FC<CallModalProps> = ({
           pc.addTrack(track, stream);
         });
       }
+      if (!stream || stream.getAudioTracks().length === 0) {
+        try {
+          pc.addTransceiver('audio', { direction: 'recvonly' });
+        } catch {}
+      }
+      if (callType === 'video' && (!stream || stream.getVideoTracks().length === 0)) {
+        try {
+          pc.addTransceiver('video', { direction: 'recvonly' });
+        } catch {}
+      }
 
       pc.onicecandidate = (event) => {
         if (event.candidate && !hasEndedRef.current) {
@@ -631,6 +641,7 @@ export const CallModal: React.FC<CallModalProps> = ({
                 ref={remoteVideoRef}
                 autoPlay
                 playsInline
+                muted
                 className="w-full h-full object-cover"
               />
               {!hasRemoteStream && (
