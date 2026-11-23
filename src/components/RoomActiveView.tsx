@@ -114,6 +114,20 @@ interface RoomActiveViewProps {
   isLoadingOlderMessages?: boolean;
 }
 
+interface RoomGiftAlertItem {
+  id: string;
+  giftId: string;
+  giftName: string;
+  giftIcon: string;
+  giftCost: number;
+  giftTag?: 'economy' | 'romantic' | 'royal' | 'interactive';
+  bannerText?: string;
+  senderName: string;
+  senderAvatar?: string;
+  recipientName: string;
+  timestamp: number;
+}
+
 const PUBLIC_REACTION_EMOJIS = ['❤️', '👍', '😂', '🔥'] as const;
 
 type HighlightPaletteKey = 'sky' | 'amber' | 'rose' | 'emerald';
@@ -334,6 +348,40 @@ const RoomPublicMessageRow = React.memo<RoomPublicMessageRowProps>(({
   const localLongPressRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const localTouchStartXRef = useRef<number>(0);
   const localLastTapRef = useRef<number>(0);
+  const prevReactionsRef = useRef<Record<string, number>>(msg.reactions ? { ...msg.reactions } : {});
+  const likePulseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [likePulseState, setLikePulseState] = useState<{ emoji: string; key: number } | null>(null);
+
+  const triggerLikePulse = useCallback((emoji: string) => {
+    if (likePulseTimerRef.current) clearTimeout(likePulseTimerRef.current);
+    setLikePulseState({ emoji, key: Date.now() });
+    likePulseTimerRef.current = setTimeout(() => {
+      setLikePulseState(null);
+      likePulseTimerRef.current = null;
+    }, 1100);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (likePulseTimerRef.current) clearTimeout(likePulseTimerRef.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    const curr = msg.reactions || {};
+    const prev = prevReactionsRef.current;
+    let increasedEmoji: string | null = null;
+    for (const em of Object.keys(curr)) {
+      if ((curr[em] || 0) > (prev[em] || 0)) {
+        increasedEmoji = em;
+        if (em === '❤️' || em === '👍') break;
+      }
+    }
+    prevReactionsRef.current = { ...curr };
+    if (increasedEmoji) {
+      triggerLikePulse(increasedEmoji);
+    }
+  }, [msg.reactions, triggerLikePulse]);
 
   const senderStyle = getSenderChatStyle(msg.senderId, msg.senderRole, msg.senderVipBadge, isDarkRoomBg);
   const isVipSender = senderStyle.isPrivileged;
@@ -357,6 +405,12 @@ const RoomPublicMessageRow = React.memo<RoomPublicMessageRowProps>(({
     <div
       data-preserve-light={!isDarkRoomBg ? 'true' : undefined}
       className={`chat-msg-row flex items-start gap-2 justify-start group rounded-xl transition-colors py-1 px-1.5 ${msgTextOutlineClass} ${messageAccentClass} ${
+        likePulseState
+          ? likePulseState.emoji === '❤️'
+            ? 'animate-like-msg-pulse'
+            : 'animate-like-msg-pulse-sky'
+          : ''
+      } ${
         isHighlightedTarget
           ? isDarkRoomBg
             ? 'bg-sky-400/20 ring-1 ring-sky-400'
@@ -602,12 +656,15 @@ const RoomPublicMessageRow = React.memo<RoomPublicMessageRowProps>(({
             if (count <= 0) return null;
             const userReacted = msg.userReactions && msg.userReactions[currentUserId] === emoji;
             const usersList = msg.reactionUsers?.[emoji] || [];
+            const isHeartOrLike = emoji === '❤️' || emoji === '👍';
+            const isPulsingThis = likePulseState?.emoji === emoji;
             return (
               <button
                 key={emoji}
                 type="button"
                 onClick={(e) => {
                   e.stopPropagation();
+                  if (!userReacted) triggerLikePulse(emoji);
                   toggleMessageReaction(roomId, msg.id, emoji, currentUserId, currentUserName, msg);
                 }}
                 onContextMenu={(e) => {
@@ -626,7 +683,28 @@ const RoomPublicMessageRow = React.memo<RoomPublicMessageRowProps>(({
                     : 'text-slate-900 chat-text-outline-light'
                 }`}
               >
-                <span className="text-[11px] leading-none">{emoji}</span>
+                <span className="relative inline-flex items-center justify-center">
+                  {isPulsingThis && (
+                    <span
+                      key={likePulseState.key}
+                      aria-hidden="true"
+                      className={`absolute -inset-1.5 rounded-full pointer-events-none animate-like-ring-ripple ${
+                        emoji === '❤️' ? 'bg-rose-400/55' : 'bg-sky-400/55'
+                      }`}
+                    />
+                  )}
+                  <span
+                    className={`text-[11px] leading-none relative z-[1] ${
+                      isPulsingThis
+                        ? 'animate-like-heart-burst'
+                        : isHeartOrLike
+                        ? 'animate-like-heart-gentle'
+                        : ''
+                    }`}
+                  >
+                    {emoji}
+                  </span>
+                </span>
                 <span className="tabular-nums">{count}</span>
               </button>
             );
@@ -635,19 +713,23 @@ const RoomPublicMessageRow = React.memo<RoomPublicMessageRowProps>(({
           <div className="inline-flex items-center gap-1.5 bg-transparent px-0 py-0">
             {PUBLIC_REACTION_EMOJIS.map((em) => {
               const isPicked = msg.userReactions && msg.userReactions[currentUserId] === em;
+              const isHeartOrLike = em === '❤️' || em === '👍';
               return (
                 <button
                   key={em}
                   type="button"
                   onClick={(e) => {
                     e.stopPropagation();
+                    if (!isPicked) triggerLikePulse(em);
                     toggleMessageReaction(roomId, msg.id, em, currentUserId, currentUserName, msg);
                     if (em === '❤️') {
                       contributeToSharedRoomMission('likes', currentUserId, 1).catch(() => {});
                     }
                   }}
                   className={`hover:scale-125 active:scale-90 text-[11px] leading-none transition-transform p-0 bg-transparent border-0 cursor-pointer ${
-                    isPicked ? 'scale-115 opacity-100' : 'opacity-80 hover:opacity-100'
+                    isPicked
+                      ? `scale-115 opacity-100 ${isHeartOrLike ? 'animate-like-heart-gentle' : ''}`
+                      : 'opacity-80 hover:opacity-100'
                   }`}
                   title={`تفاعل ${em}`}
                 >
@@ -1208,6 +1290,144 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
       }
     }
   }, [muteJoinNotices]);
+
+  // Luxury Gift Visual Alert Banner Queue (pinned/animated above room messages)
+  const [luxuryGiftAlertQueue, setLuxuryGiftAlertQueue] = useState<RoomGiftAlertItem[]>([]);
+  const activeGiftAlert = luxuryGiftAlertQueue[0] || null;
+  const seenGiftAlertIdsRef = useRef<Set<string>>(new Set());
+  const recentGiftFingerprintsRef = useRef<Map<string, number>>(new Map());
+  const giftHydratedRoomRef = useRef<string | null>(null);
+  const giftAlertTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const dismissActiveGiftAlert = useCallback(() => {
+    if (giftAlertTimerRef.current) {
+      clearTimeout(giftAlertTimerRef.current);
+      giftAlertTimerRef.current = null;
+    }
+    setLuxuryGiftAlertQueue((prev) => (prev.length > 0 ? prev.slice(1) : prev));
+  }, []);
+
+  const enqueueLuxuryGiftAlert = useCallback((rawAlert: RoomGiftAlertItem) => {
+    if (!rawAlert.id || seenGiftAlertIdsRef.current.has(rawAlert.id)) return;
+    const now = Date.now();
+    const fingerprint = `${rawAlert.senderName.trim()}::${rawAlert.recipientName.trim()}::${rawAlert.giftName.trim()}`;
+
+    for (const [key, ts] of recentGiftFingerprintsRef.current.entries()) {
+      if (now - ts > 6500) {
+        recentGiftFingerprintsRef.current.delete(key);
+      }
+    }
+
+    const lastSameGiftTs = recentGiftFingerprintsRef.current.get(fingerprint);
+    seenGiftAlertIdsRef.current.add(rawAlert.id);
+    if (lastSameGiftTs && now - lastSameGiftTs < 6500) {
+      return;
+    }
+    recentGiftFingerprintsRef.current.set(fingerprint, now);
+
+    const catalogGift = LUXURY_GIFTS.find(
+      (g) => g.id === rawAlert.giftId || g.name === rawAlert.giftName
+    );
+    const enrichedAlert: RoomGiftAlertItem = {
+      ...rawAlert,
+      giftTag: rawAlert.giftTag || catalogGift?.giftTag,
+      bannerText: rawAlert.bannerText || catalogGift?.bannerText,
+    };
+
+    setLuxuryGiftAlertQueue((prev) => {
+      if (prev.some((item) => item.id === enrichedAlert.id)) return prev;
+      return [...prev.slice(-7), enrichedAlert];
+    });
+  }, []);
+
+  // Reset gift alert queue cleanly when switching rooms
+  useEffect(() => {
+    setLuxuryGiftAlertQueue([]);
+    seenGiftAlertIdsRef.current.clear();
+    recentGiftFingerprintsRef.current.clear();
+    giftHydratedRoomRef.current = null;
+    if (giftAlertTimerRef.current) {
+      clearTimeout(giftAlertTimerRef.current);
+      giftAlertTimerRef.current = null;
+    }
+    return () => {
+      if (giftAlertTimerRef.current) {
+        clearTimeout(giftAlertTimerRef.current);
+        giftAlertTimerRef.current = null;
+      }
+    };
+  }, [room.id]);
+
+  // Auto-advance active luxury gift banner every 5.5 seconds
+  useEffect(() => {
+    if (giftAlertTimerRef.current) {
+      clearTimeout(giftAlertTimerRef.current);
+      giftAlertTimerRef.current = null;
+    }
+    if (!activeGiftAlert) return;
+    giftAlertTimerRef.current = setTimeout(() => {
+      dismissActiveGiftAlert();
+    }, 5500);
+    return () => {
+      if (giftAlertTimerRef.current) {
+        clearTimeout(giftAlertTimerRef.current);
+        giftAlertTimerRef.current = null;
+      }
+    };
+  }, [activeGiftAlert?.id, dismissActiveGiftAlert]);
+
+  // Trigger luxury gift alert from Firestore/optimistic room gift messages
+  useEffect(() => {
+    if (messages.length === 0) return;
+    const isFirstBatchForRoom = giftHydratedRoomRef.current !== room.id;
+    if (isFirstBatchForRoom) {
+      giftHydratedRoomRef.current = room.id;
+    }
+    const now = Date.now();
+    for (const msg of messages) {
+      if (msg.type !== 'gift' || !msg.gift) continue;
+      const msgId = msg.id || `gift_${msg.senderId}_${msg.timestamp}`;
+      if (seenGiftAlertIdsRef.current.has(msgId)) continue;
+      const ageMs = now - (typeof msg.timestamp === 'number' ? msg.timestamp : 0);
+      if (isFirstBatchForRoom && ageMs >= 8000) {
+        seenGiftAlertIdsRef.current.add(msgId);
+        continue;
+      }
+      enqueueLuxuryGiftAlert({
+        id: msgId,
+        giftId: msg.gift.giftId,
+        giftName: msg.gift.name,
+        giftIcon: msg.gift.icon || '🎁',
+        giftCost: Number(msg.gift.cost) || 0,
+        senderName: msg.senderName || 'عضو',
+        senderAvatar: msg.senderAvatar,
+        recipientName: msg.gift.recipientName || room.title,
+        timestamp: msg.timestamp || now,
+      });
+    }
+  }, [room.id, room.title, messages, enqueueLuxuryGiftAlert]);
+
+  // Trigger luxury gift alert immediately from live WebSocket broadcasts
+  useEffect(() => {
+    if (!room.id) return;
+    const unsub = realtimeSocket.subscribeToLuxuryGiftBroadcasts(room.id, (giftData) => {
+      if (!giftData?.gift) return;
+      const now = Date.now();
+      enqueueLuxuryGiftAlert({
+        id: `ws_gift_${giftData.senderId || 'u'}_${giftData.gift.id || giftData.gift.name}_${now}`,
+        giftId: giftData.gift.id || '',
+        giftName: giftData.gift.name || 'هدية مميزة',
+        giftIcon: giftData.gift.icon || '🎁',
+        giftCost: Number(giftData.gift.cost) || 0,
+        giftTag: giftData.gift.giftTag,
+        bannerText: giftData.gift.bannerText,
+        senderName: giftData.senderName || 'عضو',
+        recipientName: giftData.recipientName || room.title,
+        timestamp: now,
+      });
+    });
+    return () => unsub();
+  }, [room.id, room.title, enqueueLuxuryGiftAlert]);
 
   // Smart Gift Wallet Reminder Toast (< 50% of gift cost)
   const triggerSmartGiftWalletReminder = (giftCost: number, giftName?: string) => {
@@ -2900,12 +3120,168 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
           </div>
         )}
 
-        {/* Scrollable Messages Feed */}
-        <div
-          ref={messagesScrollRef}
-          onScroll={handleMessagesScroll}
-          className="relative z-10 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain px-2.5 sm:px-3.5 py-2 space-y-1 text-right"
-        >
+        {/* Messages Area Wrapper with Floating Luxury Gift Spotlight Alert Above Messages */}
+        <div className="relative flex-1 min-h-0 flex flex-col overflow-hidden">
+          <AnimatePresence mode="wait">
+            {activeGiftAlert && (() => {
+              const isRoyalTier = activeGiftAlert.giftTag === 'royal' || activeGiftAlert.giftCost >= 1000;
+              const isRomanticTier = !isRoyalTier && (activeGiftAlert.giftTag === 'romantic' || activeGiftAlert.giftTag === 'interactive');
+              const cardThemeClass = isRoyalTier
+                ? 'from-slate-950/95 via-amber-950/95 to-slate-950/95 border-amber-400/90 shadow-[0_14px_38px_-8px_rgba(245,158,11,0.62)]'
+                : isRomanticTier
+                ? 'from-rose-950/95 via-fuchsia-950/95 to-amber-950/95 border-rose-400/85 shadow-[0_14px_36px_-8px_rgba(244,63,94,0.52)]'
+                : 'from-slate-900/95 via-indigo-950/95 to-amber-950/95 border-amber-300/85 shadow-[0_12px_32px_-8px_rgba(245,158,11,0.48)]';
+              const badgeLabel = isRoyalTier
+                ? 'هدية ملكية فاخرة'
+                : isRomanticTier
+                ? 'هدية مودة مميزة'
+                : 'تنبيه هدية مميزة';
+
+              return (
+                <motion.div
+                  key={activeGiftAlert.id}
+                  initial={{ opacity: 0, y: -28, scale: 0.92 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: -22, scale: 0.94, transition: { duration: 0.22, ease: 'easeIn' } }}
+                  transition={{ type: 'spring', stiffness: 360, damping: 24 }}
+                  className="pointer-events-none absolute top-2 inset-x-2 sm:inset-x-4 z-30 flex justify-center"
+                  dir="rtl"
+                >
+                  <div
+                    data-preserve-light="true"
+                    className={`pointer-events-auto relative w-full max-w-lg overflow-hidden rounded-2xl border-2 bg-gradient-to-l backdrop-blur-md text-white px-3 py-2.5 ${cardThemeClass}`}
+                  >
+                    {/* Animated Luxury Shimmer Sweep */}
+                    <span
+                      aria-hidden="true"
+                      className="pointer-events-none absolute inset-y-0 w-1/3 bg-gradient-to-r from-transparent via-amber-200/20 to-transparent animate-luxury-banner-sweep"
+                    />
+
+                    <div className="relative z-10 flex items-center gap-2.5 sm:gap-3">
+                      {/* Animated Gift Emblem */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          sounds.playGiftFanfare();
+                          try {
+                            confetti({
+                              particleCount: 55,
+                              spread: 65,
+                              origin: { y: 0.28 },
+                            });
+                          } catch {}
+                        }}
+                        className="relative shrink-0 group cursor-pointer focus:outline-none"
+                        title="احتفال بالهدية ✨"
+                      >
+                        <motion.span
+                          aria-hidden="true"
+                          animate={{ scale: [1, 1.32, 1], opacity: [0.6, 0.12, 0.6] }}
+                          transition={{ duration: 1.5, repeat: Infinity, ease: 'easeInOut' }}
+                          className="absolute inset-0 rounded-2xl bg-amber-400/50 blur-[2px]"
+                        />
+                        <motion.div
+                          animate={{ scale: [1, 1.1, 1], rotate: [0, -5, 5, 0] }}
+                          transition={{ duration: 1.8, repeat: Infinity, ease: 'easeInOut' }}
+                          className="relative w-11 h-11 sm:w-12 sm:h-12 rounded-2xl bg-gradient-to-br from-amber-300/30 to-rose-400/25 border border-amber-300/70 flex items-center justify-center text-2xl sm:text-3xl shadow-inner"
+                        >
+                          <span className="select-none">{activeGiftAlert.giftIcon}</span>
+                        </motion.div>
+                        <Sparkles className="w-3.5 h-3.5 text-amber-300 absolute -top-1 -right-1 animate-pulse" />
+                      </button>
+
+                      {/* Spotlight Names & Gift Details */}
+                      <div className="flex-1 min-w-0 text-right space-y-1">
+                        <div className="flex items-center justify-between gap-1.5">
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <Crown className="w-3.5 h-3.5 text-amber-300 shrink-0 animate-bounce" />
+                            <span className="text-[10.5px] sm:text-[11px] font-black text-amber-200 truncate">
+                              {badgeLabel}: {activeGiftAlert.giftName}
+                            </span>
+                            {luxuryGiftAlertQueue.length > 1 && (
+                              <span className="px-1.5 py-0.5 rounded-full bg-amber-400/25 border border-amber-300/50 text-amber-100 text-[9px] font-black shrink-0">
+                                +{luxuryGiftAlertQueue.length - 1}
+                              </span>
+                            )}
+                          </div>
+
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <span className="px-2 py-0.5 rounded-full bg-amber-400/20 border border-amber-300/50 text-amber-200 text-[10px] font-black tabular-nums">
+                              🪙 {activeGiftAlert.giftCost.toLocaleString()}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={dismissActiveGiftAlert}
+                              className="p-0.5 rounded-full text-amber-200/80 hover:text-white hover:bg-white/15 transition cursor-pointer"
+                              aria-label="إغلاق تنبيه الهدية"
+                              title="إغلاق"
+                            >
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Highlighted Sender -> Recipient Animated Badges */}
+                        <div className="flex flex-wrap items-center gap-1.5 text-[11px] sm:text-xs font-black">
+                          <motion.span
+                            initial={{ opacity: 0, x: 10 }}
+                            animate={{ opacity: 1, x: 0 }}
+                            transition={{ duration: 0.3, delay: 0.05 }}
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-gradient-to-r from-sky-500/35 to-indigo-500/35 border border-sky-300/75 text-sky-100 max-w-[140px] sm:max-w-[180px] animate-luxury-sender-glow"
+                          >
+                            <span className="text-[9.5px] text-sky-200/90 font-bold shrink-0">المرسل:</span>
+                            <span className="truncate text-white">{activeGiftAlert.senderName}</span>
+                          </motion.span>
+
+                          <motion.span
+                            animate={{ x: [0, -3, 0] }}
+                            transition={{ duration: 1.1, repeat: Infinity, ease: 'easeInOut' }}
+                            className="inline-flex items-center gap-0.5 text-amber-300 text-[10.5px] font-black shrink-0"
+                          >
+                            <span>أهدى</span>
+                            <span>⬅️</span>
+                          </motion.span>
+
+                          <motion.span
+                            initial={{ opacity: 0, x: -10 }}
+                            animate={{ opacity: 1, x: 0 }}
+                            transition={{ duration: 0.3, delay: 0.1 }}
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-gradient-to-r from-amber-400/35 via-rose-500/30 to-amber-500/35 border border-amber-300/85 text-amber-50 max-w-[140px] sm:max-w-[180px] animate-luxury-recipient-glow"
+                          >
+                            <span className="text-[9.5px] text-amber-200 font-bold shrink-0">إلى:</span>
+                            <span className="truncate text-amber-100">{activeGiftAlert.recipientName}</span>
+                          </motion.span>
+                        </div>
+
+                        {activeGiftAlert.bannerText && (
+                          <p className="text-[10px] sm:text-[10.5px] font-bold text-amber-100/85 truncate">
+                            ✨ {activeGiftAlert.bannerText}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Auto-Dismiss Countdown Progress Bar */}
+                    <motion.div
+                      key={`bar_${activeGiftAlert.id}`}
+                      initial={{ scaleX: 1 }}
+                      animate={{ scaleX: 0 }}
+                      transition={{ duration: 5.5, ease: 'linear' }}
+                      style={{ transformOrigin: 'right center' }}
+                      className="absolute bottom-0 inset-x-0 h-[3px] bg-gradient-to-l from-amber-300 via-yellow-200 to-rose-400"
+                    />
+                  </div>
+                </motion.div>
+              );
+            })()}
+          </AnimatePresence>
+
+          {/* Scrollable Messages Feed */}
+          <div
+            ref={messagesScrollRef}
+            onScroll={handleMessagesScroll}
+            className="relative z-10 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain px-2.5 sm:px-3.5 py-2 space-y-1 text-right"
+          >
         {hasMoreOlderMessages && onLoadOlderMessages && (
           <div className="flex justify-center py-1">
             <button
@@ -3123,6 +3499,7 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
             <span>الأحدث</span>
           </button>
         )}
+        </div>
 
         {/* 6.5. Realtime Typing Indicator ("جاري الكتابة...") directly beneath the messages feed */}
         <AnimatePresence>

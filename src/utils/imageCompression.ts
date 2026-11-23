@@ -116,6 +116,10 @@ export async function compressImageFileToBlob(
       return { blob: file };
     }
 
+    if (file.type !== 'image/jpeg') {
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
     ctx.drawImage(decoded.source, 0, 0, canvas.width, canvas.height);
@@ -131,12 +135,26 @@ export async function compressImageFileToBlob(
         canvas.height = Math.max(240, Math.round(canvas.height * 0.78));
         const resizedCtx = canvas.getContext('2d');
         if (resizedCtx) {
+          if (file.type !== 'image/jpeg') {
+            resizedCtx.fillStyle = '#ffffff';
+            resizedCtx.fillRect(0, 0, canvas.width, canvas.height);
+          }
           resizedCtx.imageSmoothingEnabled = true;
           resizedCtx.imageSmoothingQuality = 'high';
           resizedCtx.drawImage(decoded.source, 0, 0, canvas.width, canvas.height);
         }
       }
       blob = await canvasToJpegBlob(canvas, quality);
+    }
+
+    if (
+      file.type === 'image/jpeg' &&
+      decoded.width <= maxWidth &&
+      decoded.height <= maxHeight &&
+      file.size <= maxBytes &&
+      blob.size >= file.size
+    ) {
+      return { blob: file };
     }
 
     return { blob };

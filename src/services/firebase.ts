@@ -668,17 +668,20 @@ function pickHigherMessageStatus(
   return rb >= ra ? (b || a || 'delivered') : (a || b || 'delivered');
 }
 
-function mergeTwoMessages(prev: Message | undefined, next: Message): Message {
+function mergeTwoMessages(prev: Message | undefined, next: Message, authoritativeNext: boolean = false): Message {
   if (!prev) return next;
   const nextHasReactions = next.reactions && Object.keys(next.reactions).length > 0;
   const prevHasReactions = prev.reactions && Object.keys(prev.reactions).length > 0;
+  const useNextReactions = authoritativeNext
+    ? next.reactions !== undefined
+    : nextHasReactions || !prevHasReactions;
   return {
     ...prev,
     ...next,
     status: pickHigherMessageStatus(prev.status, next.status),
-    reactions: nextHasReactions ? next.reactions : (prevHasReactions ? prev.reactions : next.reactions || {}),
-    userReactions: nextHasReactions ? next.userReactions : (prevHasReactions ? prev.userReactions : next.userReactions || {}),
-    reactionUsers: nextHasReactions ? next.reactionUsers : (prevHasReactions ? prev.reactionUsers : next.reactionUsers || {}),
+    reactions: useNextReactions ? (next.reactions || {}) : (prev.reactions || {}),
+    userReactions: useNextReactions ? (next.userReactions || {}) : (prev.userReactions || {}),
+    reactionUsers: useNextReactions ? (next.reactionUsers || {}) : (prev.reactionUsers || {}),
   };
 }
 
@@ -760,7 +763,7 @@ export function subscribeToRoomMessages(
       if (m.tempId && combined.has(m.tempId) && m.tempId !== id) {
         combined.delete(m.tempId);
       }
-      combined.set(id, mergeTwoMessages(combined.get(id), m));
+      combined.set(id, mergeTwoMessages(combined.get(id), m, true));
     });
 
     const list = Array.from(combined.values())
@@ -846,7 +849,7 @@ export function subscribeToRoomMessages(
     } else if (e.data?.type === 'MESSAGE_REACTION_UPDATE' && e.data.updatedMessage?.id) {
       const m = e.data.updatedMessage;
       localMsgsMap.set(m.id, m);
-      if (fsMsgsMap.has(m.id)) fsMsgsMap.set(m.id, mergeTwoMessages(fsMsgsMap.get(m.id), m));
+      if (fsMsgsMap.has(m.id)) fsMsgsMap.set(m.id, mergeTwoMessages(fsMsgsMap.get(m.id), m, true));
       emitMerged();
     } else if (e.data?.type === 'ROOM_MESSAGES_READ_UPDATE' && Array.isArray(e.data.messageIds)) {
       const idSet = new Set<string>(e.data.messageIds);
@@ -861,10 +864,25 @@ export function subscribeToRoomMessages(
     }
   };
 
+  const handleLocalReaction = (e: Event) => {
+    const detail = (e as CustomEvent)?.detail;
+    if (!detail || detail.roomId !== roomId || !detail.updatedMessage?.id) return;
+    const m = detail.updatedMessage as Message;
+    localMsgsMap.set(m.id, m);
+    if (fsMsgsMap.has(m.id)) fsMsgsMap.set(m.id, mergeTwoMessages(fsMsgsMap.get(m.id), m, true));
+    emitMerged();
+  };
+
   liveChatBus?.addEventListener('message', handleBroadcast);
+  if (typeof window !== 'undefined') {
+    window.addEventListener('shat-room-reaction-local', handleLocalReaction);
+  }
   return () => {
     if (firestoreUnsub) firestoreUnsub();
     liveChatBus?.removeEventListener('message', handleBroadcast);
+    if (typeof window !== 'undefined') {
+      window.removeEventListener('shat-room-reaction-local', handleLocalReaction);
+    }
   };
 }
 
@@ -3245,7 +3263,7 @@ export function subscribeToDirectMessages(
         if (m.tempId && merged.has(m.tempId) && m.tempId !== id) {
           merged.delete(m.tempId);
         }
-        merged.set(id, mergeTwoMessages(merged.get(id), m));
+        merged.set(id, mergeTwoMessages(merged.get(id), m, true));
       });
     });
 
@@ -3419,7 +3437,10 @@ export function subscribeToDirectMessages(
         fsMsgsMap.delete(targetId);
       } else if (e.data.message?.id) {
         deletedIds.delete(e.data.message.id);
-        localMsgsMap.set(e.data.message.id, e.data.message);
+        const m = e.data.message as Message;
+        localMsgsMap.set(m.id, m);
+        if (fsMsgsMap.has(m.id)) fsMsgsMap.set(m.id, mergeTwoMessages(fsMsgsMap.get(m.id), m, true));
+        if (legacyFsMsgsMap.has(m.id)) legacyFsMsgsMap.set(m.id, mergeTwoMessages(legacyFsMsgsMap.get(m.id), m, true));
       } else if (e.data.type === 'DIRECT_MESSAGE_READ_UPDATE' && Array.isArray(e.data.messageIds)) {
         e.data.messageIds.forEach((id: string) => {
           [localMsgsMap, wsMsgsMap, legacyFsMsgsMap, fsMsgsMap].forEach((map) => {
@@ -3431,7 +3452,20 @@ export function subscribeToDirectMessages(
       emit();
     }
   };
+  const handleLocalDmReaction = (e: Event) => {
+    const detail = (e as CustomEvent)?.detail;
+    if (!detail || detail.convId !== convId || !detail.message?.id) return;
+    const m = detail.message as Message;
+    localMsgsMap.set(m.id, m);
+    if (fsMsgsMap.has(m.id)) fsMsgsMap.set(m.id, mergeTwoMessages(fsMsgsMap.get(m.id), m, true));
+    if (legacyFsMsgsMap.has(m.id)) legacyFsMsgsMap.set(m.id, mergeTwoMessages(legacyFsMsgsMap.get(m.id), m, true));
+    emit();
+  };
+
   liveChatBus?.addEventListener('message', handleBroadcast);
+  if (typeof window !== 'undefined') {
+    window.addEventListener('shat-dm-reaction-local', handleLocalDmReaction);
+  }
 
   return () => {
     unsubConvSocket();
@@ -3440,6 +3474,9 @@ export function subscribeToDirectMessages(
     if (firestoreUnsub) firestoreUnsub();
     if (legacyFirestoreUnsub) legacyFirestoreUnsub();
     liveChatBus?.removeEventListener('message', handleBroadcast);
+    if (typeof window !== 'undefined') {
+      window.removeEventListener('shat-dm-reaction-local', handleLocalDmReaction);
+    }
   };
 }
 
@@ -4368,6 +4405,14 @@ export async function toggleMessageReaction(
     updatedMessage: updatedMsg
   });
 
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(
+      new CustomEvent('shat-room-reaction-local', {
+        detail: { roomId, messageId, updatedMessage: updatedMsg }
+      })
+    );
+  }
+
   // Firestore real-time update
   if (db) {
     try {
@@ -4384,6 +4429,104 @@ export async function toggleMessageReaction(
       console.warn("Firestore reaction update notice:", e);
     }
   }
+}
+
+export async function toggleDirectMessageReaction(
+  userId1: string,
+  userId2: string,
+  messageId: string,
+  emoji: string,
+  userId: string,
+  userName: string,
+  fallbackMessage?: Message
+): Promise<Message | null> {
+  if (!userId1 || !userId2 || !messageId) return null;
+  const convId = getConversationId(userId1, userId2);
+  const localKey = `direct_messages_${convId}`;
+  let updatedMsg: Message | null = null;
+
+  try {
+    const raw = localStorage.getItem(localKey);
+    const list: Message[] = raw ? JSON.parse(raw) : [];
+    let target = list.find(m => m.id === messageId);
+    if (!target && fallbackMessage) {
+      target = { ...fallbackMessage };
+      list.push(target);
+    }
+
+    if (target) {
+      const nextReactions: Record<string, number> = { ...(target.reactions || {}) };
+      const nextUserReactions: Record<string, string> = { ...(target.userReactions || {}) };
+      const nextReactionUsers: Record<string, string[]> = {};
+      if (target.reactionUsers) {
+        Object.keys(target.reactionUsers).forEach(k => {
+          nextReactionUsers[k] = [...target.reactionUsers![k]];
+        });
+      }
+
+      const existingReaction = nextUserReactions[userId];
+      if (existingReaction === emoji) {
+        nextReactions[emoji] = Math.max(0, (nextReactions[emoji] || 1) - 1);
+        if (nextReactions[emoji] === 0) delete nextReactions[emoji];
+        delete nextUserReactions[userId];
+        if (nextReactionUsers[emoji]) {
+          nextReactionUsers[emoji] = nextReactionUsers[emoji].filter(name => name !== userName);
+        }
+      } else {
+        if (existingReaction && nextReactions[existingReaction]) {
+          nextReactions[existingReaction] = Math.max(0, nextReactions[existingReaction] - 1);
+          if (nextReactions[existingReaction] === 0) delete nextReactions[existingReaction];
+          if (nextReactionUsers[existingReaction]) {
+            nextReactionUsers[existingReaction] = nextReactionUsers[existingReaction].filter(name => name !== userName);
+          }
+        }
+        nextReactions[emoji] = (nextReactions[emoji] || 0) + 1;
+        nextUserReactions[userId] = emoji;
+        if (!nextReactionUsers[emoji]) nextReactionUsers[emoji] = [];
+        if (!nextReactionUsers[emoji].includes(userName)) {
+          nextReactionUsers[emoji].push(userName);
+        }
+      }
+
+      target.reactions = nextReactions;
+      target.userReactions = nextUserReactions;
+      target.reactionUsers = nextReactionUsers;
+      updatedMsg = target;
+      localStorage.setItem(localKey, JSON.stringify(list.slice(-60)));
+    }
+  } catch {}
+
+  if (!updatedMsg) return null;
+
+  liveChatBus?.postMessage({
+    type: 'DIRECT_MESSAGE_UPDATE',
+    convId,
+    message: updatedMsg
+  });
+
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(
+      new CustomEvent('shat-dm-reaction-local', {
+        detail: { convId, message: updatedMsg }
+      })
+    );
+  }
+
+  if (db) {
+    const reactionPayload = {
+      reactions: updatedMsg.reactions || {},
+      userReactions: updatedMsg.userReactions || {},
+      reactionUsers: updatedMsg.reactionUsers || {}
+    };
+    try {
+      await setDoc(doc(db, 'privateChats', convId, 'messages', messageId), reactionPayload, { merge: true });
+    } catch (e) {
+      console.warn('Firestore DM reaction update notice:', e);
+    }
+    updateDoc(doc(db, 'direct_chats', convId, 'messages', messageId), reactionPayload).catch(() => {});
+  }
+
+  return updatedMsg;
 }
 
 // ==========================================
