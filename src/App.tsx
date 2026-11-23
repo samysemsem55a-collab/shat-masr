@@ -87,7 +87,9 @@ import {
   subscribeToRegisteredUsersCount,
   createDailyBackupSnapshot,
   grantUserXp,
+  sendFirestoreCallSignal,
   subscribeToFirestoreCallSignals,
+  deleteFirestoreCallSignal,
   AppUpdateNotice
 } from './services/firebase';
 import { isUserTrulyOnline, getServerNowMs } from './utils/presenceStatus';
@@ -999,6 +1001,7 @@ export default function App() {
 
     // Listen to incoming WebRTC calls targeting current user (WebSocket + Firestore/RTDB relay)
     const processedCallSignals = new Set<string>();
+    const processedOfferCallIds = new Set<string>();
     const handleIncomingCallSignal = (signal: any) => {
       const me = currentUserRef.current;
       if (!signal) return;
@@ -1015,7 +1018,12 @@ export default function App() {
       if (signal.type === 'call_end' || signal.type === 'call_reject') {
         setIncomingCall((prev) => {
           if (!prev) return null;
-          if (!signal.fromUserId || prev.peer.id === signal.fromUserId || signal.targetUserId === me.id) {
+          const sameCall = !signal.callId || !prev.signal?.callId || signal.callId === prev.signal.callId;
+          const samePeer = !signal.fromUserId || prev.peer.id === signal.fromUserId;
+          if (sameCall && samePeer) {
+            if (signal.signalId) {
+              deleteFirestoreCallSignal(me.id, signal.signalId);
+            }
             return null;
           }
           return prev;
@@ -1026,35 +1034,68 @@ export default function App() {
       if (signal.type !== 'call_offer') return;
       if (!signal.fromUserId || signal.fromUserId === me.id) return;
 
-      sounds.playNotificationChime();
-      setIncomingCall({
-        peer: {
-          id: signal.fromUserId,
-          name: signal.callerName || 'عضو متصل',
-          username: (signal.callerName || 'member').toLowerCase(),
-          avatar: signal.callerAvatar || '',
-          bio: 'عضو في شات مصر',
-          country: 'مصر',
-          countryFlag: signal.callerFlag || '🇪🇬',
-          role: 'member',
-          coins: 0,
-          earningsEgp: 0,
-          earningsUsd: 0,
-          vipBadge: '',
-          frameStyle: 'border-slate-300',
-          profileWallpaper: '',
-          fontPreference: 'cairo',
-          isOnline: true,
-          status: 'online',
-          joinedAt: new Date().toISOString(),
-          gender: 'male',
-          level: 1,
-          likesReceived: 0,
-          giftsReceivedCount: 0,
-          badges: [],
-        },
-        callType: signal.callType === 'video' ? 'video' : 'audio',
-        signal,
+      // Consume the offer signal from Firestore so refreshes don't replay stale calls
+      if (signal.signalId) {
+        deleteFirestoreCallSignal(me.id, signal.signalId);
+      }
+
+      // Ignore stale call offers older than 40s
+      if (typeof signal.createdAtMs === 'number' && Date.now() - signal.createdAtMs > 40000) {
+        return;
+      }
+
+      const incomingCallId = signal.callId ? String(signal.callId) : `${signal.fromUserId}_${signal.signalId || Date.now()}`;
+      if (processedOfferCallIds.has(incomingCallId)) return;
+      processedOfferCallIds.add(incomingCallId);
+      if (processedOfferCallIds.size > 100) {
+        const oldestOffer = processedOfferCallIds.values().next().value;
+        if (oldestOffer) processedOfferCallIds.delete(oldestOffer);
+      }
+
+      setIncomingCall((prev) => {
+        if (prev && prev.peer.id !== signal.fromUserId) {
+          // Already handling another caller's call: reply busy
+          const busyPayload = {
+            type: 'call_busy',
+            fromUserId: me.id,
+            targetUserId: signal.fromUserId,
+            callId: signal.callId,
+            signalId: `sig_busy_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          };
+          realtimeSocket.sendCallSignal(signal.fromUserId, busyPayload);
+          sendFirestoreCallSignal(signal.fromUserId, busyPayload).catch(() => {});
+          return prev;
+        }
+        sounds.playNotificationChime();
+        return {
+          peer: {
+            id: signal.fromUserId,
+            name: signal.callerName || 'عضو متصل',
+            username: (signal.callerName || 'member').toLowerCase(),
+            avatar: signal.callerAvatar || '',
+            bio: 'عضو في شات مصر',
+            country: 'مصر',
+            countryFlag: signal.callerFlag || '🇪🇬',
+            role: 'member',
+            coins: 0,
+            earningsEgp: 0,
+            earningsUsd: 0,
+            vipBadge: '',
+            frameStyle: 'border-slate-300',
+            profileWallpaper: '',
+            fontPreference: 'cairo',
+            isOnline: true,
+            status: 'online',
+            joinedAt: new Date().toISOString(),
+            gender: 'male',
+            level: 1,
+            likesReceived: 0,
+            giftsReceivedCount: 0,
+            badges: [],
+          },
+          callType: signal.callType === 'video' ? 'video' : 'audio',
+          signal,
+        };
       });
     };
 

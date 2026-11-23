@@ -258,6 +258,7 @@ export interface Message {
   timestamp: number;
   tempId?: string;
   clientId?: string;
+  uploadProgress?: number;
   status: 'sent' | 'delivered' | 'seen' | 'read' | 'pending_offline' | 'failed';
   isHighlighted?: boolean;
   highlightColor?: 'sky' | 'amber' | 'rose' | 'emerald';

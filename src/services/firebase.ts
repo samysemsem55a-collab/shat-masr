@@ -5588,6 +5588,15 @@ async function compressImageToDataUrl(file: File, maxDim = 900, quality = 0.72):
   });
 }
 
+function fileBlobToDataUrl(file: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(new Error('تعذر قراءة الملف'));
+    reader.readAsDataURL(file);
+  });
+}
+
 export async function uploadPrivateChatMedia(
   file: File,
   convId: string,
@@ -5597,42 +5606,60 @@ export async function uploadPrivateChatMedia(
   const mediaType: 'image' | 'video' = isVideo ? 'video' : 'image';
   const safeName = `${Date.now()}_${file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
 
-  // Try Firebase Storage first with a clean 6s timeout so CORS errors fall back seamlessly
+  // Try Firebase Storage first with cache metadata & resumable progress
   if (storage) {
     try {
       const fileRef = storageRef(storage, `private_media/${convId}/${safeName}`);
-      const url = await Promise.race([
-        new Promise<string>((resolve, reject) => {
-          const task = uploadBytesResumable(fileRef, file);
-          task.on(
-            'state_changed',
-            (snapshot) => {
-              if (onProgress && snapshot.totalBytes > 0) {
-                onProgress(Math.round((snapshot.bytesTransferred / snapshot.totalBytes) * 100));
-              }
-            },
-            (err) => reject(err),
-            async () => {
-              try {
-                const dl = await getDownloadURL(task.snapshot.ref);
-                resolve(dl);
-              } catch (e) {
-                reject(e);
-              }
+      const url = await new Promise<string>((resolve, reject) => {
+        const task = uploadBytesResumable(fileRef, file, {
+          contentType: file.type || (isVideo ? 'video/mp4' : 'image/jpeg'),
+          cacheControl: 'public, max-age=31536000',
+        });
+        let settled = false;
+        const timeoutId = setTimeout(() => {
+          if (settled) return;
+          settled = true;
+          try {
+            task.cancel();
+          } catch {}
+          reject(new Error('Storage upload timeout'));
+        }, isVideo ? 20000 : 8000);
+        task.on(
+          'state_changed',
+          (snapshot) => {
+            if (onProgress && snapshot.totalBytes > 0) {
+              onProgress(Math.round((snapshot.bytesTransferred / snapshot.totalBytes) * 100));
             }
-          );
-        }),
-        new Promise<string>((_, reject) => setTimeout(() => reject(new Error('Storage upload timeout')), 6500))
-      ]);
+          },
+          (err) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timeoutId);
+            reject(err);
+          },
+          async () => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timeoutId);
+            try {
+              const dl = await getDownloadURL(task.snapshot.ref);
+              resolve(dl);
+            } catch (e) {
+              reject(e);
+            }
+          }
+        );
+      });
       return { url, mediaType };
     } catch (storageErr) {
       console.warn('Firebase Storage fallback notice:', storageErr);
     }
   }
 
-  // Seamless fallback for images when Storage CORS/rules block: compress to lightweight Data URL
+  // Fast fallback for images when Storage CORS/rules block: reuse already-compressed Blob directly
   if (!isVideo) {
-    const compressedUrl = await compressImageToDataUrl(file);
+    const compressedUrl =
+      file.size <= 350 * 1024 ? await fileBlobToDataUrl(file) : await compressImageToDataUrl(file);
     if (onProgress) onProgress(100);
     return { url: compressedUrl, mediaType: 'image' };
   }
@@ -7247,12 +7274,24 @@ export async function sendFirestoreCallSignal(targetUserId: string, signal: any)
   if (db) {
     try {
       await setDoc(doc(db, 'users', targetUserId, 'call_signals', signalId), payload);
-    } catch {}
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, `users/${targetUserId}/call_signals/${signalId}`);
+    }
   }
   if (rtdb) {
     try {
       await set(ref(rtdb, `call_signals/${targetUserId}/${signalId}`), payload);
     } catch {}
+  }
+}
+
+export async function deleteFirestoreCallSignal(userId: string, signalId: string): Promise<void> {
+  if (!userId || !signalId) return;
+  if (db) {
+    deleteDoc(doc(db, 'users', userId, 'call_signals', signalId)).catch(() => {});
+  }
+  if (rtdb) {
+    remove(ref(rtdb, `call_signals/${userId}/${signalId}`)).catch(() => {});
   }
 }
 
@@ -7270,7 +7309,10 @@ export function subscribeToFirestoreCallSignals(
     if (!id || seenIds.has(id)) return;
     const now = Date.now();
     const createdAt = typeof raw.createdAt === 'number' ? raw.createdAt : 0;
-    if (typeof raw.expiresAt === 'number' && raw.expiresAt < now) return;
+    if (typeof raw.expiresAt === 'number' && raw.expiresAt < now) {
+      deleteFirestoreCallSignal(userId, id);
+      return;
+    }
     if (createdAt > 0 && createdAt < mountTs) return;
     seenIds.add(id);
     if (seenIds.size > 300) {
@@ -7293,7 +7335,9 @@ export function subscribeToFirestoreCallSignals(
             }
           });
         },
-        () => {}
+        (err) => {
+          handleFirestoreError(err, OperationType.LIST, `users/${userId}/call_signals`);
+        }
       );
     } catch {}
   }
@@ -7317,6 +7361,5 @@ export function subscribeToFirestoreCallSignals(
     if (unsubRtdb) unsubRtdb();
   };
 }
-
 
 
