@@ -109,7 +109,7 @@ const ForumCommentsModal: React.FC<{
     if (!commentText.trim() || isSending) return;
     setIsSending(true);
     try {
-      await addForumComment(post.id, currentUser, commentText);
+      await addForumComment(post.id, currentUser, commentText, post.authorId);
       setCommentText('');
       contributeToSharedRoomMission('forum', currentUser.id, 1);
     } finally {
@@ -1022,7 +1022,7 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
 
   const handleToggleLike = async (post: ForumPost) => {
     const liked = (post.likedBy || []).includes(currentUser.id);
-    await toggleForumPostLike(post.id, currentUser.id, liked, currentUser);
+    await toggleForumPostLike(post.id, currentUser.id, liked, currentUser, post.authorId);
     if (!liked) {
       contributeToSharedRoomMission('likes', currentUser.id, 1);
     }

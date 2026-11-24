@@ -4904,9 +4904,14 @@ export async function markStoryViewed(storyId: string, viewer: User): Promise<vo
   }
 }
 
-export async function toggleStoryLike(storyId: string, user: User): Promise<void> {
+export async function toggleStoryLike(
+  storyId: string,
+  user: User,
+  storyOwnerId?: string
+): Promise<void> {
   if (!storyId || !user?.id) return;
   let currentlyLiked = false;
+  let resolvedOwnerId = storyOwnerId || '';
 
   try {
     const raw = localStorage.getItem(LOCAL_STORIES_KEY);
@@ -4914,6 +4919,7 @@ export async function toggleStoryLike(storyId: string, user: User): Promise<void
       const list: StoryItem[] = JSON.parse(raw);
       const updated = list.map((s) => {
         if (s.id !== storyId) return s;
+        if (!resolvedOwnerId && s.userId) resolvedOwnerId = s.userId;
         const likedSet = new Set(s.likedBy || []);
         currentlyLiked = likedSet.has(user.id);
         if (currentlyLiked) {
@@ -4929,6 +4935,7 @@ export async function toggleStoryLike(storyId: string, user: User): Promise<void
     }
   } catch {}
 
+  let addedLike = !currentlyLiked;
   if (db) {
     try {
       const storyRef = doc(db, 'stories', storyId);
@@ -4936,8 +4943,10 @@ export async function toggleStoryLike(storyId: string, user: User): Promise<void
         const snap = await tx.get(storyRef);
         if (!snap.exists()) return;
         const data = snap.data() as any;
+        if (data.userId) resolvedOwnerId = String(data.userId);
         const prevLiked: string[] = Array.isArray(data.likedBy) ? data.likedBy : [];
         const hasLiked = prevLiked.includes(user.id);
+        addedLike = !hasLiked;
         const nextLiked = hasLiked
           ? prevLiked.filter((id) => id !== user.id)
           : [...prevLiked, user.id];
@@ -4947,6 +4956,69 @@ export async function toggleStoryLike(storyId: string, user: User): Promise<void
         });
       });
     } catch {}
+  }
+
+  if (addedLike && resolvedOwnerId && resolvedOwnerId !== user.id) {
+    sendUserRealtimeNotification({
+      targetUserId: resolvedOwnerId,
+      actorId: user.id,
+      actorName: user.name || 'عضو شات مصر',
+      actorAvatar: user.avatar || '',
+      kind: 'story_like',
+      message: `أعجب ${user.name || 'عضو شات مصر'} بقصتك`,
+      refId: storyId
+    }).catch(() => {});
+  }
+}
+
+export async function addStoryComment(
+  storyId: string,
+  user: User,
+  text: string,
+  storyOwnerId?: string
+): Promise<void> {
+  const cleanText = (text || '').trim();
+  if (!storyId || !user?.id || !cleanText) return;
+  let resolvedOwnerId = storyOwnerId || '';
+  const id = `scmt_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+  const comment = {
+    id,
+    storyId,
+    authorId: user.id,
+    authorName: user.name || 'عضو شات مصر',
+    authorAvatar: user.avatar || '',
+    text: cleanText,
+    createdAt: Date.now()
+  };
+
+  try {
+    const raw = localStorage.getItem(LOCAL_STORIES_KEY);
+    if (raw) {
+      const list: StoryItem[] = JSON.parse(raw);
+      const found = list.find((s) => s.id === storyId);
+      if (found?.userId && !resolvedOwnerId) resolvedOwnerId = found.userId;
+    }
+  } catch {}
+
+  if (db) {
+    try {
+      await setDoc(doc(db, 'stories', storyId, 'comments', id), comment);
+      await updateDoc(doc(db, 'stories', storyId), {
+        commentsCount: increment(1)
+      });
+    } catch {}
+  }
+
+  if (resolvedOwnerId && resolvedOwnerId !== user.id) {
+    sendUserRealtimeNotification({
+      targetUserId: resolvedOwnerId,
+      actorId: user.id,
+      actorName: user.name || 'عضو شات مصر',
+      actorAvatar: user.avatar || '',
+      kind: 'story_comment',
+      message: `علّق ${user.name || 'عضو شات مصر'} على قصتك`,
+      refId: storyId
+    }).catch(() => {});
   }
 }
 
@@ -5747,8 +5819,10 @@ export async function toggleForumPostLike(
   postId: string,
   userId: string,
   currentlyLiked: boolean,
-  likerUser?: User
+  likerUser?: User,
+  postAuthorId?: string
 ): Promise<void> {
+  let resolvedAuthorId = postAuthorId || '';
   const likerSummary: ForumLikeUserSummary | null = likerUser
     ? {
         id: likerUser.id,
@@ -5767,6 +5841,7 @@ export async function toggleForumPostLike(
       const list: ForumPost[] = JSON.parse(raw);
       const updated = list.map((p) => {
         if (p.id !== postId) return p;
+        if (!resolvedAuthorId && p.authorId) resolvedAuthorId = p.authorId;
         const setIds = new Set(p.likedBy || []);
         const nextLikedUsers = { ...(p.likedUsers || {}) };
         if (currentlyLiked) {
@@ -5801,6 +5876,19 @@ export async function toggleForumPostLike(
     } catch (err) {
       handleFirestoreError(err, OperationType.UPDATE, `forum_posts/${postId}`);
     }
+  }
+
+  if (!currentlyLiked && resolvedAuthorId && resolvedAuthorId !== userId) {
+    const actorName = likerUser?.name || 'عضو شات مصر';
+    sendUserRealtimeNotification({
+      targetUserId: resolvedAuthorId,
+      actorId: userId,
+      actorName,
+      actorAvatar: likerUser?.avatar || '',
+      kind: 'forum_like',
+      message: `أعجب ${actorName} بمنشورك`,
+      refId: postId
+    }).catch(() => {});
   }
 }
 
@@ -5838,7 +5926,12 @@ export function subscribeToForumComments(
   }
 }
 
-export async function addForumComment(postId: string, user: User, text: string): Promise<ForumComment> {
+export async function addForumComment(
+  postId: string,
+  user: User,
+  text: string,
+  postAuthorId?: string
+): Promise<ForumComment> {
   const id = `cmt_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
   const comment: ForumComment = {
     id,
@@ -5849,6 +5942,18 @@ export async function addForumComment(postId: string, user: User, text: string):
     text: text.trim(),
     createdAt: Date.now()
   };
+
+  let resolvedAuthorId = postAuthorId || '';
+  if (!resolvedAuthorId) {
+    try {
+      const rawPosts = localStorage.getItem(LOCAL_FORUM_KEY);
+      if (rawPosts) {
+        const list: ForumPost[] = JSON.parse(rawPosts);
+        const found = list.find((p) => p.id === postId);
+        if (found?.authorId) resolvedAuthorId = found.authorId;
+      }
+    } catch {}
+  }
 
   const localKey = `shat_masr_forum_comments_${postId}`;
   try {
@@ -5868,6 +5973,19 @@ export async function addForumComment(postId: string, user: User, text: string):
       handleFirestoreError(err, OperationType.CREATE, `forum_posts/${postId}/comments/${id}`);
     }
   }
+
+  if (resolvedAuthorId && resolvedAuthorId !== user.id) {
+    sendUserRealtimeNotification({
+      targetUserId: resolvedAuthorId,
+      actorId: user.id,
+      actorName: user.name || 'عضو شات مصر',
+      actorAvatar: user.avatar || '',
+      kind: 'forum_comment',
+      message: `علّق ${user.name || 'عضو شات مصر'} على منشورك`,
+      refId: postId
+    }).catch(() => {});
+  }
+
   return comment;
 }
 
@@ -7143,5 +7261,130 @@ export function subscribeToFirestoreCallSignals(
     if (unsubFirestore) unsubFirestore();
   };
 }
+
+// ==========================================
+// 21. REAL-TIME SOCIAL NOTIFICATIONS (`users/{userId}/notifications`)
+// ==========================================
+export interface RealtimeUserNotification {
+  id: string;
+  targetUserId: string;
+  actorId: string;
+  actorName: string;
+  actorAvatar?: string;
+  kind: 'forum_like' | 'forum_comment' | 'story_like' | 'story_comment' | 'info';
+  message: string;
+  refId?: string;
+  isRead?: boolean;
+  createdAt: number;
+}
+
+export async function sendUserRealtimeNotification(params: {
+  targetUserId: string;
+  actorId: string;
+  actorName: string;
+  actorAvatar?: string;
+  kind: RealtimeUserNotification['kind'];
+  message: string;
+  refId?: string;
+}): Promise<void> {
+  const { targetUserId, actorId, actorName, actorAvatar = '', kind, message, refId = '' } = params;
+  if (!targetUserId || !actorId || targetUserId === actorId || !message.trim()) return;
+  const id = `notif_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+  const nowMs = getServerNowMs();
+
+  const item: RealtimeUserNotification = {
+    id,
+    targetUserId,
+    actorId,
+    actorName,
+    actorAvatar,
+    kind,
+    message: message.trim(),
+    refId,
+    isRead: false,
+    createdAt: nowMs
+  };
+
+  liveChatBus?.postMessage({ type: 'USER_REALTIME_NOTIFICATION', notification: item });
+
+  if (db) {
+    try {
+      await setDoc(doc(db, 'users', targetUserId, 'notifications', id), {
+        ...item,
+        createdAt: serverTimestamp(),
+        createdAtMs: nowMs
+      });
+    } catch (err) {
+      handleFirestoreError(err, OperationType.CREATE, `users/${targetUserId}/notifications/${id}`);
+    }
+  }
+}
+
+export function subscribeToUserNotifications(
+  userId: string,
+  onUpdate: (notifications: RealtimeUserNotification[]) => void
+): () => void {
+  if (!userId) return () => {};
+  const listById = new Map<string, RealtimeUserNotification>();
+
+  const emitSorted = () => {
+    const sorted = Array.from(listById.values())
+      .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
+      .slice(0, 20);
+    onUpdate(sorted);
+  };
+
+  let unsubFirestore: (() => void) | null = null;
+  if (db) {
+    try {
+      const q = query(
+        collection(db, 'users', userId, 'notifications'),
+        orderBy('createdAt', 'desc'),
+        limit(20)
+      );
+      unsubFirestore = onSnapshot(
+        q,
+        (snap) => {
+          listById.clear();
+          snap.docs.forEach((d) => {
+            const data = d.data() as any;
+            const resolvedTs = resolveTimestampMs(data.createdAt) || Number(data.createdAtMs) || Date.now();
+            listById.set(data.id || d.id, {
+              id: data.id || d.id,
+              targetUserId: data.targetUserId || userId,
+              actorId: data.actorId || '',
+              actorName: data.actorName || 'عضو شات مصر',
+              actorAvatar: data.actorAvatar || '',
+              kind: data.kind || 'info',
+              message: data.message || '',
+              refId: data.refId || '',
+              isRead: Boolean(data.isRead),
+              createdAt: resolvedTs
+            });
+          });
+          emitSorted();
+        },
+        (err) => {
+          handleFirestoreError(err, OperationType.LIST, `users/${userId}/notifications`);
+        }
+      );
+    } catch {}
+  }
+
+  const handleBus = (e: MessageEvent) => {
+    const notif = e.data?.notification as RealtimeUserNotification | undefined;
+    if (e.data?.type === 'USER_REALTIME_NOTIFICATION' && notif && notif.targetUserId === userId) {
+      listById.set(notif.id, notif);
+      emitSorted();
+    }
+  };
+  liveChatBus?.addEventListener('message', handleBus);
+
+  return () => {
+    if (unsubFirestore) unsubFirestore();
+    liveChatBus?.removeEventListener('message', handleBus);
+  };
+}
+
 
 

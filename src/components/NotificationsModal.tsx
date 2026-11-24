@@ -11,19 +11,32 @@ import {
   TrendingUp
 } from 'lucide-react';
 
+import { RealtimeUserNotification } from '../services/firebase';
+
 interface NotificationsModalProps {
   isOpen: boolean;
   onClose: () => void;
   onOpenWallet: () => void;
+  realtimeNotifications?: RealtimeUserNotification[];
+}
+
+function formatNotifTime(ts: number): string {
+  const diffSec = Math.max(1, Math.floor((Date.now() - ts) / 1000));
+  if (diffSec < 60) return 'الآن';
+  const diffMin = Math.floor(diffSec / 60);
+  if (diffMin < 60) return `منذ ${diffMin} دقيقة`;
+  const diffHr = Math.floor(diffMin / 60);
+  if (diffHr < 24) return `منذ ${diffHr} ساعة`;
+  return `منذ ${Math.floor(diffHr / 24)} يوم`;
 }
 
 export const NotificationsModal: React.FC<NotificationsModalProps> = ({
   isOpen,
   onClose,
   onOpenWallet,
+  realtimeNotifications = [],
 }) => {
-
-  const notifications = [
+  const staticFallbackNotifications = [
     {
       id: 'n1',
       icon: '🎁',
@@ -52,6 +65,23 @@ export const NotificationsModal: React.FC<NotificationsModalProps> = ({
       isNew: false
     }
   ];
+
+  const liveMapped = realtimeNotifications.map((n) => ({
+    id: n.id,
+    icon:
+      n.kind === 'forum_like' || n.kind === 'story_like'
+        ? '❤️'
+        : n.kind === 'forum_comment' || n.kind === 'story_comment'
+        ? '💬'
+        : '🔔',
+    title: n.actorName || 'إشعار فوري',
+    desc: n.message,
+    time: formatNotifTime(n.createdAt || Date.now()),
+    action: null as string | null,
+    isNew: Date.now() - (n.createdAt || 0) < 10 * 60 * 1000,
+  }));
+
+  const notifications = liveMapped.length > 0 ? liveMapped : staticFallbackNotifications;
 
   return (
     <AnimatePresence>

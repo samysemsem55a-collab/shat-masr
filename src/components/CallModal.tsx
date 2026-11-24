@@ -43,8 +43,9 @@ const ICE_SERVERS: RTCConfiguration = {
     { urls: 'stun:stun2.l.google.com:19302' },
     { urls: 'stun:stun3.l.google.com:19302' },
     { urls: 'stun:stun4.l.google.com:19302' },
+    { urls: 'stun:stun.cloudflare.com:3478' },
   ],
-  iceCandidatePoolSize: 6,
+  iceCandidatePoolSize: 8,
 };
 
 export const CallModal: React.FC<CallModalProps> = ({
@@ -64,7 +65,9 @@ export const CallModal: React.FC<CallModalProps> = ({
   const [isVideoEnabled, setIsVideoEnabled] = useState<boolean>(callType === 'video');
   const [isSpeakerOn, setIsSpeakerOn] = useState<boolean>(true);
   const [micWarning, setMicWarning] = useState<string | null>(null);
+  const [autoplayBlocked, setAutoplayBlocked] = useState<boolean>(false);
   const [hasRemoteStream, setHasRemoteStream] = useState<boolean>(false);
+  const [hasRemoteVideo, setHasRemoteVideo] = useState<boolean>(false);
   const [endReason, setEndReason] = useState<string | null>(null);
 
   const localStreamRef = useRef<MediaStream | null>(null);
@@ -106,7 +109,14 @@ export const CallModal: React.FC<CallModalProps> = ({
       remoteAudioRef.current.muted = !isSpeakerOnRef.current;
       remoteAudioRef.current.volume = 1;
       if (remoteAudioRef.current.srcObject) {
-        remoteAudioRef.current.play().catch(() => {});
+        remoteAudioRef.current
+          .play()
+          .then(() => setAutoplayBlocked(false))
+          .catch((err) => {
+            if (err?.name === 'NotAllowedError') {
+              setAutoplayBlocked(true);
+            }
+          });
       }
     }
     if (remoteVideoRef.current && remoteVideoRef.current.srcObject) {
@@ -159,6 +169,8 @@ export const CallModal: React.FC<CallModalProps> = ({
     pendingIceRef.current = [];
     hasRemoteDescRef.current = false;
     setHasRemoteStream(false);
+    setHasRemoteVideo(false);
+    setAutoplayBlocked(false);
   }, []);
 
   const emitCallSignal = useCallback(
@@ -175,9 +187,9 @@ export const CallModal: React.FC<CallModalProps> = ({
     [peerUser.id]
   );
 
-  const attachStreamTracksToPeer = useCallback((pc: RTCPeerConnection, stream: MediaStream) => {
+  const attachStreamTracksToPeer = useCallback(async (pc: RTCPeerConnection, stream: MediaStream) => {
     const transceivers = pc.getTransceivers();
-    stream.getTracks().forEach((track) => {
+    for (const track of stream.getTracks()) {
       const existingEmpty = transceivers.find(
         (t) =>
           t.receiver.track?.kind === track.kind &&
@@ -185,18 +197,23 @@ export const CallModal: React.FC<CallModalProps> = ({
           t.currentDirection !== 'stopped'
       );
       if (existingEmpty) {
-        existingEmpty.sender.replaceTrack(track).catch(() => {
-          try {
-            pc.addTrack(track, stream);
-          } catch {}
-        });
         try {
           existingEmpty.direction = 'sendrecv';
         } catch {}
-      } else {
-        pc.addTrack(track, stream);
+        try {
+          await existingEmpty.sender.replaceTrack(track);
+          try {
+            (existingEmpty.sender as any).setStreams?.(stream);
+          } catch {}
+          continue;
+        } catch {
+          // Fall back to addTrack below
+        }
       }
-    });
+      try {
+        pc.addTrack(track, stream);
+      } catch {}
+    }
   }, []);
 
   const createPeerConnection = useCallback(
@@ -249,6 +266,9 @@ export const CallModal: React.FC<CallModalProps> = ({
         }
         remoteStreamRef.current = remoteStream;
         setHasRemoteStream(true);
+        if (remoteStream.getVideoTracks().some((vt) => vt.readyState === 'live')) {
+          setHasRemoteVideo(true);
+        }
 
         const bindAndPlayRemote = () => {
           if (remoteAudioRef.current) {
@@ -257,7 +277,14 @@ export const CallModal: React.FC<CallModalProps> = ({
             }
             remoteAudioRef.current.muted = !isSpeakerOnRef.current;
             remoteAudioRef.current.volume = 1;
-            remoteAudioRef.current.play().catch(() => {});
+            remoteAudioRef.current
+              .play()
+              .then(() => setAutoplayBlocked(false))
+              .catch((err) => {
+                if (err?.name === 'NotAllowedError') {
+                  setAutoplayBlocked(true);
+                }
+              });
           }
           if (remoteVideoRef.current) {
             if (remoteVideoRef.current.srcObject !== remoteStream) {
@@ -273,8 +300,18 @@ export const CallModal: React.FC<CallModalProps> = ({
           event.track.onunmute = () => {
             if (isUnmountedOrClosedRef.current || hasEndedRef.current) return;
             setHasRemoteStream(true);
+            if (event.track.kind === 'video') {
+              setHasRemoteVideo(true);
+            }
             bindAndPlayRemote();
             setCallState((prev) => (prev === 'connecting' || prev === 'ringing' ? 'connected' : prev));
+          };
+          event.track.onended = () => {
+            if (event.track.kind === 'video' && remoteStreamRef.current) {
+              setHasRemoteVideo(
+                remoteStreamRef.current.getVideoTracks().some((vt) => vt.readyState === 'live')
+              );
+            }
           };
         }
       };
@@ -289,14 +326,23 @@ export const CallModal: React.FC<CallModalProps> = ({
           }
           setCallState('connected');
           unlockAndPlayRemoteMedia();
-        } else if (conn === 'disconnected' || ice === 'disconnected') {
-          if (!isAnswerer) {
-            try {
-              pc.restartIce?.();
-            } catch {}
+        } else if ((conn === 'failed' || ice === 'failed') && !hasEndedRef.current) {
+          if (!isAnswerer && pc.signalingState === 'stable') {
+            pc.createOffer({ iceRestart: true })
+              .then(async (reOffer) => {
+                await pc.setLocalDescription(reOffer);
+                emitCallSignal({
+                  type: 'call_renegotiate',
+                  fromUserId: currentUser.id,
+                  sdp: { type: reOffer.type, sdp: reOffer.sdp },
+                });
+              })
+              .catch(() => {
+                setMicWarning('تعذر استقرار اتصال الشبكة المباشر — يرجى التحقق من الإنترنت.');
+              });
+          } else {
+            setMicWarning('تعذر استقرار اتصال الشبكة المباشر — يرجى التحقق من الإنترنت.');
           }
-        } else if (conn === 'failed' || ice === 'failed') {
-          setMicWarning('تعذر استقرار اتصال الشبكة المباشر — يرجى التحقق من الإنترنت.');
         }
       };
 
@@ -407,9 +453,32 @@ export const CallModal: React.FC<CallModalProps> = ({
       }
       remoteAudioRef.current.muted = !isSpeakerOnRef.current;
       remoteAudioRef.current.volume = 1;
-      remoteAudioRef.current.play().catch(() => {});
+      remoteAudioRef.current
+        .play()
+        .then(() => setAutoplayBlocked(false))
+        .catch((err) => {
+          if (err?.name === 'NotAllowedError') {
+            setAutoplayBlocked(true);
+          }
+        });
     }
-  }, [isVideoEnabled, hasRemoteStream, callState]);
+  }, [isVideoEnabled, hasRemoteStream, hasRemoteVideo, callState]);
+
+  // Unlock autoplay on any user tap/click/keydown while call modal is open
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleUserGesture = () => {
+      unlockAndPlayRemoteMedia();
+    };
+    window.addEventListener('pointerdown', handleUserGesture, true);
+    window.addEventListener('touchstart', handleUserGesture, true);
+    window.addEventListener('keydown', handleUserGesture, true);
+    return () => {
+      window.removeEventListener('pointerdown', handleUserGesture, true);
+      window.removeEventListener('touchstart', handleUserGesture, true);
+      window.removeEventListener('keydown', handleUserGesture, true);
+    };
+  }, [isOpen, unlockAndPlayRemoteMedia]);
 
   // Ringtone management for incoming calls
   useEffect(() => {
@@ -439,6 +508,8 @@ export const CallModal: React.FC<CallModalProps> = ({
     setEndReason(null);
     setIsVideoEnabled(callType === 'video');
     setHasRemoteStream(false);
+    setHasRemoteVideo(false);
+    setAutoplayBlocked(false);
     setCallState(incomingMode ? 'incoming' : 'ringing');
     const initialIncoming = incomingSignalRef.current;
     pendingIceRef.current = Array.isArray(initialIncoming?._earlyIce) ? [...initialIncoming._earlyIce] : [];
@@ -493,6 +564,60 @@ export const CallModal: React.FC<CallModalProps> = ({
         return;
       }
 
+      if (signal.type === 'call_offer' && signal.sdp && incomingMode && pcRef.current && callStateRef.current !== 'incoming') {
+        try {
+          if (pcRef.current.signalingState === 'stable') {
+            await pcRef.current.setRemoteDescription(new RTCSessionDescription(signal.sdp));
+            hasRemoteDescRef.current = true;
+            if (localStreamRef.current) {
+              await attachStreamTracksToPeer(pcRef.current, localStreamRef.current);
+            }
+            for (const candidate of pendingIceRef.current) {
+              await pcRef.current.addIceCandidate(new RTCIceCandidate(candidate)).catch(() => {});
+            }
+            pendingIceRef.current = [];
+            const answer = await pcRef.current.createAnswer();
+            await pcRef.current.setLocalDescription(answer);
+            emitCallSignal({
+              type: 'call_answer',
+              fromUserId: currentUser.id,
+              sdp: { type: answer.type, sdp: answer.sdp },
+            });
+          }
+        } catch {}
+        return;
+      }
+
+      if (signal.type === 'call_renegotiate' && signal.sdp && pcRef.current) {
+        try {
+          await pcRef.current.setRemoteDescription(new RTCSessionDescription(signal.sdp));
+          hasRemoteDescRef.current = true;
+          if (localStreamRef.current) {
+            await attachStreamTracksToPeer(pcRef.current, localStreamRef.current);
+          }
+          const answer = await pcRef.current.createAnswer();
+          await pcRef.current.setLocalDescription(answer);
+          emitCallSignal({
+            type: 'call_renegotiate_answer',
+            fromUserId: currentUser.id,
+            sdp: { type: answer.type, sdp: answer.sdp },
+          });
+          unlockAndPlayRemoteMedia();
+        } catch {}
+        return;
+      }
+
+      if (signal.type === 'call_renegotiate_answer' && signal.sdp && pcRef.current) {
+        try {
+          if (pcRef.current.signalingState === 'have-local-offer') {
+            await pcRef.current.setRemoteDescription(new RTCSessionDescription(signal.sdp));
+            hasRemoteDescRef.current = true;
+            unlockAndPlayRemoteMedia();
+          }
+        } catch {}
+        return;
+      }
+
       if (signal.type === 'call_answer' && signal.sdp && pcRef.current) {
         try {
           if (pcRef.current.signalingState === 'have-local-offer') {
@@ -521,6 +646,22 @@ export const CallModal: React.FC<CallModalProps> = ({
         }
       }
     };
+
+    const handleEarlyIceEvent = (e: Event) => {
+      const detail = (e as CustomEvent<{ callId?: string; candidate?: any; signalId?: string }>).detail;
+      if (!detail?.candidate || !detail?.callId || detail.callId !== callIdRef.current) return;
+      if (detail.signalId) {
+        if (processedSignals.has(detail.signalId)) return;
+        processedSignals.add(detail.signalId);
+        deleteFirestoreCallSignal(currentUser.id, detail.signalId);
+      }
+      if (pcRef.current && (hasRemoteDescRef.current || pcRef.current.remoteDescription)) {
+        pcRef.current.addIceCandidate(new RTCIceCandidate(detail.candidate)).catch(() => {});
+      } else {
+        pendingIceRef.current.push(detail.candidate);
+      }
+    };
+    window.addEventListener('shatmasr:call_early_ice', handleEarlyIceEvent);
 
     const unsubSignals = realtimeSocket.subscribeToCallSignals(handleIncomingSignal);
     const unsubFirestoreSignals = subscribeToFirestoreCallSignals(currentUser.id, handleIncomingSignal);
@@ -579,6 +720,7 @@ export const CallModal: React.FC<CallModalProps> = ({
       isUnmountedOrClosedRef.current = true;
       sounds.stopCallRing();
       if (ringTimer) clearTimeout(ringTimer);
+      window.removeEventListener('shatmasr:call_early_ice', handleEarlyIceEvent);
       if (!hasEndedRef.current && callStateRef.current !== 'ended') {
         hasEndedRef.current = true;
         emitCallSignal({
@@ -649,6 +791,75 @@ export const CallModal: React.FC<CallModalProps> = ({
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
+  const handleToggleMute = async () => {
+    const nextMuted = !isMuted;
+    setIsMuted(nextMuted);
+    if (!nextMuted && navigator.mediaDevices?.getUserMedia) {
+      const existingAudio = localStreamRef.current?.getAudioTracks() || [];
+      if (existingAudio.length === 0) {
+        try {
+          const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          const targetStream = localStreamRef.current || new MediaStream();
+          audioStream.getAudioTracks().forEach((t) => targetStream.addTrack(t));
+          localStreamRef.current = targetStream;
+          if (pcRef.current) {
+            await attachStreamTracksToPeer(pcRef.current, targetStream);
+            if (pcRef.current.signalingState === 'stable') {
+              const offer = await pcRef.current.createOffer();
+              await pcRef.current.setLocalDescription(offer);
+              emitCallSignal({
+                type: 'call_renegotiate',
+                fromUserId: currentUser.id,
+                sdp: { type: offer.type, sdp: offer.sdp },
+              });
+            }
+          }
+          setMicWarning(null);
+        } catch {
+          setMicWarning('تم رفض صلاحية المايكروفون — يرجى السماح من إعدادات المتصفح.');
+        }
+      }
+    }
+  };
+
+  const handleToggleVideo = async () => {
+    const nextVideo = !isVideoEnabled;
+    setIsVideoEnabled(nextVideo);
+    if (nextVideo && callType === 'video' && navigator.mediaDevices?.getUserMedia) {
+      const existingVideo = localStreamRef.current?.getVideoTracks() || [];
+      if (existingVideo.length === 0) {
+        try {
+          const camStream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
+          });
+          const targetStream = localStreamRef.current || new MediaStream();
+          camStream.getVideoTracks().forEach((t) => targetStream.addTrack(t));
+          localStreamRef.current = targetStream;
+          if (localVideoRef.current) {
+            localVideoRef.current.srcObject = targetStream;
+            localVideoRef.current.play().catch(() => {});
+          }
+          if (pcRef.current) {
+            await attachStreamTracksToPeer(pcRef.current, targetStream);
+            if (pcRef.current.signalingState === 'stable') {
+              const offer = await pcRef.current.createOffer();
+              await pcRef.current.setLocalDescription(offer);
+              emitCallSignal({
+                type: 'call_renegotiate',
+                fromUserId: currentUser.id,
+                sdp: { type: offer.type, sdp: offer.sdp },
+              });
+            }
+          }
+          setMicWarning(null);
+        } catch {
+          setIsVideoEnabled(false);
+          setMicWarning('تعذر تشغيل الكاميرا — يرجى السماح بصلاحية الكاميرا.');
+        }
+      }
+    }
+  };
+
   const handleAcceptIncomingCall = async () => {
     if (hasEndedRef.current) return;
     sounds.stopCallRing();
@@ -666,7 +877,7 @@ export const CallModal: React.FC<CallModalProps> = ({
         await pc.setRemoteDescription(new RTCSessionDescription(offerSignal.sdp));
         hasRemoteDescRef.current = true;
         if (stream) {
-          attachStreamTracksToPeer(pc, stream);
+          await attachStreamTracksToPeer(pc, stream);
         }
         for (const candidate of pendingIceRef.current) {
           await pc.addIceCandidate(new RTCIceCandidate(candidate)).catch(() => {});
@@ -680,30 +891,29 @@ export const CallModal: React.FC<CallModalProps> = ({
           fromUserId: currentUser.id,
           sdp: { type: answer.type, sdp: answer.sdp },
         });
+      } catch (err) {
+        console.warn('Call answer negotiation notice:', err);
+        setMicWarning('جاري إعادة محاولة ربط الصوت والصورة...');
+      }
+    } else {
+      const pc = createPeerConnection(stream, false);
+      try {
+        const offer = await pc.createOffer({
+          offerToReceiveAudio: true,
+          offerToReceiveVideo: callType === 'video',
+        });
+        await pc.setLocalDescription(offer);
+        emitCallSignal({
+          type: 'call_renegotiate',
+          fromUserId: currentUser.id,
+          sdp: { type: offer.type, sdp: offer.sdp },
+        });
       } catch {
         emitCallSignal({
           type: 'call_accept',
           fromUserId: currentUser.id,
         });
-        if (connectFallbackTimerRef.current) clearTimeout(connectFallbackTimerRef.current);
-        connectFallbackTimerRef.current = setTimeout(() => {
-          if (!isUnmountedOrClosedRef.current && !hasEndedRef.current) {
-            setCallState((prev) => (prev === 'connecting' ? 'connected' : prev));
-          }
-        }, 2200);
       }
-    } else {
-      createPeerConnection(stream, false);
-      emitCallSignal({
-        type: 'call_accept',
-        fromUserId: currentUser.id,
-      });
-      if (connectFallbackTimerRef.current) clearTimeout(connectFallbackTimerRef.current);
-      connectFallbackTimerRef.current = setTimeout(() => {
-        if (!isUnmountedOrClosedRef.current && !hasEndedRef.current) {
-          setCallState((prev) => (prev === 'connecting' ? 'connected' : prev));
-        }
-      }, 2200);
     }
   };
 
@@ -750,13 +960,13 @@ export const CallModal: React.FC<CallModalProps> = ({
 
         {/* Center Call Visualizer */}
         <div className="flex-1 flex flex-col items-center justify-center my-4 relative">
-          {micWarning && (
+          {(micWarning || (autoplayBlocked ? 'اضغط في أي مكان على الشاشة لتشغيل صوت المكالمة 🔊' : null)) && (
             <div className="mb-3 px-3 py-1.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-[10px] font-bold text-center max-w-xs">
-              {micWarning}
+              {micWarning || 'اضغط في أي مكان على الشاشة لتشغيل صوت المكالمة 🔊'}
             </div>
           )}
 
-          {callType === 'video' && isVideoEnabled ? (
+          {callType === 'video' && (isVideoEnabled || hasRemoteVideo) ? (
             <div className="relative w-full h-full max-h-[56vh] rounded-3xl overflow-hidden bg-slate-100 border border-slate-200 shadow-inner flex items-center justify-center">
               <video
                 ref={remoteVideoRef}
@@ -878,7 +1088,7 @@ export const CallModal: React.FC<CallModalProps> = ({
           ) : (
             <>
               <button
-                onClick={() => setIsMuted(!isMuted)}
+                onClick={handleToggleMute}
                 className={`p-3.5 rounded-full transition-transform active:scale-95 shadow-sm border ${
                   isMuted
                     ? 'bg-rose-600 border-rose-600 text-white'
@@ -891,7 +1101,7 @@ export const CallModal: React.FC<CallModalProps> = ({
 
               {callType === 'video' && (
                 <button
-                  onClick={() => setIsVideoEnabled(!isVideoEnabled)}
+                  onClick={handleToggleVideo}
                   className={`p-3.5 rounded-full transition-transform active:scale-95 shadow-sm border ${
                     !isVideoEnabled
                       ? 'bg-rose-600 border-rose-600 text-white'

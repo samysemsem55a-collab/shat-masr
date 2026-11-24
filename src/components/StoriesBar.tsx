@@ -318,7 +318,7 @@ export const StoriesBar: React.FC<StoriesBarProps> = ({
   const handleLikeActiveStory = async () => {
     if (!activeStory) return;
     try {
-      await toggleStoryLike(activeStory.id, currentUser);
+      await toggleStoryLike(activeStory.id, currentUser, activeStory.userId);
     } catch {}
   };
 

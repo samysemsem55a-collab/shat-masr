@@ -792,12 +792,12 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
     };
   }, []);
 
-  // Auto-hide the room conduct warning banner after 5 seconds (5000ms)
+  // Auto-hide the room welcome banner after 2 seconds (2000ms)
   useEffect(() => {
     setShowCompactWelcomeBanner(true);
     const hideBannerTimer = setTimeout(() => {
       setShowCompactWelcomeBanner(false);
-    }, 5000);
+    }, 2000);
     return () => clearTimeout(hideBannerTimer);
   }, [room.id]);
 
@@ -1018,17 +1018,18 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
   const [dismissedSystemMsgIds, setDismissedSystemMsgIds] = useState<string[]>([]);
   const scheduledSystemDismissRef = useRef<Set<string>>(new Set());
 
-  // Automatically dismiss system_welcome / bot banners 5 seconds after appearing
+  // Automatically dismiss system_welcome / bot banners (2000ms for entering user welcome, 5000ms for others)
   useEffect(() => {
     const timers: ReturnType<typeof setTimeout>[] = [];
     messages.forEach((m) => {
       if (m.type === 'system_welcome' && m.id && !scheduledSystemDismissRef.current.has(m.id)) {
         scheduledSystemDismissRef.current.add(m.id);
+        const ttlMs = m.senderId === 'system_bot' || m.senderId === currentUser.id ? 2000 : 5000;
         const ageMs = typeof m.createdAt === 'number' ? Date.now() - m.createdAt : 0;
-        if (ageMs >= 5000) {
+        if (ageMs >= ttlMs) {
           setDismissedSystemMsgIds((prev) => (prev.includes(m.id) ? prev : [...prev, m.id]));
         } else {
-          const delay = Math.max(200, 5000 - Math.max(0, ageMs));
+          const delay = Math.max(200, ttlMs - Math.max(0, ageMs));
           const t = setTimeout(() => {
             setDismissedSystemMsgIds((prev) => (prev.includes(m.id) ? prev : [...prev, m.id]));
           }, delay);
@@ -1039,7 +1040,7 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
     return () => {
       timers.forEach((t) => clearTimeout(t));
     };
-  }, [messages]);
+  }, [messages, currentUser.id]);
 
   // Subscribe to real-time pinned message, lock status & custom background updates for ALL occupants in this room
   useEffect(() => {
@@ -1220,13 +1221,17 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
             name: msg.senderName,
             avatar: msg.senderAvatar || '',
           });
+          toast.info(`✨ انضم ${msg.senderName} إلى الغرفة`, {
+            id: `room_join_${room.id}_${msg.senderId}`,
+            duration: 3000,
+          });
         }
       }
     }
     if (!joinNoticeTimerRef.current && joinNoticeQueueRef.current.length > 0 && !activeJoinNotice) {
       advanceJoinQueue();
     }
-  }, [messages, muteJoinNotices, currentUser.id, activeJoinNotice]);
+  }, [messages, muteJoinNotices, currentUser.id, activeJoinNotice, room.id]);
 
   // Close emoji picker on click outside
   useEffect(() => {
@@ -2773,9 +2778,9 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
 
       {/* 6. Chat Wallpaper & Feed Scroll Area (Locked Inner Scrolling) */}
       <div className="relative flex-1 min-h-0 overflow-hidden flex flex-col">
-        {/* Temporary Calm Conduct Warning Banner (Auto-hides after 5 seconds) */}
+        {/* Temporary Calm Conduct Warning Banner (Auto-hides after 2 seconds, non-blocking) */}
         {showCompactWelcomeBanner && (
-          <div className="bg-amber-50/95 border-b border-amber-200/90 px-3 py-1.5 flex items-center justify-between gap-2 text-amber-950 shrink-0 z-10 animate-in fade-in">
+          <div className="pointer-events-none bg-amber-50/95 border-b border-amber-200/90 px-3 py-1.5 flex items-center justify-between gap-2 text-amber-950 shrink-0 z-10 animate-in fade-in">
             <div className="flex items-center gap-2 min-w-0">
               <span className="w-6 h-6 rounded-full bg-white border border-amber-300 text-amber-600 flex items-center justify-center shrink-0">
                 <ShieldAlert className="w-3.5 h-3.5" />
@@ -2787,7 +2792,7 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
             <button
               type="button"
               onClick={() => setShowCompactWelcomeBanner(false)}
-              className="p-1 rounded-full text-amber-700 hover:text-amber-950 hover:bg-amber-200/60 transition-colors shrink-0 cursor-pointer"
+              className="pointer-events-auto p-1 rounded-full text-amber-700 hover:text-amber-950 hover:bg-amber-200/60 transition-colors shrink-0 cursor-pointer"
               title="إخفاء التنبيه"
             >
               <X className="w-3.5 h-3.5" />

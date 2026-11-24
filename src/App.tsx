@@ -90,6 +90,8 @@ import {
   sendFirestoreCallSignal,
   subscribeToFirestoreCallSignals,
   deleteFirestoreCallSignal,
+  subscribeToUserNotifications,
+  RealtimeUserNotification,
   AppUpdateNotice
 } from './services/firebase';
 import { isUserTrulyOnline, getServerNowMs } from './utils/presenceStatus';
@@ -943,11 +945,18 @@ export default function App() {
 
       if (signal.type === 'ice_candidate' && signal.candidate && signal.callId) {
         const cId = String(signal.callId);
-        if (!processedOfferCallIds.has(cId)) {
+        if (!endedCallIds.has(cId)) {
           const buf = earlyIceByCallId.get(cId) || [];
-          if (buf.length < 40) {
+          if (buf.length < 50) {
             buf.push(signal.candidate);
             earlyIceByCallId.set(cId, buf);
+          }
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(
+              new CustomEvent('shatmasr:call_early_ice', {
+                detail: { callId: cId, candidate: signal.candidate, signalId: signal.signalId },
+              })
+            );
           }
         }
         return;
@@ -1492,6 +1501,30 @@ export default function App() {
     return () => unsub();
   }, [currentUser.id, isProfileReady]);
 
+  // Real-time social notifications (Forum post & Story likes/comments)
+  const [realtimeNotifications, setRealtimeNotifications] = useState<RealtimeUserNotification[]>([]);
+  const seenNotifIdsRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (!isProfileReady || !currentUser.id) return;
+    const mountThresholdMs = getServerNowMs() - 8000;
+    const unsub = subscribeToUserNotifications(currentUser.id, (list) => {
+      setRealtimeNotifications(list);
+      for (const item of list) {
+        if (!item.id || seenNotifIdsRef.current.has(item.id)) continue;
+        seenNotifIdsRef.current.add(item.id);
+        if ((item.createdAt || 0) >= mountThresholdMs && item.message) {
+          sounds.playNotificationChime();
+          toast.social(item.message, {
+            id: `rt_notif_${item.id}`,
+            duration: 4500,
+          });
+        }
+      }
+    });
+    return () => unsub();
+  }, [currentUser.id, isProfileReady]);
+
   // Track already-processed first-entry welcome checks in current session
   const welcomedPublicRoomKeysRef = useRef<Set<string>>(new Set());
 
@@ -1712,9 +1745,9 @@ export default function App() {
       setActiveRoomMessages([]);
     });
 
-    // Automatic System Welcome & Compact Bot Welcome Message on entry into public rooms
+    // Automatic Room Entry Notice & Compact Bot Welcome Message on entry
     const sessionKey = `${currentUser.id}::${activeRoom.id}`;
-    if (!activeRoom.isPrivate && !welcomedPublicRoomKeysRef.current.has(sessionKey)) {
+    if (!welcomedPublicRoomKeysRef.current.has(sessionKey)) {
       welcomedPublicRoomKeysRef.current.add(sessionKey);
 
       // Broadcast concise live join system notice for everyone in the room
@@ -1738,41 +1771,43 @@ export default function App() {
       setActiveRoomMessages(prev => mergeRoomMessageList(prev, [joinNotice]));
       realtimeSocket.sendMessage(activeRoom.id, joinNotice);
 
-      checkAndMarkFirstPublicRoomEntry(currentUser.id, activeRoom.id)
-        .then((isFirstEntry) => {
-          if (!isFirstEntry || isCancelled) return;
-          welcomeBotTimer = setTimeout(() => {
-            if (isCancelled) return;
-            const welcomeText = 'تنبيه إداري: نرحب بكم في شات مصر — يُرجى الالتزام بقواعد الآداب العامة واحترام جميع الأعضاء.';
-            const botMsg: Message = {
-              id: `bot_welcome_${activeRoom.id}_${currentUser.id}`,
-              roomId: activeRoom.id,
-              senderId: 'system_bot',
-              senderName: 'إدارة شات مصر',
-              senderAvatar: '',
-              senderRole: 'super_admin',
-              senderVipBadge: 'تنبيه إداري ⚠️',
-              badges: ['تنبيه إداري'],
-              type: 'system_welcome',
-              isPrivate: false,
-              content: welcomeText,
-              text: welcomeText,
-              reactions: {},
-              userReactions: {},
-              reactionUsers: {},
-              createdAt: Date.now(),
-              timestamp: Date.now(),
-              status: 'read',
-            };
+      if (!activeRoom.isPrivate) {
+        checkAndMarkFirstPublicRoomEntry(currentUser.id, activeRoom.id)
+          .then((isFirstEntry) => {
+            if (!isFirstEntry || isCancelled) return;
+            welcomeBotTimer = setTimeout(() => {
+              if (isCancelled) return;
+              const welcomeText = 'تنبيه إداري: نرحب بكم في شات مصر — يُرجى الالتزام بقواعد الآداب العامة واحترام جميع الأعضاء.';
+              const botMsg: Message = {
+                id: `bot_welcome_${activeRoom.id}_${currentUser.id}`,
+                roomId: activeRoom.id,
+                senderId: 'system_bot',
+                senderName: 'إدارة شات مصر',
+                senderAvatar: '',
+                senderRole: 'super_admin',
+                senderVipBadge: 'تنبيه إداري ⚠️',
+                badges: ['تنبيه إداري'],
+                type: 'system_welcome',
+                isPrivate: false,
+                content: welcomeText,
+                text: welcomeText,
+                reactions: {},
+                userReactions: {},
+                reactionUsers: {},
+                createdAt: Date.now(),
+                timestamp: Date.now(),
+                status: 'read',
+              };
 
-            setActiveRoomMessages(prev => mergeRoomMessageList(prev, [botMsg]));
-            realtimeSocket.sendMessage(activeRoom.id, botMsg);
-            sendFirestoreMessage(activeRoom.id, botMsg).catch((err) => {
-              console.warn('Welcome bot message write notice:', err);
-            });
-          }, 450);
-        })
-        .catch(() => {});
+              setActiveRoomMessages(prev => mergeRoomMessageList(prev, [botMsg]));
+              realtimeSocket.sendMessage(activeRoom.id, botMsg);
+              sendFirestoreMessage(activeRoom.id, botMsg).catch((err) => {
+                console.warn('Welcome bot message write notice:', err);
+              });
+            }, 450);
+          })
+          .catch(() => {});
+      }
     }
 
     return () => {
@@ -3173,6 +3208,7 @@ export default function App() {
         isOpen={isNotificationsOpen}
         onClose={() => setIsNotificationsOpen(false)}
         onOpenWallet={openWallet}
+        realtimeNotifications={realtimeNotifications}
       />
 
       {/* Online Users List Side Drawer with real presence occupants */}
