@@ -90,6 +90,7 @@ import {
   subscribeToFirestoreCallSignals,
   deleteFirestoreCallSignal,
   subscribeToUserNotifications,
+  markUserNotificationsRead,
   RealtimeUserNotification,
   AppUpdateNotice
 } from './services/firebase';
@@ -1500,9 +1501,14 @@ export default function App() {
     return () => unsub();
   }, [currentUser.id, isProfileReady]);
 
-  // Real-time social notifications (Forum post & Story likes/comments)
+  // Real-time social notifications (Forum post & Story likes/comments & App updates)
   const [realtimeNotifications, setRealtimeNotifications] = useState<RealtimeUserNotification[]>([]);
+  const [isAppUpdateNotifRead, setIsAppUpdateNotifRead] = useState(false);
   const seenNotifIdsRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    setIsAppUpdateNotifRead(false);
+  }, [appUpdateNotice?.version]);
 
   useEffect(() => {
     if (!isProfileReady || !currentUser.id) return;
@@ -1523,6 +1529,28 @@ export default function App() {
     });
     return () => unsub();
   }, [currentUser.id, isProfileReady]);
+
+  const bellNotifications = React.useMemo<RealtimeUserNotification[]>(() => {
+    const list = [...realtimeNotifications];
+    if (appUpdateNotice) {
+      list.unshift({
+        id: `app_update_${appUpdateNotice.version || appUpdateNotice.timestamp}`,
+        targetUserId: currentUser.id,
+        actorId: 'system_update',
+        actorName: appUpdateNotice.pushedBy || 'الإدارة',
+        kind: 'app_update',
+        message: appUpdateNotice.message,
+        isRead: isAppUpdateNotifRead,
+        createdAt: appUpdateNotice.timestamp || Date.now(),
+      });
+    }
+    return list;
+  }, [realtimeNotifications, appUpdateNotice, currentUser.id, isAppUpdateNotifRead]);
+
+  const unreadNotificationsCount = React.useMemo(
+    () => bellNotifications.filter((n) => !n.isRead).length,
+    [bellNotifications]
+  );
 
   // Load older room messages upward (30 per page via pure onSnapshot limit expansion)
   const handleLoadOlderRoomMessages = useCallback(async (): Promise<number> => {
@@ -2252,7 +2280,17 @@ export default function App() {
     closeAllModals();
     setCurrentTab('profile');
   }, [closeAllModals]);
-  const openNotifications = useCallback(() => setIsNotificationsOpen(true), []);
+  const openNotifications = useCallback(() => {
+    setIsNotificationsOpen(true);
+    setIsAppUpdateNotifRead(true);
+    setRealtimeNotifications((prev) => {
+      const unreadIds = prev.filter((n) => !n.isRead).map((n) => n.id);
+      if (unreadIds.length > 0 && currentUserRef.current?.id) {
+        markUserNotificationsRead(currentUserRef.current.id, unreadIds).catch(() => {});
+      }
+      return prev.map((n) => (n.isRead ? n : { ...n, isRead: true }));
+    });
+  }, []);
   const openOnlineUsers = useCallback(() => setIsOnlineUsersOpen(true), []);
   const openFriendRequests = useCallback(() => setIsFriendRequestsOpen(true), []);
   const openAdmin = useCallback(() => setIsAdminOpen(true), []);
@@ -2898,6 +2936,7 @@ export default function App() {
           isDarkMode={isDarkMode}
           onToggleDarkMode={toggleDarkMode}
           onOpenSupport={openSupportFromHeader}
+          unreadNotificationsCount={unreadNotificationsCount}
         />
       )}
 
@@ -3133,7 +3172,7 @@ export default function App() {
         isOpen={isNotificationsOpen}
         onClose={() => setIsNotificationsOpen(false)}
         onOpenWallet={openWallet}
-        realtimeNotifications={realtimeNotifications}
+        realtimeNotifications={bellNotifications}
       />
 
       {/* Online Users List Side Drawer with real presence occupants */}

@@ -50,6 +50,7 @@ interface HeaderProps {
   isDarkMode?: boolean;
   onToggleDarkMode?: () => void;
   onOpenSupport?: () => void;
+  unreadNotificationsCount?: number;
 }
 
 export const Header: React.FC<HeaderProps> = React.memo(({
@@ -74,7 +75,8 @@ export const Header: React.FC<HeaderProps> = React.memo(({
   onOpenMessagesTab,
   isDarkMode = false,
   onToggleDarkMode,
-  onOpenSupport
+  onOpenSupport,
+  unreadNotificationsCount = 0
 }) => {
   const [isMoreMenuOpen, setIsMoreMenuOpen] = useState(false);
   const moreMenuRef = useRef<HTMLDivElement>(null);
@@ -337,6 +339,22 @@ export const Header: React.FC<HeaderProps> = React.memo(({
               )}
             </button>
 
+            {/* Notifications Bell Button (Stories, Forum & Updates only) */}
+            <button 
+              type="button"
+              onClick={onOpenNotifications}
+              className="relative w-8 h-9 sm:w-9 flex items-center justify-center rounded-xl bg-slate-100 hover:bg-slate-200 border border-slate-200 text-slate-700 transition-all shrink-0 active:scale-95 cursor-pointer"
+              title="الإشعارات"
+              aria-label="الإشعارات"
+            >
+              <Bell strokeWidth={2} className="w-4 h-4 opacity-100 saturate-110 brightness-105" />
+              {unreadNotificationsCount > 0 && (
+                <span className="absolute -top-1 -right-0.5 min-w-[16px] h-4 px-1 rounded-full bg-rose-600 text-white text-[9px] font-black flex items-center justify-center shadow border border-white tabular-nums">
+                  {unreadNotificationsCount > 99 ? '99+' : unreadNotificationsCount}
+                </span>
+              )}
+            </button>
+
             {/* Real Connected Users Side Drawer Trigger */}
             <button 
               type="button"
@@ -347,16 +365,6 @@ export const Header: React.FC<HeaderProps> = React.memo(({
               <Users strokeWidth={2} className="w-3 h-3 text-emerald-600 shrink-0 opacity-100 saturate-110 brightness-105" />
               <span>{Math.max(1, onlineUsersCount)}</span>
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shrink-0"></span>
-            </button>
-
-            {/* Notifications Button (Desktop lg+) */}
-            <button 
-              type="button"
-              onClick={onOpenNotifications}
-              className="hidden lg:flex w-9 h-9 items-center justify-center relative rounded-xl bg-slate-100 hover:bg-slate-200 border border-slate-200 text-slate-700 transition-colors shrink-0 cursor-pointer"
-              title="الإشعارات"
-            >
-              <Bell strokeWidth={2} className="w-4 h-4 opacity-100 saturate-110 brightness-105" />
             </button>
 
             {/* Radio Player Button (Desktop lg+) */}
@@ -486,15 +494,6 @@ export const Header: React.FC<HeaderProps> = React.memo(({
                       <span>راديو الطرب</span>
                     </span>
                     {isRadioPlaying && <span className="w-2 h-2 rounded-full bg-purple-500 animate-pulse"></span>}
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={onOpenNotifications}
-                    className="w-full px-3 py-2 rounded-xl hover:bg-slate-100 text-slate-700 text-xs font-bold flex items-center gap-2 transition"
-                  >
-                    <Bell className="w-3.5 h-3.5 text-amber-500" />
-                    <span>الإشعارات</span>
                   </button>
 
                   <button

@@ -5016,7 +5016,7 @@ export async function addStoryComment(
       actorName: user.name || 'عضو شات مصر',
       actorAvatar: user.avatar || '',
       kind: 'story_comment',
-      message: `علّق ${user.name || 'عضو شات مصر'} على قصتك`,
+      message: `علق ${user.name || 'عضو شات مصر'} على قصتك`,
       refId: storyId
     }).catch(() => {});
   }
@@ -5981,7 +5981,7 @@ export async function addForumComment(
       actorName: user.name || 'عضو شات مصر',
       actorAvatar: user.avatar || '',
       kind: 'forum_comment',
-      message: `علّق ${user.name || 'عضو شات مصر'} على منشورك`,
+      message: `علق ${user.name || 'عضو شات مصر'} على منشورك`,
       refId: postId
     }).catch(() => {});
   }
@@ -7273,12 +7273,21 @@ export interface RealtimeUserNotification {
   actorId: string;
   actorName: string;
   actorAvatar?: string;
-  kind: 'forum_like' | 'forum_comment' | 'story_like' | 'story_comment' | 'info';
+  kind: 'forum_like' | 'forum_comment' | 'story_like' | 'story_comment' | 'app_update' | 'info';
   message: string;
   refId?: string;
   isRead?: boolean;
   createdAt: number;
 }
+
+const ALLOWED_BELL_NOTIFICATION_KINDS = new Set<string>([
+  'forum_like',
+  'forum_comment',
+  'story_like',
+  'story_comment',
+  'app_update',
+  'info',
+]);
 
 export async function sendUserRealtimeNotification(params: {
   targetUserId: string;
@@ -7322,6 +7331,19 @@ export async function sendUserRealtimeNotification(params: {
   }
 }
 
+export async function markUserNotificationsRead(
+  userId: string,
+  notificationIds: string[]
+): Promise<void> {
+  const firestore = db;
+  if (!firestore || !userId || !notificationIds || notificationIds.length === 0) return;
+  await Promise.allSettled(
+    notificationIds.slice(0, 30).map((nid) =>
+      updateDoc(doc(firestore, 'users', userId, 'notifications', nid), { isRead: true }).catch(() => {})
+    )
+  );
+}
+
 export function subscribeToUserNotifications(
   userId: string,
   onUpdate: (notifications: RealtimeUserNotification[]) => void
@@ -7331,6 +7353,7 @@ export function subscribeToUserNotifications(
 
   const emitSorted = () => {
     const sorted = Array.from(listById.values())
+      .filter((n) => ALLOWED_BELL_NOTIFICATION_KINDS.has(n.kind))
       .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
       .slice(0, 20);
     onUpdate(sorted);
@@ -7350,6 +7373,8 @@ export function subscribeToUserNotifications(
           listById.clear();
           snap.docs.forEach((d) => {
             const data = d.data() as any;
+            const kind = String(data.kind || 'info');
+            if (!ALLOWED_BELL_NOTIFICATION_KINDS.has(kind)) return;
             const resolvedTs = resolveTimestampMs(data.createdAt) || Number(data.createdAtMs) || Date.now();
             listById.set(data.id || d.id, {
               id: data.id || d.id,
@@ -7357,7 +7382,7 @@ export function subscribeToUserNotifications(
               actorId: data.actorId || '',
               actorName: data.actorName || 'عضو شات مصر',
               actorAvatar: data.actorAvatar || '',
-              kind: data.kind || 'info',
+              kind: kind as RealtimeUserNotification['kind'],
               message: data.message || '',
               refId: data.refId || '',
               isRead: Boolean(data.isRead),
@@ -7375,7 +7400,12 @@ export function subscribeToUserNotifications(
 
   const handleBus = (e: MessageEvent) => {
     const notif = e.data?.notification as RealtimeUserNotification | undefined;
-    if (e.data?.type === 'USER_REALTIME_NOTIFICATION' && notif && notif.targetUserId === userId) {
+    if (
+      e.data?.type === 'USER_REALTIME_NOTIFICATION' &&
+      notif &&
+      notif.targetUserId === userId &&
+      ALLOWED_BELL_NOTIFICATION_KINDS.has(notif.kind)
+    ) {
       listById.set(notif.id, notif);
       emitSorted();
     }

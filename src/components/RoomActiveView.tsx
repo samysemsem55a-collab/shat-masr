@@ -794,7 +794,7 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
     };
   }, []);
 
-  // Public room local welcome banner: 'أهلاً بك في [اسم الغرفة]' -> after 2000ms conduct notice -> after +2500ms hide
+  // Public room local welcome banner: 2s 'مرحباً بك في [اسم الغرفة]' -> 2s 'يرجى احترام قوانين الغرفة وعدم الإساءة للآخرين' -> hide
   useEffect(() => {
     if (room.isPrivate) {
       setWelcomeBannerStage(null);
@@ -806,7 +806,7 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
     }, 2000);
     const hideBannerTimer = setTimeout(() => {
       setWelcomeBannerStage(null);
-    }, 4500);
+    }, 4000);
     return () => {
       clearTimeout(switchToNoticeTimer);
       clearTimeout(hideBannerTimer);
@@ -1234,7 +1234,7 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
         name: joinedUser.name,
         avatar: joinedUser.avatar || '',
       });
-      toast.info(`انضم ${joinedUser.name} إلى ${room.title}`, {
+      toast.info(`انضم ${joinedUser.name} إلى الغرفة`, {
         id: `room_join_${room.id}_${joinedUser.id}`,
         duration: 3500,
       });
@@ -2676,7 +2676,7 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
             className="pointer-events-auto cursor-pointer px-3 py-1 rounded-full bg-slate-200/90 hover:bg-indigo-100/95 backdrop-blur-sm border border-slate-300/80 hover:border-indigo-300 text-slate-800 text-[11px] font-bold shadow-xs truncate max-w-[90vw] transition"
             title="اضغط للتفاعل مع العضو"
           >
-            انضم {activeJoinNotice.name} إلى {room.title}
+            انضم {activeJoinNotice.name} إلى الغرفة
           </button>
 
           {isJoinActionMenuOpen && (
@@ -2802,8 +2802,8 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
               </span>
               <p className="text-[11px] sm:text-xs font-bold text-amber-950 leading-snug line-clamp-2">
                 {welcomeBannerStage === 'welcome'
-                  ? `أهلاً بك في ${room.title}`
-                  : `تنبيه الغرفة: نرجو الالتزام بقواعد الآداب العامة واحترام جميع الأعضاء في ${room.title} ✨`}
+                  ? `مرحباً بك في ${room.title}`
+                  : 'يرجى احترام قوانين الغرفة وعدم الإساءة للآخرين'}
               </p>
             </div>
             <button

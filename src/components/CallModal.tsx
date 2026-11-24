@@ -40,18 +40,6 @@ const ICE_SERVERS: RTCConfiguration = {
   iceServers: [
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
-    { urls: 'stun:stun2.l.google.com:19302' },
-    { urls: 'stun:stun.cloudflare.com:3478' },
-    {
-      urls: [
-        'turn:openrelay.metered.ca:80',
-        'turn:openrelay.metered.ca:443',
-        'turn:openrelay.metered.ca:443?transport=tcp',
-        'turns:openrelay.metered.ca:443?transport=tcp',
-      ],
-      username: 'openrelayproject',
-      credential: 'openrelayproject',
-    },
   ],
   iceCandidatePoolSize: 10,
 };
@@ -73,6 +61,7 @@ export const CallModal: React.FC<CallModalProps> = ({
   const [isVideoEnabled, setIsVideoEnabled] = useState<boolean>(callType === 'video');
   const [isSpeakerOn, setIsSpeakerOn] = useState<boolean>(true);
   const [micWarning, setMicWarning] = useState<string | null>(null);
+  const [isPermissionDenied, setIsPermissionDenied] = useState<boolean>(false);
   const [autoplayBlocked, setAutoplayBlocked] = useState<boolean>(false);
   const [hasRemoteStream, setHasRemoteStream] = useState<boolean>(false);
   const [hasRemoteVideo, setHasRemoteVideo] = useState<boolean>(false);
@@ -175,6 +164,14 @@ export const CallModal: React.FC<CallModalProps> = ({
       });
       localStreamRef.current = null;
     }
+    if (remoteStreamRef.current) {
+      remoteStreamRef.current.getTracks().forEach((track) => {
+        try {
+          track.stop();
+        } catch {}
+      });
+      remoteStreamRef.current = null;
+    }
     if (localVideoRef.current) {
       localVideoRef.current.srcObject = null;
     }
@@ -184,12 +181,12 @@ export const CallModal: React.FC<CallModalProps> = ({
     if (remoteAudioRef.current) {
       remoteAudioRef.current.srcObject = null;
     }
-    remoteStreamRef.current = null;
     pendingIceRef.current = [];
     hasRemoteDescRef.current = false;
     setHasRemoteStream(false);
     setHasRemoteVideo(false);
     setAutoplayBlocked(false);
+    setIsPermissionDenied(false);
   }, []);
 
   const emitCallSignal = useCallback(
@@ -404,8 +401,17 @@ export const CallModal: React.FC<CallModalProps> = ({
   );
 
   const acquireUserMedia = useCallback(async (): Promise<MediaStream | null> => {
-    if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
-      setMicWarning('المتصفح لا يدعم الوصول للمايكروفون مباشرة — وضع المكالمة الآمن مفعل.');
+    const isSecureContextReady =
+      typeof window === 'undefined'
+        ? true
+        : window.isSecureContext ||
+          window.location.protocol === 'https:' ||
+          window.location.hostname === 'localhost' ||
+          window.location.hostname === '127.0.0.1';
+
+    if (!isSecureContextReady || typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
+      setIsPermissionDenied(true);
+      setMicWarning('اسمح بالميكروفون والكاميرا عشان المكالمة تشتغل');
       return null;
     }
 
@@ -446,6 +452,7 @@ export const CallModal: React.FC<CallModalProps> = ({
         return null;
       }
       bindLocalStream(stream);
+      setIsPermissionDenied(false);
       setMicWarning(null);
       return stream;
     } catch (err: any) {
@@ -461,6 +468,7 @@ export const CallModal: React.FC<CallModalProps> = ({
           }
           bindLocalStream(audioOnlyStream);
           setIsVideoEnabled(false);
+          setIsPermissionDenied(false);
           setMicWarning('تم تشغيل الصوت فقط لعدم توفر صلاحية الكاميرا.');
           return audioOnlyStream;
         } catch {
@@ -469,17 +477,43 @@ export const CallModal: React.FC<CallModalProps> = ({
       }
       const errName = err?.name || '';
       if (errName === 'NotAllowedError' || errName === 'PermissionDeniedError') {
-        setMicWarning('تم رفض صلاحية المايكروفون/الكاميرا — يرجى السماح من إعدادات المتصفح.');
+        setIsPermissionDenied(true);
+        setMicWarning('اسمح بالميكروفون والكاميرا عشان المكالمة تشتغل');
       } else if (errName === 'NotFoundError' || errName === 'DevicesNotFoundError') {
-        setMicWarning('لم يتم العثور على مايكروفون أو كاميرا متصلة بالجهاز.');
+        setIsPermissionDenied(true);
+        setMicWarning('اسمح بالميكروفون والكاميرا عشان المكالمة تشتغل');
       } else if (errName === 'NotReadableError' || errName === 'TrackStartError') {
-        setMicWarning('المايكروفون أو الكاميرا مستخدم حالياً في تطبيق آخر.');
+        setIsPermissionDenied(true);
+        setMicWarning('اسمح بالميكروفون والكاميرا عشان المكالمة تشتغل');
       } else {
-        setMicWarning('تم تشغيل المكالمة بدون صلاحية مايكروفون/كاميرا (يمكنك السماح من إعدادات المتصفح).');
+        setIsPermissionDenied(true);
+        setMicWarning('اسمح بالميكروفون والكاميرا عشان المكالمة تشتغل');
       }
       return null;
     }
   }, [callType]);
+
+  const handleRetryMediaPermission = useCallback(async () => {
+    const stream = await acquireUserMedia();
+    if (!stream || isUnmountedOrClosedRef.current || hasEndedRef.current) return;
+    if (callType === 'video' && stream.getVideoTracks().length > 0) {
+      setIsVideoEnabled(true);
+    }
+    if (pcRef.current) {
+      await attachStreamTracksToPeer(pcRef.current, stream);
+      if (pcRef.current.signalingState === 'stable') {
+        try {
+          const offer = await pcRef.current.createOffer();
+          await pcRef.current.setLocalDescription(offer);
+          emitCallSignal({
+            type: 'call_renegotiate',
+            fromUserId: currentUser.id,
+            sdp: { type: offer.type, sdp: offer.sdp },
+          });
+        } catch {}
+      }
+    }
+  }, [acquireUserMedia, attachStreamTracksToPeer, callType, currentUser.id, emitCallSignal]);
 
   // Keep <video> and <audio> elements bound to streams whenever video toggles or UI updates
   useEffect(() => {
@@ -678,6 +712,7 @@ export const CallModal: React.FC<CallModalProps> = ({
       }
 
       if (signal.type === 'call_answer' && signal.sdp && pcRef.current) {
+        console.log('Answer received');
         try {
           if (pcRef.current.signalingState === 'have-local-offer') {
             await pcRef.current.setRemoteDescription(new RTCSessionDescription(signal.sdp));
@@ -698,6 +733,7 @@ export const CallModal: React.FC<CallModalProps> = ({
       }
 
       if (signal.type === 'ice_candidate' && signal.candidate) {
+        console.log('ICE candidate received');
         if (pcRef.current && (hasRemoteDescRef.current || pcRef.current.remoteDescription)) {
           await pcRef.current.addIceCandidate(new RTCIceCandidate(signal.candidate)).catch(() => {});
         } else {
@@ -709,6 +745,7 @@ export const CallModal: React.FC<CallModalProps> = ({
     const handleEarlyIceEvent = (e: Event) => {
       const detail = (e as CustomEvent<{ callId?: string; candidate?: any; signalId?: string }>).detail;
       if (!detail?.candidate || !detail?.callId || detail.callId !== callIdRef.current) return;
+      console.log('ICE candidate received');
       if (detail.signalId) {
         if (processedSignals.has(detail.signalId)) return;
         processedSignals.add(detail.signalId);
@@ -749,6 +786,7 @@ export const CallModal: React.FC<CallModalProps> = ({
             createdAtMs: Date.now(),
             sdp: { type: offer.type, sdp: offer.sdp },
           });
+          console.log('Offer sent');
         } catch {
           if (isUnmountedOrClosedRef.current || hasEndedRef.current) return;
           emitCallSignal({
@@ -1020,8 +1058,20 @@ export const CallModal: React.FC<CallModalProps> = ({
         {/* Center Call Visualizer */}
         <div className="flex-1 flex flex-col items-center justify-center my-4 relative">
           {(micWarning || (autoplayBlocked ? 'اضغط في أي مكان على الشاشة لتشغيل صوت المكالمة 🔊' : null)) && (
-            <div className="mb-3 px-3 py-1.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-[10px] font-bold text-center max-w-xs">
-              {micWarning || 'اضغط في أي مكان على الشاشة لتشغيل صوت المكالمة 🔊'}
+            <div className="mb-3 px-3 py-1.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-[10px] font-bold text-center max-w-xs flex flex-col items-center gap-1.5">
+              <span>{micWarning || 'اضغط في أي مكان على الشاشة لتشغيل صوت المكالمة 🔊'}</span>
+              {isPermissionDenied && micWarning && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleRetryMediaPermission();
+                  }}
+                  className="px-3 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] font-black cursor-pointer transition active:scale-95"
+                >
+                  حاول تاني
+                </button>
+              )}
             </div>
           )}
 

@@ -33,55 +33,33 @@ function formatNotifTime(ts: number): string {
 export const NotificationsModal: React.FC<NotificationsModalProps> = ({
   isOpen,
   onClose,
-  onOpenWallet,
   realtimeNotifications = [],
 }) => {
-  const staticFallbackNotifications = [
-    {
-      id: 'n1',
-      icon: '🎁',
-      title: 'استلام هدية برج القاهرة!',
-      desc: 'أرسل لك أبو فهد الكويتي هدية برج القاهرة المضيء في الغرفة العامة (+1000 كوينز أرباح).',
-      time: 'منذ 5 دقائق',
-      action: 'عرض الأرباح',
-      isNew: true
-    },
-    {
-      id: 'n2',
-      icon: '👑',
-      title: 'ترقية رتبتك إلى VIP ذهبي!',
-      desc: 'تم تفعيل صلاحيات الإشراف، المايك المفتوح، وتوهج الاسم الذهبي.',
-      time: 'منذ ساعتين',
-      action: null,
-      isNew: true
-    },
-    {
-      id: 'n3',
-      icon: '✨',
-      title: 'بدء المسابقة الثقافية الكبرى!',
-      desc: 'غرفة الألعاب والمسابقات تشهد الآن منافسة حية بجوائز 5,000 كوينز كاش.',
-      time: 'منذ 3 ساعات',
-      action: null,
-      isNew: false
-    }
-  ];
-
-  const liveMapped = realtimeNotifications.map((n) => ({
-    id: n.id,
-    icon:
-      n.kind === 'forum_like' || n.kind === 'story_like'
-        ? '❤️'
-        : n.kind === 'forum_comment' || n.kind === 'story_comment'
-        ? '💬'
-        : '🔔',
-    title: n.actorName || 'إشعار فوري',
-    desc: n.message,
-    time: formatNotifTime(n.createdAt || Date.now()),
-    action: null as string | null,
-    isNew: Date.now() - (n.createdAt || 0) < 10 * 60 * 1000,
-  }));
-
-  const notifications = liveMapped.length > 0 ? liveMapped : staticFallbackNotifications;
+  const allowedKinds = new Set(['forum_like', 'forum_comment', 'story_like', 'story_comment', 'app_update', 'info']);
+  const notifications = realtimeNotifications
+    .filter((n) => allowedKinds.has(n.kind))
+    .map((n) => ({
+      id: n.id,
+      icon:
+        n.kind === 'forum_like' || n.kind === 'story_like'
+          ? '❤️'
+          : n.kind === 'forum_comment' || n.kind === 'story_comment'
+          ? '💬'
+          : n.kind === 'app_update'
+          ? '🚀'
+          : '🔔',
+      title:
+        n.kind === 'app_update'
+          ? 'تحديث جديد للتطبيق'
+          : n.kind === 'story_like' || n.kind === 'story_comment'
+          ? 'تفاعل على قصتك'
+          : n.kind === 'forum_like' || n.kind === 'forum_comment'
+          ? 'تفاعل على منشورك'
+          : n.actorName || 'إشعار',
+      desc: n.message,
+      time: formatNotifTime(n.createdAt || Date.now()),
+      isNew: !n.isRead,
+    }));
 
   return (
     <AnimatePresence>
@@ -118,36 +96,31 @@ export const NotificationsModal: React.FC<NotificationsModalProps> = ({
 
         {/* List */}
         <div className="p-3 space-y-2 overflow-y-auto bg-slate-50/70">
-          {notifications.map((n) => (
-            <div
-              key={n.id}
-              className={`p-3 rounded-2xl border flex items-start gap-3 transition-colors shadow-sm ${
-                n.isNew
-                  ? 'bg-indigo-50/80 border-indigo-200'
-                  : 'bg-white border-slate-200'
-              }`}
-            >
-              <div className="text-2xl shrink-0 mt-0.5">{n.icon}</div>
-              <div className="flex-1 space-y-1">
-                <div className="flex items-center justify-between">
-                  <h4 className="text-xs font-black text-slate-900">{n.title}</h4>
-                  <span className="text-[10px] text-slate-500">{n.time}</span>
-                </div>
-                <p className="text-xs text-slate-600 leading-relaxed">{n.desc}</p>
-                {n.action && (
-                  <button
-                    onClick={() => {
-                      onClose();
-                      onOpenWallet();
-                    }}
-                    className="text-[11px] font-bold text-amber-600 hover:underline mt-1 block"
-                  >
-                    {n.action} ←
-                  </button>
-                )}
-              </div>
+          {notifications.length === 0 ? (
+            <div className="py-10 text-center text-xs font-bold text-slate-500">
+              لا توجد إشعارات جديدة للقصص أو المنتدى أو التحديثات حالياً.
             </div>
-          ))}
+          ) : (
+            notifications.map((n) => (
+              <div
+                key={n.id}
+                className={`p-3 rounded-2xl border flex items-start gap-3 transition-colors shadow-sm ${
+                  n.isNew
+                    ? 'bg-indigo-50/80 border-indigo-200'
+                    : 'bg-white border-slate-200'
+                }`}
+              >
+                <div className="text-2xl shrink-0 mt-0.5">{n.icon}</div>
+                <div className="flex-1 space-y-1">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-xs font-black text-slate-900">{n.title}</h4>
+                    <span className="text-[10px] text-slate-500">{n.time}</span>
+                  </div>
+                  <p className="text-xs text-slate-600 leading-relaxed">{n.desc}</p>
+                </div>
+              </div>
+            ))
+          )}
         </div>
 
           </motion.div>
