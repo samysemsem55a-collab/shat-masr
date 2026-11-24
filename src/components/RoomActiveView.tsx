@@ -758,7 +758,9 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [highlightColor, setHighlightColor] = useState<HighlightPaletteKey | null>(null);
   const [muteJoinNotices, setMuteJoinNotices] = useState<boolean>(Boolean(currentUser.muteJoinNotices));
-  const [showCompactWelcomeBanner, setShowCompactWelcomeBanner] = useState<boolean>(true);
+  const [welcomeBannerStage, setWelcomeBannerStage] = useState<'welcome' | 'notice' | null>(
+    !room.isPrivate ? 'welcome' : null
+  );
   const [raisedHandUserIds, setRaisedHandUserIds] = useState<string[]>([]);
   const [isHandRaised, setIsHandRaised] = useState(false);
   const isLiveAudioRoom = room.roomType === 'live_audio' || room.category === 'live_audio';
@@ -792,14 +794,24 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
     };
   }, []);
 
-  // Auto-hide the room welcome banner after 2 seconds (2000ms)
+  // Public room local welcome banner: 'أهلاً بك في [اسم الغرفة]' -> after 2000ms conduct notice -> after +2500ms hide
   useEffect(() => {
-    setShowCompactWelcomeBanner(true);
-    const hideBannerTimer = setTimeout(() => {
-      setShowCompactWelcomeBanner(false);
+    if (room.isPrivate) {
+      setWelcomeBannerStage(null);
+      return;
+    }
+    setWelcomeBannerStage('welcome');
+    const switchToNoticeTimer = setTimeout(() => {
+      setWelcomeBannerStage('notice');
     }, 2000);
-    return () => clearTimeout(hideBannerTimer);
-  }, [room.id]);
+    const hideBannerTimer = setTimeout(() => {
+      setWelcomeBannerStage(null);
+    }, 4500);
+    return () => {
+      clearTimeout(switchToNoticeTimer);
+      clearTimeout(hideBannerTimer);
+    };
+  }, [room.id, room.isPrivate]);
 
   // Message Draft Persistence per room (Requirement 4)
   const draftStorageKey = `arab_chat_draft_${room.id}`;
@@ -1112,6 +1124,8 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
 
   // Sequential 1-by-1 Room Join System Notice (5 seconds per user, clickable for 3 quick actions)
   const [activeJoinNotice, setActiveJoinNotice] = useState<{ id: string; userId: string; name: string; avatar: string } | null>(null);
+  const activeJoinNoticeRef = useRef<{ id: string; userId: string; name: string; avatar: string } | null>(null);
+  activeJoinNoticeRef.current = activeJoinNotice;
   const [isJoinActionMenuOpen, setIsJoinActionMenuOpen] = useState(false);
   const joinNoticeQueueRef = useRef<{ id: string; userId: string; name: string; avatar: string }[]>([]);
   const processedJoinIdsRef = useRef<Set<string>>(new Set());
@@ -1124,6 +1138,7 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
     }
     setIsJoinActionMenuOpen(false);
     const next = joinNoticeQueueRef.current.shift() || null;
+    activeJoinNoticeRef.current = next;
     setActiveJoinNotice(next);
     if (next) {
       joinNoticeTimerRef.current = setTimeout(() => {
@@ -1200,38 +1215,38 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
     return () => window.removeEventListener('shatmasr:gift_attempt', handleGiftAttempt);
   }, [currentUser.coins, currentUser.role, onOpenWallet]);
 
-  // Enqueue sequential silent join notices when another member enters the room
+  // Subscribe to public room entry events for OTHER occupants only (excludes entering user)
   useEffect(() => {
-    if (messages.length === 0 || muteJoinNotices) return;
-    for (const msg of messages) {
-      if (
-        msg.type === 'system_welcome' &&
-        msg.senderName &&
-        msg.senderId &&
-        msg.senderId !== currentUser.id &&
-        msg.senderId !== 'system_bot' &&
-        !processedJoinIdsRef.current.has(msg.id)
-      ) {
-        processedJoinIdsRef.current.add(msg.id);
-        const ageMs = Date.now() - (msg.timestamp || Date.now());
-        if (ageMs < 15000 && msg.content?.includes('انضم')) {
-          joinNoticeQueueRef.current.push({
-            id: msg.id,
-            userId: msg.senderId,
-            name: msg.senderName,
-            avatar: msg.senderAvatar || '',
-          });
-          toast.info(`✨ انضم ${msg.senderName} إلى الغرفة`, {
-            id: `room_join_${room.id}_${msg.senderId}`,
-            duration: 3000,
-          });
-        }
+    if (room.isPrivate || muteJoinNotices) return;
+    const unsubRoomJoin = realtimeSocket.subscribeToRoomUserJoined(room.id, (joinedUser, eventId) => {
+      if (!joinedUser?.id || !joinedUser?.name || joinedUser.id === currentUser.id) return;
+      const dedupKey = eventId || `${room.id}_${joinedUser.id}_${Math.floor(Date.now() / 5000)}`;
+      if (processedJoinIdsRef.current.has(dedupKey)) return;
+      processedJoinIdsRef.current.add(dedupKey);
+      if (processedJoinIdsRef.current.size > 200) {
+        const oldest = processedJoinIdsRef.current.values().next().value;
+        if (oldest) processedJoinIdsRef.current.delete(oldest);
       }
-    }
-    if (!joinNoticeTimerRef.current && joinNoticeQueueRef.current.length > 0 && !activeJoinNotice) {
-      advanceJoinQueue();
-    }
-  }, [messages, muteJoinNotices, currentUser.id, activeJoinNotice, room.id]);
+
+      joinNoticeQueueRef.current.push({
+        id: dedupKey,
+        userId: joinedUser.id,
+        name: joinedUser.name,
+        avatar: joinedUser.avatar || '',
+      });
+      toast.info(`انضم ${joinedUser.name} إلى ${room.title}`, {
+        id: `room_join_${room.id}_${joinedUser.id}`,
+        duration: 3500,
+      });
+
+      if (!joinNoticeTimerRef.current && !activeJoinNoticeRef.current) {
+        advanceJoinQueue();
+      }
+    });
+    return () => {
+      unsubRoomJoin();
+    };
+  }, [room.id, room.title, room.isPrivate, muteJoinNotices, currentUser.id]);
 
   // Close emoji picker on click outside
   useEffect(() => {
@@ -2661,7 +2676,7 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
             className="pointer-events-auto cursor-pointer px-3 py-1 rounded-full bg-slate-200/90 hover:bg-indigo-100/95 backdrop-blur-sm border border-slate-300/80 hover:border-indigo-300 text-slate-800 text-[11px] font-bold shadow-xs truncate max-w-[90vw] transition"
             title="اضغط للتفاعل مع العضو"
           >
-            ✨ {activeJoinNotice.name} انضم للغرفة
+            انضم {activeJoinNotice.name} إلى {room.title}
           </button>
 
           {isJoinActionMenuOpen && (
@@ -2778,20 +2793,22 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
 
       {/* 6. Chat Wallpaper & Feed Scroll Area (Locked Inner Scrolling) */}
       <div className="relative flex-1 min-h-0 overflow-hidden flex flex-col">
-        {/* Temporary Calm Conduct Warning Banner (Auto-hides after 2 seconds, non-blocking) */}
-        {showCompactWelcomeBanner && (
+        {/* Temporary Local 2-Stage Welcome -> Conduct Notice Banner (Public Rooms Only, Non-Blocking) */}
+        {welcomeBannerStage !== null && !room.isPrivate && (
           <div className="pointer-events-none bg-amber-50/95 border-b border-amber-200/90 px-3 py-1.5 flex items-center justify-between gap-2 text-amber-950 shrink-0 z-10 animate-in fade-in">
             <div className="flex items-center gap-2 min-w-0">
               <span className="w-6 h-6 rounded-full bg-white border border-amber-300 text-amber-600 flex items-center justify-center shrink-0">
                 <ShieldAlert className="w-3.5 h-3.5" />
               </span>
               <p className="text-[11px] sm:text-xs font-bold text-amber-950 leading-snug line-clamp-2">
-                أهلاً بك يا {currentUser.name} في {room.title} — نرجو الالتزام بقواعد الآداب العامة واحترام جميع الأعضاء ✨
+                {welcomeBannerStage === 'welcome'
+                  ? `أهلاً بك في ${room.title}`
+                  : `تنبيه الغرفة: نرجو الالتزام بقواعد الآداب العامة واحترام جميع الأعضاء في ${room.title} ✨`}
               </p>
             </div>
             <button
               type="button"
-              onClick={() => setShowCompactWelcomeBanner(false)}
+              onClick={() => setWelcomeBannerStage(null)}
               className="pointer-events-auto p-1 rounded-full text-amber-700 hover:text-amber-950 hover:bg-amber-200/60 transition-colors shrink-0 cursor-pointer"
               title="إخفاء التنبيه"
             >

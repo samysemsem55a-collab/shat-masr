@@ -7171,7 +7171,9 @@ export async function sendFirestoreCallSignal(targetUserId: string, signal: any)
 
   const tasks: Promise<any>[] = [];
   if (rtdb) {
-    tasks.push(set(ref(rtdb, `call_signals/${targetUserId}/${signalId}`), sanitizedPayload));
+    tasks.push(
+      set(ref(rtdb, `call_signals/${targetUserId}/${signalId}`), sanitizedPayload).catch(() => {})
+    );
   }
   if (db) {
     tasks.push(

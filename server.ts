@@ -660,6 +660,7 @@ wss.on('connection', (ws: WebSocket) => {
           }
 
           const joinTs = Date.now();
+          const wasAlreadyInRoom = occMap.has(user.id);
           // Register occupant
           const occupant: RoomOccupant = {
             id: user.id,
@@ -724,6 +725,24 @@ wss.on('connection', (ws: WebSocket) => {
             users: occupantsList
           });
 
+          // Broadcast public room entry notification ONLY to other occupants currently in the room
+          const cleanJoinName = typeof user.name === 'string' ? user.name.trim() : '';
+          const isPrivateRoom = Boolean(payload.isPrivate) || String(roomId).startsWith('priv_');
+          if (!isPrivateRoom && !wasAlreadyInRoom && cleanJoinName) {
+            broadcastToRoom(roomId, {
+              type: 'ROOM_USER_JOINED',
+              eventId: `rjoin_${joinTs}_${roomId}_${user.id}`,
+              roomId,
+              user: {
+                id: user.id,
+                name: cleanJoinName,
+                avatar: user.avatar || '',
+                role: user.role,
+                vipBadge: user.vipBadge
+              }
+            }, ws);
+          }
+
           // Broadcast global presence
           broadcastToAll({
             type: 'GLOBAL_PRESENCE_UPDATE',
@@ -732,7 +751,6 @@ wss.on('connection', (ws: WebSocket) => {
           });
 
           // Announce room entry globally if not recently announced (ensures room-level joins are visible everywhere)
-          const cleanJoinName = typeof user.name === 'string' ? user.name.trim() : '';
           const isValidRoomJoiner =
             !user.isGuest &&
             cleanJoinName.length >= 2 &&

@@ -41,11 +41,19 @@ const ICE_SERVERS: RTCConfiguration = {
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
     { urls: 'stun:stun2.l.google.com:19302' },
-    { urls: 'stun:stun3.l.google.com:19302' },
-    { urls: 'stun:stun4.l.google.com:19302' },
     { urls: 'stun:stun.cloudflare.com:3478' },
+    {
+      urls: [
+        'turn:openrelay.metered.ca:80',
+        'turn:openrelay.metered.ca:443',
+        'turn:openrelay.metered.ca:443?transport=tcp',
+        'turns:openrelay.metered.ca:443?transport=tcp',
+      ],
+      username: 'openrelayproject',
+      credential: 'openrelayproject',
+    },
   ],
-  iceCandidatePoolSize: 8,
+  iceCandidatePoolSize: 10,
 };
 
 export const CallModal: React.FC<CallModalProps> = ({
@@ -103,6 +111,8 @@ export const CallModal: React.FC<CallModalProps> = ({
   const hasEndedRef = useRef<boolean>(false);
   const isUnmountedOrClosedRef = useRef<boolean>(false);
   const connectFallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const iceDisconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const iceRestartCountRef = useRef<number>(0);
 
   const unlockAndPlayRemoteMedia = useCallback(() => {
     if (remoteAudioRef.current) {
@@ -120,7 +130,11 @@ export const CallModal: React.FC<CallModalProps> = ({
       }
     }
     if (remoteVideoRef.current && remoteVideoRef.current.srcObject) {
-      remoteVideoRef.current.play().catch(() => {});
+      remoteVideoRef.current.play().catch((err) => {
+        if (err?.name === 'NotAllowedError') {
+          setAutoplayBlocked(true);
+        }
+      });
     }
     if (localVideoRef.current && localVideoRef.current.srcObject) {
       localVideoRef.current.play().catch(() => {});
@@ -136,6 +150,11 @@ export const CallModal: React.FC<CallModalProps> = ({
       clearTimeout(connectFallbackTimerRef.current);
       connectFallbackTimerRef.current = null;
     }
+    if (iceDisconnectTimerRef.current) {
+      clearTimeout(iceDisconnectTimerRef.current);
+      iceDisconnectTimerRef.current = null;
+    }
+    iceRestartCountRef.current = 0;
     if (pcRef.current) {
       try {
         pcRef.current.onicecandidate = null;
@@ -188,28 +207,19 @@ export const CallModal: React.FC<CallModalProps> = ({
   );
 
   const attachStreamTracksToPeer = useCallback(async (pc: RTCPeerConnection, stream: MediaStream) => {
-    const transceivers = pc.getTransceivers();
+    const senders = pc.getSenders();
     for (const track of stream.getTracks()) {
-      const existingEmpty = transceivers.find(
-        (t) =>
-          t.receiver.track?.kind === track.kind &&
-          !t.sender.track &&
-          t.currentDirection !== 'stopped'
-      );
-      if (existingEmpty) {
+      const alreadyBound = senders.some((s) => s.track && s.track.id === track.id);
+      if (alreadyBound) continue;
+
+      const sameKindSender = senders.find((s) => s.track && s.track.kind === track.kind);
+      if (sameKindSender) {
         try {
-          existingEmpty.direction = 'sendrecv';
-        } catch {}
-        try {
-          await existingEmpty.sender.replaceTrack(track);
-          try {
-            (existingEmpty.sender as any).setStreams?.(stream);
-          } catch {}
+          await sameKindSender.replaceTrack(track);
           continue;
-        } catch {
-          // Fall back to addTrack below
-        }
+        } catch {}
       }
+
       try {
         pc.addTrack(track, stream);
       } catch {}
@@ -316,6 +326,37 @@ export const CallModal: React.FC<CallModalProps> = ({
         }
       };
 
+      const triggerIceRestart = () => {
+        if (
+          hasEndedRef.current ||
+          isUnmountedOrClosedRef.current ||
+          iceRestartCountRef.current >= 2 ||
+          pc.signalingState !== 'stable'
+        ) {
+          if (iceRestartCountRef.current >= 2) {
+            setMicWarning('تعذر استقرار اتصال الشبكة المباشر — يرجى التحقق من الإنترنت.');
+          }
+          return;
+        }
+        iceRestartCountRef.current += 1;
+        try {
+          pc.restartIce?.();
+        } catch {}
+        pc.createOffer({ iceRestart: true })
+          .then(async (reOffer) => {
+            if (hasEndedRef.current || isUnmountedOrClosedRef.current) return;
+            await pc.setLocalDescription(reOffer);
+            emitCallSignal({
+              type: 'call_renegotiate',
+              fromUserId: currentUser.id,
+              sdp: { type: reOffer.type, sdp: reOffer.sdp },
+            });
+          })
+          .catch(() => {
+            setMicWarning('تعذر استقرار اتصال الشبكة المباشر — يرجى التحقق من الإنترنت.');
+          });
+      };
+
       const syncConnectionState = () => {
         const conn = pc.connectionState;
         const ice = pc.iceConnectionState;
@@ -324,24 +365,31 @@ export const CallModal: React.FC<CallModalProps> = ({
             clearTimeout(connectFallbackTimerRef.current);
             connectFallbackTimerRef.current = null;
           }
+          if (iceDisconnectTimerRef.current) {
+            clearTimeout(iceDisconnectTimerRef.current);
+            iceDisconnectTimerRef.current = null;
+          }
+          iceRestartCountRef.current = 0;
+          setMicWarning(null);
           setCallState('connected');
           unlockAndPlayRemoteMedia();
         } else if ((conn === 'failed' || ice === 'failed') && !hasEndedRef.current) {
-          if (!isAnswerer && pc.signalingState === 'stable') {
-            pc.createOffer({ iceRestart: true })
-              .then(async (reOffer) => {
-                await pc.setLocalDescription(reOffer);
-                emitCallSignal({
-                  type: 'call_renegotiate',
-                  fromUserId: currentUser.id,
-                  sdp: { type: reOffer.type, sdp: reOffer.sdp },
-                });
-              })
-              .catch(() => {
-                setMicWarning('تعذر استقرار اتصال الشبكة المباشر — يرجى التحقق من الإنترنت.');
-              });
-          } else {
-            setMicWarning('تعذر استقرار اتصال الشبكة المباشر — يرجى التحقق من الإنترنت.');
+          if (iceDisconnectTimerRef.current) {
+            clearTimeout(iceDisconnectTimerRef.current);
+            iceDisconnectTimerRef.current = null;
+          }
+          triggerIceRestart();
+        } else if (ice === 'disconnected' && !hasEndedRef.current) {
+          if (!iceDisconnectTimerRef.current) {
+            iceDisconnectTimerRef.current = setTimeout(() => {
+              iceDisconnectTimerRef.current = null;
+              if (
+                !hasEndedRef.current &&
+                (pc.iceConnectionState === 'disconnected' || pc.iceConnectionState === 'failed')
+              ) {
+                triggerIceRestart();
+              }
+            }, 3500);
           }
         }
       };
@@ -590,11 +638,18 @@ export const CallModal: React.FC<CallModalProps> = ({
 
       if (signal.type === 'call_renegotiate' && signal.sdp && pcRef.current) {
         try {
+          if (pcRef.current.signalingState === 'have-local-offer') {
+            await pcRef.current.setLocalDescription({ type: 'rollback' });
+          }
           await pcRef.current.setRemoteDescription(new RTCSessionDescription(signal.sdp));
           hasRemoteDescRef.current = true;
           if (localStreamRef.current) {
             await attachStreamTracksToPeer(pcRef.current, localStreamRef.current);
           }
+          for (const candidate of pendingIceRef.current) {
+            await pcRef.current.addIceCandidate(new RTCIceCandidate(candidate)).catch(() => {});
+          }
+          pendingIceRef.current = [];
           const answer = await pcRef.current.createAnswer();
           await pcRef.current.setLocalDescription(answer);
           emitCallSignal({
@@ -612,6 +667,10 @@ export const CallModal: React.FC<CallModalProps> = ({
           if (pcRef.current.signalingState === 'have-local-offer') {
             await pcRef.current.setRemoteDescription(new RTCSessionDescription(signal.sdp));
             hasRemoteDescRef.current = true;
+            for (const candidate of pendingIceRef.current) {
+              await pcRef.current.addIceCandidate(new RTCIceCandidate(candidate)).catch(() => {});
+            }
+            pendingIceRef.current = [];
             unlockAndPlayRemoteMedia();
           }
         } catch {}

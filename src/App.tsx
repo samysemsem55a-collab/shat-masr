@@ -66,7 +66,6 @@ import {
   sendFriendRequest,
   acceptFriendRequestInDB,
   declineFriendRequestInDB,
-  checkAndMarkFirstPublicRoomEntry,
   syncCumulativeVisitorsRealtime,
   setRoomBackgroundTheme,
   setRoomLockState,
@@ -1525,9 +1524,6 @@ export default function App() {
     return () => unsub();
   }, [currentUser.id, isProfileReady]);
 
-  // Track already-processed first-entry welcome checks in current session
-  const welcomedPublicRoomKeysRef = useRef<Set<string>>(new Set());
-
   // Load older room messages upward (30 per page via pure onSnapshot limit expansion)
   const handleLoadOlderRoomMessages = useCallback(async (): Promise<number> => {
     if (!activeRoom?.id || isLoadingOlderRoomMsgs || noMoreOlderRoomMsgsRef.current) return 0;
@@ -1648,11 +1644,8 @@ export default function App() {
       return;
     }
 
-    let isCancelled = false;
-    let welcomeBotTimer: ReturnType<typeof setTimeout> | null = null;
-
     // Join room on real-time server
-    realtimeSocket.joinRoom(activeRoom.id, currentUser);
+    realtimeSocket.joinRoom(activeRoom.id, currentUser, Boolean(activeRoom.isPrivate));
 
     // Subscribe to RTDB room presence (`presence/{userId}`)
     const unsubRoomFirestorePresence = subscribeToRoomPresence(activeRoom.id, currentUser, (_fsCount, fsOccupants) => {
@@ -1745,75 +1738,7 @@ export default function App() {
       setActiveRoomMessages([]);
     });
 
-    // Automatic Room Entry Notice & Compact Bot Welcome Message on entry
-    const sessionKey = `${currentUser.id}::${activeRoom.id}`;
-    if (!welcomedPublicRoomKeysRef.current.has(sessionKey)) {
-      welcomedPublicRoomKeysRef.current.add(sessionKey);
-
-      // Broadcast concise live join system notice for everyone in the room
-      const joinNotice: Message = {
-        id: `join_${activeRoom.id}_${currentUser.id}_${Date.now()}`,
-        roomId: activeRoom.id,
-        senderId: currentUser.id,
-        senderName: currentUser.name,
-        senderAvatar: currentUser.avatar,
-        senderRole: currentUser.role,
-        senderVipBadge: currentUser.vipBadge,
-        badges: currentUser.badges || [],
-        type: 'system_welcome',
-        isPrivate: false,
-        content: `✨ ${currentUser.name} انضم للغرفة`,
-        text: `✨ ${currentUser.name} انضم للغرفة`,
-        createdAt: Date.now(),
-        timestamp: Date.now(),
-        status: 'read',
-      };
-      setActiveRoomMessages(prev => mergeRoomMessageList(prev, [joinNotice]));
-      realtimeSocket.sendMessage(activeRoom.id, joinNotice);
-
-      if (!activeRoom.isPrivate) {
-        checkAndMarkFirstPublicRoomEntry(currentUser.id, activeRoom.id)
-          .then((isFirstEntry) => {
-            if (!isFirstEntry || isCancelled) return;
-            welcomeBotTimer = setTimeout(() => {
-              if (isCancelled) return;
-              const welcomeText = 'تنبيه إداري: نرحب بكم في شات مصر — يُرجى الالتزام بقواعد الآداب العامة واحترام جميع الأعضاء.';
-              const botMsg: Message = {
-                id: `bot_welcome_${activeRoom.id}_${currentUser.id}`,
-                roomId: activeRoom.id,
-                senderId: 'system_bot',
-                senderName: 'إدارة شات مصر',
-                senderAvatar: '',
-                senderRole: 'super_admin',
-                senderVipBadge: 'تنبيه إداري ⚠️',
-                badges: ['تنبيه إداري'],
-                type: 'system_welcome',
-                isPrivate: false,
-                content: welcomeText,
-                text: welcomeText,
-                reactions: {},
-                userReactions: {},
-                reactionUsers: {},
-                createdAt: Date.now(),
-                timestamp: Date.now(),
-                status: 'read',
-              };
-
-              setActiveRoomMessages(prev => mergeRoomMessageList(prev, [botMsg]));
-              realtimeSocket.sendMessage(activeRoom.id, botMsg);
-              sendFirestoreMessage(activeRoom.id, botMsg).catch((err) => {
-                console.warn('Welcome bot message write notice:', err);
-              });
-            }, 450);
-          })
-          .catch(() => {});
-      }
-    }
-
     return () => {
-      isCancelled = true;
-      if (welcomeBotTimer) clearTimeout(welcomeBotTimer);
-      welcomedPublicRoomKeysRef.current.delete(sessionKey);
       realtimeSocket.leaveRoom(activeRoom.id, currentUser.id);
       unsubRoomFirestorePresence();
       unsubMessages();

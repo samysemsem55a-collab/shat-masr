@@ -71,6 +71,7 @@ class RealtimeSocketManager {
   private roomPurgedListeners: Map<string, Set<() => void>> = new Map();
   private roomMessageDeletedListeners: Map<string, Set<(messageId: string) => void>> = new Map();
   private globalJoinListeners: Set<(user: { id: string; name: string; avatar?: string; role?: string; vipBadge?: string }) => void> = new Set();
+  private roomUserJoinedListeners: Map<string, Set<(user: { id: string; name: string; avatar?: string; role?: string; vipBadge?: string }, eventId?: string) => void>> = new Map();
   private allRoomLastMessageListeners: Set<(lastMessages: Record<string, { senderName: string; content: string; type?: string; timestamp: number }>) => void> = new Set();
   private latestRoomLastMessages: Record<string, { senderName: string; content: string; type?: string; timestamp: number }> = {};
   private appUpdateNoticeListeners: Set<(notice: { version: string; message: string; pushedBy: string; timestamp: number }) => void> = new Set();
@@ -734,6 +735,14 @@ class RealtimeSocketManager {
         break;
       }
 
+      case 'ROOM_USER_JOINED': {
+        const { roomId, user, eventId } = action;
+        if (roomId && user && user.id && user.name) {
+          this.roomUserJoinedListeners.get(roomId)?.forEach(cb => cb(user, eventId));
+        }
+        break;
+      }
+
       case 'ALL_ROOM_LAST_MESSAGES': {
         const lastMessages = (action.lastMessages && typeof action.lastMessages === 'object')
           ? (action.lastMessages as Record<string, { senderName: string; content: string; type?: string; timestamp: number }>)
@@ -787,10 +796,10 @@ class RealtimeSocketManager {
     this.send('USER_REGISTER', { user });
   }
 
-  joinRoom(roomId: string, user: User) {
+  joinRoom(roomId: string, user: User, isPrivate: boolean = false) {
     this.currentRoomId = roomId;
     this.currentUser = user;
-    this.send('JOIN_ROOM', { roomId, user });
+    this.send('JOIN_ROOM', { roomId, user, isPrivate });
   }
 
   leaveRoom(roomId: string, userId: string) {
@@ -1387,6 +1396,19 @@ class RealtimeSocketManager {
     this.globalJoinListeners.add(callback);
     return () => {
       this.globalJoinListeners.delete(callback);
+    };
+  }
+
+  subscribeToRoomUserJoined(
+    roomId: string,
+    callback: (user: { id: string; name: string; avatar?: string; role?: string; vipBadge?: string }, eventId?: string) => void
+  ): () => void {
+    if (!this.roomUserJoinedListeners.has(roomId)) {
+      this.roomUserJoinedListeners.set(roomId, new Set());
+    }
+    this.roomUserJoinedListeners.get(roomId)!.add(callback);
+    return () => {
+      this.roomUserJoinedListeners.get(roomId)?.delete(callback);
     };
   }
 
