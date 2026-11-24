@@ -49,7 +49,8 @@ import {
   setPrivateTyping,
   subscribeToPrivateTyping,
   submitUserReport,
-  recordGiftRecipientStats
+  recordGiftRecipientStats,
+  getLocalActiveCall
 } from '../services/firebase';
 import { FriendsList } from './FriendsList';
 import { LuxuryGiftModal } from './LuxuryGiftModal';
@@ -144,9 +145,14 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
   // Modals: Calls, Coins Transfer, Wallpapers & Luxury Virtual Gifts
   const [isGiftModalOpen, setIsGiftModalOpen] = useState(false);
   const [isWallpapersModalOpen, setIsWallpapersModalOpen] = useState(false);
-  const [callModalState, setCallModalState] = useState<{ isOpen: boolean; callType: 'audio' | 'video' }>({
+  const [callModalState, setCallModalState] = useState<{
+    isOpen: boolean;
+    callType: 'audio' | 'video';
+    peer: ChatContact | null;
+  }>({
     isOpen: false,
-    callType: 'audio'
+    callType: 'audio',
+    peer: null,
   });
   const [isCoinsTransferOpen, setIsCoinsTransferOpen] = useState(false);
 
@@ -711,8 +717,12 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
   // Direct Audio / Video Call Launcher for all entered users
   const handleRequestCall = (callType: 'audio' | 'video') => {
     if (!activeContact) return;
+    if (getLocalActiveCall() || callModalState.isOpen) {
+      toast.error('أنت بالفعل في مكالمة نشطة حالياً');
+      return;
+    }
     globalRadioPlayer.pauseForCall();
-    setCallModalState({ isOpen: true, callType });
+    setCallModalState({ isOpen: true, callType, peer: activeContact });
   };
 
   // WhatsApp-style Media file picker: 0ms blob preview + fast client compression + live progress
@@ -2547,17 +2557,17 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
       )}
 
       {/* Live Audio and Video Call Modal (Strictly registered users only) */}
-      {activeContact && (
+      {(callModalState.peer || activeContact) && (
         <CallModal
           isOpen={callModalState.isOpen}
-          onClose={() => setCallModalState({ isOpen: false, callType: 'audio' })}
+          onClose={() => setCallModalState({ isOpen: false, callType: 'audio', peer: null })}
           currentUser={currentUser}
           peerUser={{
-            id: activeContact.id,
-            name: activeContact.name,
-            avatar: activeContact.avatar,
-            countryFlag: activeContact.countryFlag,
-            role: activeContact.role
+            id: (callModalState.peer || activeContact)!.id,
+            name: (callModalState.peer || activeContact)!.name,
+            avatar: (callModalState.peer || activeContact)!.avatar,
+            countryFlag: (callModalState.peer || activeContact)!.countryFlag,
+            role: (callModalState.peer || activeContact)!.role
           }}
           callType={callModalState.callType}
           onPromptRegister={onPromptRegister}

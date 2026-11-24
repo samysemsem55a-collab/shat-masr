@@ -7197,6 +7197,158 @@ export async function deleteFirestoreCallSignal(userId: string, signalId: string
   }
 }
 
+export interface LocalActiveCallInfo {
+  callId: string;
+  userId: string;
+  peerId: string;
+  callType: 'audio' | 'video';
+}
+
+let activeLocalCallSession: LocalActiveCallInfo | null = null;
+
+export function getLocalActiveCall(): LocalActiveCallInfo | null {
+  return activeLocalCallSession;
+}
+
+export async function registerLocalActiveCall(
+  callId: string,
+  userId: string,
+  peerId: string,
+  callType: 'audio' | 'video'
+): Promise<void> {
+  if (!callId || !userId) return;
+  activeLocalCallSession = { callId, userId, peerId, callType };
+  const now = getServerNowMs();
+  const payload = {
+    callId,
+    userId,
+    peerId,
+    callType,
+    isActive: true,
+    updatedAt: now,
+    expiresAt: now + 180_000,
+  };
+  const tasks: Promise<any>[] = [];
+  if (rtdb) {
+    const activeRef = ref(rtdb, `call_signals/${userId}/_active`);
+    try {
+      onDisconnect(activeRef).remove().catch(() => {});
+    } catch {}
+    tasks.push(set(activeRef, payload).catch(() => {}));
+  }
+  if (db) {
+    tasks.push(
+      setDoc(doc(db, 'users', userId, 'call_signals', '_active'), payload).catch(() => {})
+    );
+  }
+  if (tasks.length > 0) {
+    await Promise.allSettled(tasks);
+  }
+}
+
+export async function unregisterLocalActiveCall(callId: string, userId: string): Promise<void> {
+  if (activeLocalCallSession && (!callId || activeLocalCallSession.callId === callId)) {
+    activeLocalCallSession = null;
+  }
+  if (!userId) return;
+  const tasks: Promise<any>[] = [];
+  if (rtdb) {
+    tasks.push(remove(ref(rtdb, `call_signals/${userId}/_active`)).catch(() => {}));
+  }
+  if (db) {
+    tasks.push(deleteDoc(doc(db, 'users', userId, 'call_signals', '_active')).catch(() => {}));
+  }
+  if (tasks.length > 0) {
+    await Promise.allSettled(tasks);
+  }
+}
+
+export async function checkTargetUserInCall(targetUserId: string): Promise<boolean> {
+  if (!targetUserId) return false;
+  const now = getServerNowMs();
+  if (rtdb) {
+    try {
+      const snap = await get(ref(rtdb, `call_signals/${targetUserId}/_active`));
+      if (snap.exists()) {
+        const val = snap.val();
+        if (val?.isActive && (!val.expiresAt || Number(val.expiresAt) > now)) {
+          return true;
+        }
+      }
+    } catch {}
+  }
+  if (db) {
+    try {
+      const snap = await getDoc(doc(db, 'users', targetUserId, 'call_signals', '_active'));
+      if (snap.exists()) {
+        const val = snap.data() as any;
+        if (val?.isActive && (!val.expiresAt || Number(val.expiresAt) > now)) {
+          return true;
+        }
+      }
+    } catch {}
+  }
+  return false;
+}
+
+export async function cleanupCallSignalsForCall(
+  userId: string,
+  callId: string,
+  onlyTypes?: string[]
+): Promise<void> {
+  if (!userId || !callId) return;
+  const typeFilter = onlyTypes && onlyTypes.length > 0 ? new Set(onlyTypes) : null;
+  const tasks: Promise<any>[] = [];
+
+  const rtdbInstance = rtdb;
+  if (rtdbInstance) {
+    tasks.push(
+      (async () => {
+        try {
+          const snap = await get(ref(rtdbInstance, `call_signals/${userId}`));
+          if (!snap.exists()) return;
+          const val = snap.val() as Record<string, any>;
+          await Promise.allSettled(
+            Object.entries(val).map(([key, data]) => {
+              if (key === '_active') return Promise.resolve();
+              if (data?.callId !== callId) return Promise.resolve();
+              if (typeFilter && !typeFilter.has(String(data?.type || ''))) return Promise.resolve();
+              return remove(ref(rtdbInstance, `call_signals/${userId}/${key}`)).catch(() => {});
+            })
+          );
+        } catch {}
+      })()
+    );
+  }
+
+  const firestore = db;
+  if (firestore) {
+    tasks.push(
+      (async () => {
+        try {
+          const q = query(
+            collection(firestore, 'users', userId, 'call_signals'),
+            where('callId', '==', callId)
+          );
+          const snap = await getDocs(q);
+          await Promise.allSettled(
+            snap.docs.map((d) => {
+              if (d.id === '_active') return Promise.resolve();
+              const data = d.data() as any;
+              if (typeFilter && !typeFilter.has(String(data?.type || ''))) return Promise.resolve();
+              return deleteDoc(d.ref).catch(() => {});
+            })
+          );
+        } catch {}
+      })()
+    );
+  }
+
+  if (tasks.length > 0) {
+    await Promise.allSettled(tasks);
+  }
+}
+
 export function subscribeToFirestoreCallSignals(
   userId: string,
   onSignal: (signal: any) => void
@@ -7208,7 +7360,7 @@ export function subscribeToFirestoreCallSignals(
   const deliver = (raw: any, fallbackId?: string) => {
     if (!raw || typeof raw !== 'object') return;
     const id = String(raw.signalId || fallbackId || '');
-    if (!id || seenIds.has(id)) return;
+    if (!id || id === '_active' || seenIds.has(id)) return;
     const now = getServerNowMs();
     const createdAt = typeof raw.createdAt === 'number' ? raw.createdAt : (typeof raw.createdAtMs === 'number' ? raw.createdAtMs : 0);
     if (typeof raw.expiresAt === 'number' && raw.expiresAt < now) {
@@ -7232,6 +7384,7 @@ export function subscribeToFirestoreCallSignals(
         const val = snap.val();
         if (!val || typeof val !== 'object') return;
         Object.entries(val).forEach(([key, data]) => {
+          if (key === '_active') return;
           deliver(data, key);
         });
       });
@@ -7246,6 +7399,7 @@ export function subscribeToFirestoreCallSignals(
         colRef,
         (snap) => {
           snap.docChanges().forEach((change) => {
+            if (change.doc.id === '_active') return;
             if (change.type === 'added' || change.type === 'modified') {
               deliver(change.doc.data(), change.doc.id);
             }

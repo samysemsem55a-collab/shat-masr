@@ -15,7 +15,16 @@ import {
 import { User } from '../types/chat';
 import { sounds } from '../utils/soundEffects';
 import { realtimeSocket } from '../services/realtimeSocket';
-import { sendFirestoreCallSignal, subscribeToFirestoreCallSignals, deleteFirestoreCallSignal } from '../services/firebase';
+import {
+  sendFirestoreCallSignal,
+  subscribeToFirestoreCallSignals,
+  deleteFirestoreCallSignal,
+  getLocalActiveCall,
+  registerLocalActiveCall,
+  unregisterLocalActiveCall,
+  checkTargetUserInCall,
+  cleanupCallSignalsForCall,
+} from '../services/firebase';
 import { globalRadioPlayer } from '../services/radioPlayer';
 
 interface CallModalProps {
@@ -74,13 +83,27 @@ export const CallModal: React.FC<CallModalProps> = ({
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
   const remoteAudioRef = useRef<HTMLAudioElement>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const ringTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingIceRef = useRef<RTCIceCandidateInit[]>([]);
 
-  // Refs to keep WebRTC lifecycle immune to parent re-renders
+  // Latched props & session refs so parent/user state updates never re-create or drop an active call
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
   const incomingSignalRef = useRef(incomingSignal);
   incomingSignalRef.current = incomingSignal;
+  const currentUserRef = useRef(currentUser);
+  currentUserRef.current = currentUser;
+  const peerUserRef = useRef(peerUser);
+  peerUserRef.current = peerUser;
+  const propCallTypeRef = useRef<'audio' | 'video'>(callType);
+  propCallTypeRef.current = callType;
+  const propIncomingModeRef = useRef<boolean>(incomingMode);
+  propIncomingModeRef.current = incomingMode;
+
+  const sessionUserIdRef = useRef<string>(currentUser.id);
+  const sessionPeerIdRef = useRef<string>(peerUser.id);
+  const sessionCallTypeRef = useRef<'audio' | 'video'>(callType);
+  const sessionIncomingModeRef = useRef<boolean>(incomingMode);
   const userMetaRef = useRef({
     name: currentUser.name,
     avatar: currentUser.avatar,
@@ -91,6 +114,7 @@ export const CallModal: React.FC<CallModalProps> = ({
     avatar: currentUser.avatar,
     countryFlag: currentUser.countryFlag,
   };
+
   const hasRemoteDescRef = useRef<boolean>(false);
   const isSpeakerOnRef = useRef<boolean>(isSpeakerOn);
   isSpeakerOnRef.current = isSpeakerOn;
@@ -102,6 +126,8 @@ export const CallModal: React.FC<CallModalProps> = ({
   const connectFallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const iceDisconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const iceRestartCountRef = useRef<number>(0);
+  const unsubSignalsRef = useRef<(() => void) | null>(null);
+  const unsubFirestoreSignalsRef = useRef<(() => void) | null>(null);
 
   const unlockAndPlayRemoteMedia = useCallback(() => {
     if (remoteAudioRef.current) {
@@ -130,10 +156,14 @@ export const CallModal: React.FC<CallModalProps> = ({
     }
   }, []);
 
-  const cleanupMediaAndPeer = useCallback(() => {
+  const clearSessionTimers = useCallback(() => {
     if (timerRef.current) {
       clearInterval(timerRef.current);
       timerRef.current = null;
+    }
+    if (ringTimerRef.current) {
+      clearTimeout(ringTimerRef.current);
+      ringTimerRef.current = null;
     }
     if (connectFallbackTimerRef.current) {
       clearTimeout(connectFallbackTimerRef.current);
@@ -143,6 +173,10 @@ export const CallModal: React.FC<CallModalProps> = ({
       clearTimeout(iceDisconnectTimerRef.current);
       iceDisconnectTimerRef.current = null;
     }
+  }, []);
+
+  const cleanupMediaAndPeer = useCallback(() => {
+    clearSessionTimers();
     iceRestartCountRef.current = 0;
     if (pcRef.current) {
       try {
@@ -187,25 +221,66 @@ export const CallModal: React.FC<CallModalProps> = ({
     setHasRemoteVideo(false);
     setAutoplayBlocked(false);
     setIsPermissionDenied(false);
-  }, []);
+  }, [clearSessionTimers]);
 
-  const emitCallSignal = useCallback(
-    (signalBody: Record<string, any>) => {
-      const enriched = {
-        ...signalBody,
-        targetUserId: peerUser.id,
-        callId: signalBody.callId || callIdRef.current,
-        signalId: `sig_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
-      };
-      realtimeSocket.sendCallSignal(peerUser.id, enriched);
-      sendFirestoreCallSignal(peerUser.id, enriched).catch(() => {});
+  const detachSignalListenersAndCleanDb = useCallback(
+    (activeCallId: string, myId: string, peerId: string, preserveTerminalPeerSignal: boolean) => {
+      if (unsubSignalsRef.current) {
+        try {
+          unsubSignalsRef.current();
+        } catch {}
+        unsubSignalsRef.current = null;
+      }
+      if (unsubFirestoreSignalsRef.current) {
+        try {
+          unsubFirestoreSignalsRef.current();
+        } catch {}
+        unsubFirestoreSignalsRef.current = null;
+      }
+      if (myId && activeCallId) {
+        unregisterLocalActiveCall(activeCallId, myId).catch(() => {});
+        cleanupCallSignalsForCall(myId, activeCallId).catch(() => {});
+      }
+      if (peerId && activeCallId) {
+        if (preserveTerminalPeerSignal) {
+          cleanupCallSignalsForCall(peerId, activeCallId, [
+            'call_offer',
+            'call_answer',
+            'ice_candidate',
+            'call_renegotiate',
+            'call_renegotiate_answer',
+            'call_accept',
+          ]).catch(() => {});
+          setTimeout(() => {
+            cleanupCallSignalsForCall(peerId, activeCallId).catch(() => {});
+          }, 4000);
+        } else {
+          cleanupCallSignalsForCall(peerId, activeCallId).catch(() => {});
+        }
+      }
     },
-    [peerUser.id]
+    []
   );
 
+  const emitCallSignal = useCallback((signalBody: Record<string, any>) => {
+    const targetId = signalBody.targetUserId || sessionPeerIdRef.current;
+    if (!targetId) return;
+    const enriched = {
+      ...signalBody,
+      targetUserId: targetId,
+      callId: signalBody.callId || callIdRef.current,
+      signalId: `sig_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+    };
+    realtimeSocket.sendCallSignal(targetId, enriched);
+    sendFirestoreCallSignal(targetId, enriched).catch(() => {});
+  }, []);
+
   const attachStreamTracksToPeer = useCallback(async (pc: RTCPeerConnection, stream: MediaStream) => {
+    const activeType = sessionCallTypeRef.current;
     const senders = pc.getSenders();
     for (const track of stream.getTracks()) {
+      // Strictly keep audio calls audio-only
+      if (activeType === 'audio' && track.kind === 'video') continue;
       const alreadyBound = senders.some((s) => s.track && s.track.id === track.id);
       if (alreadyBound) continue;
 
@@ -226,11 +301,15 @@ export const CallModal: React.FC<CallModalProps> = ({
   const createPeerConnection = useCallback(
     (stream: MediaStream | null, isAnswerer: boolean = false) => {
       const pc = new RTCPeerConnection(ICE_SERVERS);
+      const activeType = sessionCallTypeRef.current;
+      const myId = sessionUserIdRef.current;
+      const peerId = sessionPeerIdRef.current;
       hasRemoteDescRef.current = false;
 
       if (!isAnswerer) {
         if (stream) {
           stream.getTracks().forEach((track) => {
+            if (activeType === 'audio' && track.kind === 'video') return;
             pc.addTrack(track, stream);
           });
         }
@@ -239,7 +318,7 @@ export const CallModal: React.FC<CallModalProps> = ({
             pc.addTransceiver('audio', { direction: 'recvonly' });
           } catch {}
         }
-        if (callType === 'video' && (!stream || stream.getVideoTracks().length === 0)) {
+        if (activeType === 'video' && (!stream || stream.getVideoTracks().length === 0)) {
           try {
             pc.addTransceiver('video', { direction: 'recvonly' });
           } catch {}
@@ -247,10 +326,11 @@ export const CallModal: React.FC<CallModalProps> = ({
       }
 
       pc.onicecandidate = (event) => {
-        if (event.candidate && !hasEndedRef.current) {
+        if (event.candidate && !hasEndedRef.current && !isUnmountedOrClosedRef.current) {
+          console.log('[Call] ICE candidate sent', { callId: callIdRef.current, to: peerId });
           emitCallSignal({
             type: 'ice_candidate',
-            fromUserId: currentUser.id,
+            fromUserId: myId,
             candidate: {
               candidate: event.candidate.candidate,
               sdpMid: event.candidate.sdpMid ?? null,
@@ -273,7 +353,7 @@ export const CallModal: React.FC<CallModalProps> = ({
         }
         remoteStreamRef.current = remoteStream;
         setHasRemoteStream(true);
-        if (remoteStream.getVideoTracks().some((vt) => vt.readyState === 'live')) {
+        if (activeType === 'video' && remoteStream.getVideoTracks().some((vt) => vt.readyState === 'live')) {
           setHasRemoteVideo(true);
         }
 
@@ -293,7 +373,7 @@ export const CallModal: React.FC<CallModalProps> = ({
                 }
               });
           }
-          if (remoteVideoRef.current) {
+          if (activeType === 'video' && remoteVideoRef.current) {
             if (remoteVideoRef.current.srcObject !== remoteStream) {
               remoteVideoRef.current.srcObject = remoteStream;
             }
@@ -307,7 +387,7 @@ export const CallModal: React.FC<CallModalProps> = ({
           event.track.onunmute = () => {
             if (isUnmountedOrClosedRef.current || hasEndedRef.current) return;
             setHasRemoteStream(true);
-            if (event.track.kind === 'video') {
+            if (activeType === 'video' && event.track.kind === 'video') {
               setHasRemoteVideo(true);
             }
             bindAndPlayRemote();
@@ -331,7 +411,7 @@ export const CallModal: React.FC<CallModalProps> = ({
           pc.signalingState !== 'stable'
         ) {
           if (iceRestartCountRef.current >= 2) {
-            setMicWarning('تعذر استقرار اتصال الشبكة المباشر — يرجى التحقق من الإنترنت.');
+            setMicWarning('فشل الاتصال بالمكالمة — تعذر استقرار الاتصال بالشبكة.');
           }
           return;
         }
@@ -345,12 +425,12 @@ export const CallModal: React.FC<CallModalProps> = ({
             await pc.setLocalDescription(reOffer);
             emitCallSignal({
               type: 'call_renegotiate',
-              fromUserId: currentUser.id,
+              fromUserId: myId,
               sdp: { type: reOffer.type, sdp: reOffer.sdp },
             });
           })
           .catch(() => {
-            setMicWarning('تعذر استقرار اتصال الشبكة المباشر — يرجى التحقق من الإنترنت.');
+            setMicWarning('فشل الاتصال بالمكالمة — يرجى التحقق من الإنترنت.');
           });
       };
 
@@ -397,10 +477,11 @@ export const CallModal: React.FC<CallModalProps> = ({
       pcRef.current = pc;
       return pc;
     },
-    [callType, currentUser.id, emitCallSignal, unlockAndPlayRemoteMedia]
+    [emitCallSignal, unlockAndPlayRemoteMedia]
   );
 
-  const acquireUserMedia = useCallback(async (): Promise<MediaStream | null> => {
+  const acquireUserMedia = useCallback(async (requestedType?: 'audio' | 'video'): Promise<MediaStream | null> => {
+    const activeType = requestedType || sessionCallTypeRef.current;
     const isSecureContextReady =
       typeof window === 'undefined'
         ? true
@@ -417,7 +498,7 @@ export const CallModal: React.FC<CallModalProps> = ({
 
     const bindLocalStream = (stream: MediaStream) => {
       localStreamRef.current = stream;
-      if (localVideoRef.current) {
+      if (activeType === 'video' && localVideoRef.current) {
         localVideoRef.current.srcObject = stream;
         localVideoRef.current.play().catch(() => {});
       }
@@ -425,7 +506,7 @@ export const CallModal: React.FC<CallModalProps> = ({
 
     try {
       let stream: MediaStream;
-      if (callType === 'video') {
+      if (activeType === 'video') {
         try {
           stream = await navigator.mediaDevices.getUserMedia({
             audio: true,
@@ -442,6 +523,7 @@ export const CallModal: React.FC<CallModalProps> = ({
           }
         }
       } else {
+        // Audio call flow strictly acquires audio only
         stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
       }
 
@@ -457,7 +539,7 @@ export const CallModal: React.FC<CallModalProps> = ({
       return stream;
     } catch (err: any) {
       // Fallback to audio-only if camera failed/denied on a video call
-      if (callType === 'video') {
+      if (activeType === 'video') {
         try {
           const audioOnlyStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
           if (isUnmountedOrClosedRef.current || hasEndedRef.current) {
@@ -475,28 +557,19 @@ export const CallModal: React.FC<CallModalProps> = ({
           // Fall through to full warning below
         }
       }
-      const errName = err?.name || '';
-      if (errName === 'NotAllowedError' || errName === 'PermissionDeniedError') {
-        setIsPermissionDenied(true);
-        setMicWarning('اسمح بالميكروفون والكاميرا عشان المكالمة تشتغل');
-      } else if (errName === 'NotFoundError' || errName === 'DevicesNotFoundError') {
-        setIsPermissionDenied(true);
-        setMicWarning('اسمح بالميكروفون والكاميرا عشان المكالمة تشتغل');
-      } else if (errName === 'NotReadableError' || errName === 'TrackStartError') {
-        setIsPermissionDenied(true);
-        setMicWarning('اسمح بالميكروفون والكاميرا عشان المكالمة تشتغل');
-      } else {
-        setIsPermissionDenied(true);
-        setMicWarning('اسمح بالميكروفون والكاميرا عشان المكالمة تشتغل');
-      }
+      console.error('[Call] Media access failed:', err?.name || err?.message || err);
+      setIsPermissionDenied(true);
+      setMicWarning('اسمح بالميكروفون والكاميرا عشان المكالمة تشتغل');
       return null;
     }
-  }, [callType]);
+  }, []);
 
   const handleRetryMediaPermission = useCallback(async () => {
-    const stream = await acquireUserMedia();
+    const activeType = sessionCallTypeRef.current;
+    const myId = sessionUserIdRef.current;
+    const stream = await acquireUserMedia(activeType);
     if (!stream || isUnmountedOrClosedRef.current || hasEndedRef.current) return;
-    if (callType === 'video' && stream.getVideoTracks().length > 0) {
+    if (activeType === 'video' && stream.getVideoTracks().length > 0) {
       setIsVideoEnabled(true);
     }
     if (pcRef.current) {
@@ -507,13 +580,13 @@ export const CallModal: React.FC<CallModalProps> = ({
           await pcRef.current.setLocalDescription(offer);
           emitCallSignal({
             type: 'call_renegotiate',
-            fromUserId: currentUser.id,
+            fromUserId: myId,
             sdp: { type: offer.type, sdp: offer.sdp },
           });
         } catch {}
       }
     }
-  }, [acquireUserMedia, attachStreamTracksToPeer, callType, currentUser.id, emitCallSignal]);
+  }, [acquireUserMedia, attachStreamTracksToPeer, emitCallSignal]);
 
   // Keep <video> and <audio> elements bound to streams whenever video toggles or UI updates
   useEffect(() => {
@@ -578,33 +651,65 @@ export const CallModal: React.FC<CallModalProps> = ({
     };
   }, [isOpen, callState]);
 
-  // Outgoing call setup + WebRTC signaling subscription (Socket + Firestore relay)
+  // Stable call session lifecycle — strictly keyed on [isOpen] using refs so parent/user updates never drop active calls
   useEffect(() => {
     if (!isOpen) return;
     globalRadioPlayer.pauseForCall();
 
+    const myId = currentUserRef.current.id;
+    const activePeer = peerUserRef.current;
+    const activeType = propCallTypeRef.current;
+    const isIncoming = propIncomingModeRef.current;
+    const initialIncoming = incomingSignalRef.current;
+
+    sessionUserIdRef.current = myId;
+    sessionPeerIdRef.current = activePeer.id;
+    sessionCallTypeRef.current = activeType;
+    sessionIncomingModeRef.current = isIncoming;
+
+    const sessionCallId = isIncoming
+      ? String(initialIncoming?.callId || `call_in_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`)
+      : `call_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+
+    // Prevent overlapping local calls if another call session is already active
+    const existingLocal = getLocalActiveCall();
+    if (existingLocal && existingLocal.callId !== sessionCallId) {
+      isUnmountedOrClosedRef.current = false;
+      hasEndedRef.current = true;
+      setEndReason('أنت بالفعل في مكالمة نشطة حالياً');
+      setCallState('ended');
+      const t = setTimeout(() => {
+        if (!isUnmountedOrClosedRef.current) onCloseRef.current();
+      }, 1200);
+      return () => {
+        isUnmountedOrClosedRef.current = true;
+        clearTimeout(t);
+      };
+    }
+
+    callIdRef.current = sessionCallId;
     isUnmountedOrClosedRef.current = false;
     hasEndedRef.current = false;
     setDuration(0);
     setIsMuted(false);
     setEndReason(null);
-    setIsVideoEnabled(callType === 'video');
+    setMicWarning(null);
+    setIsPermissionDenied(false);
+    setIsVideoEnabled(activeType === 'video');
     setHasRemoteStream(false);
     setHasRemoteVideo(false);
     setAutoplayBlocked(false);
-    setCallState(incomingMode ? 'incoming' : 'ringing');
-    const initialIncoming = incomingSignalRef.current;
+    setCallState(isIncoming ? 'incoming' : 'ringing');
     pendingIceRef.current = Array.isArray(initialIncoming?._earlyIce) ? [...initialIncoming._earlyIce] : [];
     const processedSignals = new Set<string>();
 
-    callIdRef.current = incomingMode
-      ? String(initialIncoming?.callId || `call_in_${Date.now()}`)
-      : `call_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    registerLocalActiveCall(sessionCallId, myId, activePeer.id, activeType).catch(() => {});
 
-    const closeGracefully = (reason?: string) => {
+    const closeGracefully = (reason?: string, preserveTerminalPeerSignal: boolean = false) => {
       if (hasEndedRef.current) return;
       hasEndedRef.current = true;
       sounds.stopCallRing();
+      detachSignalListenersAndCleanDb(sessionCallId, myId, activePeer.id, preserveTerminalPeerSignal);
       cleanupMediaAndPeer();
       if (reason) setEndReason(reason);
       setCallState('ended');
@@ -612,41 +717,53 @@ export const CallModal: React.FC<CallModalProps> = ({
         if (!isUnmountedOrClosedRef.current) {
           onCloseRef.current();
         }
-      }, 650);
+      }, reason ? 1200 : 650);
     };
 
     const handleIncomingSignal = async (signal: any) => {
       if (isUnmountedOrClosedRef.current || !signal) return;
-      if (signal.targetUserId && signal.targetUserId !== currentUser.id) return;
-      if (signal.fromUserId && signal.fromUserId !== peerUser.id) return;
+      if (signal.targetUserId && signal.targetUserId !== myId) return;
+      if (signal.fromUserId && signal.fromUserId !== activePeer.id) return;
       if (signal.callId && callIdRef.current && signal.callId !== callIdRef.current) {
         return;
       }
       if (signal.signalId) {
         if (processedSignals.has(signal.signalId)) return;
         processedSignals.add(signal.signalId);
-        deleteFirestoreCallSignal(currentUser.id, signal.signalId);
+        deleteFirestoreCallSignal(myId, signal.signalId);
       }
 
       if (signal.type === 'call_end' || signal.type === 'call_reject' || signal.type === 'call_busy') {
+        if (signal.type === 'call_reject') {
+          console.log('[Call] Call declined', { callId: sessionCallId, by: activePeer.id });
+        } else if (signal.type === 'call_busy') {
+          console.log('[Call] Target user is busy', { callId: sessionCallId, by: activePeer.id });
+        } else {
+          console.log('[Call] Call hangup', { callId: sessionCallId, by: activePeer.id });
+        }
         const msg =
           signal.type === 'call_busy'
-            ? 'الطرف الآخر مشغول بمكالمة أخرى'
+            ? 'الطرف الآخر مشغول في مكالمة أخرى'
             : signal.type === 'call_reject'
             ? 'تم رفض المكالمة'
             : 'تم إنهاء المكالمة';
-        closeGracefully(msg);
+        closeGracefully(msg, false);
         return;
       }
 
       if (signal.type === 'call_accept') {
+        if (ringTimerRef.current) {
+          clearTimeout(ringTimerRef.current);
+          ringTimerRef.current = null;
+        }
+        console.log('[Call] Call accepted', { callId: sessionCallId, by: activePeer.id });
         sounds.stopCallRing();
         sounds.playMessageReceived();
         setCallState((prev) => (prev === 'connected' || prev === 'ended' ? prev : 'connected'));
         return;
       }
 
-      if (signal.type === 'call_offer' && signal.sdp && incomingMode && pcRef.current && callStateRef.current !== 'incoming') {
+      if (signal.type === 'call_offer' && signal.sdp && isIncoming && pcRef.current && callStateRef.current !== 'incoming') {
         try {
           if (pcRef.current.signalingState === 'stable') {
             await pcRef.current.setRemoteDescription(new RTCSessionDescription(signal.sdp));
@@ -662,11 +779,14 @@ export const CallModal: React.FC<CallModalProps> = ({
             await pcRef.current.setLocalDescription(answer);
             emitCallSignal({
               type: 'call_answer',
-              fromUserId: currentUser.id,
+              fromUserId: myId,
               sdp: { type: answer.type, sdp: answer.sdp },
             });
           }
-        } catch {}
+        } catch (err) {
+          console.error('[Call] Failed handling delayed offer:', err);
+          setMicWarning('تعذر إتمام ربط المكالمة — يرجى المحاولة مرة أخرى.');
+        }
         return;
       }
 
@@ -688,11 +808,13 @@ export const CallModal: React.FC<CallModalProps> = ({
           await pcRef.current.setLocalDescription(answer);
           emitCallSignal({
             type: 'call_renegotiate_answer',
-            fromUserId: currentUser.id,
+            fromUserId: myId,
             sdp: { type: answer.type, sdp: answer.sdp },
           });
           unlockAndPlayRemoteMedia();
-        } catch {}
+        } catch (err) {
+          console.error('[Call] Renegotiation error:', err);
+        }
         return;
       }
 
@@ -712,7 +834,11 @@ export const CallModal: React.FC<CallModalProps> = ({
       }
 
       if (signal.type === 'call_answer' && signal.sdp && pcRef.current) {
-        console.log('Answer received');
+        if (ringTimerRef.current) {
+          clearTimeout(ringTimerRef.current);
+          ringTimerRef.current = null;
+        }
+        console.log('[Call] Answer received', { callId: sessionCallId, from: activePeer.id });
         try {
           if (pcRef.current.signalingState === 'have-local-offer') {
             await pcRef.current.setRemoteDescription(new RTCSessionDescription(signal.sdp));
@@ -726,14 +852,24 @@ export const CallModal: React.FC<CallModalProps> = ({
           sounds.playMessageReceived();
           setCallState((prev) => (prev === 'connected' || prev === 'ended' ? prev : 'connecting'));
           unlockAndPlayRemoteMedia();
-        } catch {
-          // ignore duplicate answer
+
+          if (!connectFallbackTimerRef.current) {
+            connectFallbackTimerRef.current = setTimeout(() => {
+              connectFallbackTimerRef.current = null;
+              if (!hasEndedRef.current && !isUnmountedOrClosedRef.current && callStateRef.current === 'connecting') {
+                setMicWarning('جاري محاولة تقوية اتصال الشبكة بالمكالمة...');
+              }
+            }, 15000);
+          }
+        } catch (err) {
+          console.error('[Call] Error applying Answer:', err);
+          setMicWarning('تعذر تطبيق الرد على المكالمة — يرجى التحقق من الشبكة.');
         }
         return;
       }
 
       if (signal.type === 'ice_candidate' && signal.candidate) {
-        console.log('ICE candidate received');
+        console.log('[Call] ICE candidate received', { callId: sessionCallId, from: signal.fromUserId });
         if (pcRef.current && (hasRemoteDescRef.current || pcRef.current.remoteDescription)) {
           await pcRef.current.addIceCandidate(new RTCIceCandidate(signal.candidate)).catch(() => {});
         } else {
@@ -745,11 +881,11 @@ export const CallModal: React.FC<CallModalProps> = ({
     const handleEarlyIceEvent = (e: Event) => {
       const detail = (e as CustomEvent<{ callId?: string; candidate?: any; signalId?: string }>).detail;
       if (!detail?.candidate || !detail?.callId || detail.callId !== callIdRef.current) return;
-      console.log('ICE candidate received');
+      console.log('[Call] ICE candidate received', { callId: sessionCallId, buffered: true });
       if (detail.signalId) {
         if (processedSignals.has(detail.signalId)) return;
         processedSignals.add(detail.signalId);
-        deleteFirestoreCallSignal(currentUser.id, detail.signalId);
+        deleteFirestoreCallSignal(myId, detail.signalId);
       }
       if (pcRef.current && (hasRemoteDescRef.current || pcRef.current.remoteDescription)) {
         pcRef.current.addIceCandidate(new RTCIceCandidate(detail.candidate)).catch(() => {});
@@ -759,87 +895,106 @@ export const CallModal: React.FC<CallModalProps> = ({
     };
     window.addEventListener('shatmasr:call_early_ice', handleEarlyIceEvent);
 
-    const unsubSignals = realtimeSocket.subscribeToCallSignals(handleIncomingSignal);
-    const unsubFirestoreSignals = subscribeToFirestoreCallSignals(currentUser.id, handleIncomingSignal);
+    unsubSignalsRef.current = realtimeSocket.subscribeToCallSignals(handleIncomingSignal);
+    unsubFirestoreSignalsRef.current = subscribeToFirestoreCallSignals(myId, handleIncomingSignal);
 
-    let ringTimer: ReturnType<typeof setTimeout> | null = null;
-
-    if (!incomingMode) {
+    if (!isIncoming) {
       (async () => {
-        const stream = await acquireUserMedia();
+        // Check if target user is already in an active call before placing offer
+        const targetBusy = await checkTargetUserInCall(activePeer.id);
+        if (isUnmountedOrClosedRef.current || hasEndedRef.current) return;
+        if (targetBusy) {
+          console.log('[Call] Target user is busy', { callId: sessionCallId, targetUserId: activePeer.id });
+          closeGracefully('الطرف الآخر مشغول في مكالمة أخرى', false);
+          return;
+        }
+
+        const stream = await acquireUserMedia(activeType);
         if (isUnmountedOrClosedRef.current || hasEndedRef.current) return;
         const pc = createPeerConnection(stream, false);
         try {
           const offer = await pc.createOffer({
             offerToReceiveAudio: true,
-            offerToReceiveVideo: callType === 'video',
+            offerToReceiveVideo: activeType === 'video',
           });
           await pc.setLocalDescription(offer);
           if (isUnmountedOrClosedRef.current || hasEndedRef.current) return;
           emitCallSignal({
             type: 'call_offer',
-            fromUserId: currentUser.id,
+            fromUserId: myId,
             callerName: userMetaRef.current.name,
             callerAvatar: userMetaRef.current.avatar,
             callerFlag: userMetaRef.current.countryFlag,
-            callType,
+            callType: activeType,
             createdAtMs: Date.now(),
             sdp: { type: offer.type, sdp: offer.sdp },
           });
-          console.log('Offer sent');
-        } catch {
+          console.log('[Call] Offer sent', { callId: sessionCallId, callType: activeType, to: activePeer.id });
+        } catch (err) {
+          console.error('[Call] Offer creation failed:', err);
           if (isUnmountedOrClosedRef.current || hasEndedRef.current) return;
+          setMicWarning('تعذر بدء الاتصال بالمكالمة — يرجى التحقق من صلاحيات الصوت أو الشبكة.');
           emitCallSignal({
             type: 'call_offer',
-            fromUserId: currentUser.id,
+            fromUserId: myId,
             callerName: userMetaRef.current.name,
             callerAvatar: userMetaRef.current.avatar,
             callerFlag: userMetaRef.current.countryFlag,
-            callType,
+            callType: activeType,
             createdAtMs: Date.now(),
           });
+          console.log('[Call] Offer sent', { callId: sessionCallId, callType: activeType, to: activePeer.id });
         }
 
-        // End unanswered outgoing call cleanly after 45s and notify peer
-        ringTimer = setTimeout(() => {
+        // End unanswered outgoing call cleanly after 45s, notify peer, and clean call_signals
+        ringTimerRef.current = setTimeout(() => {
           if (!isUnmountedOrClosedRef.current && !hasEndedRef.current && callStateRef.current === 'ringing') {
+            console.log('[Call] Call hangup', { callId: sessionCallId, reason: '45s_unanswered_timeout' });
             emitCallSignal({
               type: 'call_end',
-              fromUserId: currentUser.id,
+              fromUserId: myId,
             });
-            closeGracefully('لم يرد الطرف الآخر');
+            closeGracefully('لم يرد الطرف الآخر', true);
           }
         }, 45000);
       })();
+    } else {
+      // Auto-dismiss & cleanup unanswered incoming ring after 45s
+      ringTimerRef.current = setTimeout(() => {
+        if (!isUnmountedOrClosedRef.current && !hasEndedRef.current && callStateRef.current === 'incoming') {
+          console.log('[Call] Call hangup', { callId: sessionCallId, reason: '45s_incoming_unanswered_timeout' });
+          emitCallSignal({
+            type: 'call_end',
+            fromUserId: myId,
+          });
+          closeGracefully('لم يتم الرد على المكالمة', true);
+        }
+      }, 45000);
     }
 
     return () => {
       isUnmountedOrClosedRef.current = true;
       sounds.stopCallRing();
-      if (ringTimer) clearTimeout(ringTimer);
       window.removeEventListener('shatmasr:call_early_ice', handleEarlyIceEvent);
+      let sentTerminal = false;
       if (!hasEndedRef.current && callStateRef.current !== 'ended') {
         hasEndedRef.current = true;
+        sentTerminal = true;
+        const termType = callStateRef.current === 'incoming' ? 'call_reject' : 'call_end';
+        if (termType === 'call_reject') {
+          console.log('[Call] Call declined', { callId: sessionCallId, by: myId });
+        } else {
+          console.log('[Call] Call hangup', { callId: sessionCallId, by: myId });
+        }
         emitCallSignal({
-          type: callStateRef.current === 'incoming' ? 'call_reject' : 'call_end',
-          fromUserId: currentUser.id,
+          type: termType,
+          fromUserId: myId,
         });
       }
-      unsubSignals();
-      unsubFirestoreSignals();
+      detachSignalListenersAndCleanDb(sessionCallId, myId, activePeer.id, sentTerminal);
       cleanupMediaAndPeer();
     };
-  }, [
-    isOpen,
-    incomingMode,
-    callType,
-    currentUser.id,
-    peerUser.id,
-    acquireUserMedia,
-    createPeerConnection,
-    cleanupMediaAndPeer,
-    emitCallSignal,
-  ]);
+  }, [isOpen]); // Strictly keyed on [isOpen] so parent/user state updates never drop active calls
 
   // Duration timer when connected
   useEffect(() => {
@@ -906,7 +1061,7 @@ export const CallModal: React.FC<CallModalProps> = ({
               await pcRef.current.setLocalDescription(offer);
               emitCallSignal({
                 type: 'call_renegotiate',
-                fromUserId: currentUser.id,
+                fromUserId: sessionUserIdRef.current,
                 sdp: { type: offer.type, sdp: offer.sdp },
               });
             }
@@ -920,9 +1075,10 @@ export const CallModal: React.FC<CallModalProps> = ({
   };
 
   const handleToggleVideo = async () => {
+    if (sessionCallTypeRef.current !== 'video') return;
     const nextVideo = !isVideoEnabled;
     setIsVideoEnabled(nextVideo);
-    if (nextVideo && callType === 'video' && navigator.mediaDevices?.getUserMedia) {
+    if (nextVideo && navigator.mediaDevices?.getUserMedia) {
       const existingVideo = localStreamRef.current?.getVideoTracks() || [];
       if (existingVideo.length === 0) {
         try {
@@ -943,7 +1099,7 @@ export const CallModal: React.FC<CallModalProps> = ({
               await pcRef.current.setLocalDescription(offer);
               emitCallSignal({
                 type: 'call_renegotiate',
-                fromUserId: currentUser.id,
+                fromUserId: sessionUserIdRef.current,
                 sdp: { type: offer.type, sdp: offer.sdp },
               });
             }
@@ -959,11 +1115,22 @@ export const CallModal: React.FC<CallModalProps> = ({
 
   const handleAcceptIncomingCall = async () => {
     if (hasEndedRef.current) return;
+    const myId = sessionUserIdRef.current;
+    const activeType = sessionCallTypeRef.current;
+    const sessionCallId = callIdRef.current;
+
+    if (ringTimerRef.current) {
+      clearTimeout(ringTimerRef.current);
+      ringTimerRef.current = null;
+    }
+
+    console.log('[Call] Call accepted', { callId: sessionCallId, callType: activeType, by: myId });
     sounds.stopCallRing();
     sounds.playMessageReceived();
     unlockAndPlayRemoteMedia();
     setCallState('connecting');
-    const stream = await acquireUserMedia();
+
+    const stream = await acquireUserMedia(activeType);
     if (isUnmountedOrClosedRef.current || hasEndedRef.current) return;
 
     const offerSignal = incomingSignalRef.current;
@@ -985,47 +1152,61 @@ export const CallModal: React.FC<CallModalProps> = ({
         if (isUnmountedOrClosedRef.current || hasEndedRef.current) return;
         emitCallSignal({
           type: 'call_answer',
-          fromUserId: currentUser.id,
+          fromUserId: myId,
           sdp: { type: answer.type, sdp: answer.sdp },
         });
       } catch (err) {
-        console.warn('Call answer negotiation notice:', err);
-        setMicWarning('جاري إعادة محاولة ربط الصوت والصورة...');
+        console.error('[Call] Call answer negotiation error:', err);
+        setMicWarning('تعذر ربط المكالمة — يرجى التحقق من الشبكة والمحاولة مرة أخرى.');
       }
     } else {
       const pc = createPeerConnection(stream, false);
       try {
         const offer = await pc.createOffer({
           offerToReceiveAudio: true,
-          offerToReceiveVideo: callType === 'video',
+          offerToReceiveVideo: activeType === 'video',
         });
         await pc.setLocalDescription(offer);
         emitCallSignal({
           type: 'call_renegotiate',
-          fromUserId: currentUser.id,
+          fromUserId: myId,
           sdp: { type: offer.type, sdp: offer.sdp },
         });
       } catch {
         emitCallSignal({
           type: 'call_accept',
-          fromUserId: currentUser.id,
+          fromUserId: myId,
         });
       }
     }
   };
 
   const handleEndCall = () => {
+    const myId = sessionUserIdRef.current;
+    const peerId = sessionPeerIdRef.current;
+    const sessionCallId = callIdRef.current;
+
     if (hasEndedRef.current) {
       onCloseRef.current();
       return;
     }
     hasEndedRef.current = true;
     sounds.stopCallRing();
+
+    const isDecline = callStateRef.current === 'incoming';
+    if (isDecline) {
+      console.log('[Call] Call declined', { callId: sessionCallId, by: myId });
+    } else {
+      console.log('[Call] Call hangup', { callId: sessionCallId, by: myId });
+    }
+
     emitCallSignal({
-      type: callStateRef.current === 'incoming' ? 'call_reject' : 'call_end',
-      fromUserId: currentUser.id,
+      type: isDecline ? 'call_reject' : 'call_end',
+      fromUserId: myId,
     });
+    detachSignalListenersAndCleanDb(sessionCallId, myId, peerId, true);
     cleanupMediaAndPeer();
+    setEndReason(isDecline ? 'تم رفض المكالمة' : 'تم إنهاء المكالمة');
     setCallState('ended');
     setTimeout(() => {
       if (!isUnmountedOrClosedRef.current) {

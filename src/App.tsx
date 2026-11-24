@@ -89,6 +89,7 @@ import {
   sendFirestoreCallSignal,
   subscribeToFirestoreCallSignals,
   deleteFirestoreCallSignal,
+  getLocalActiveCall,
   subscribeToUserNotifications,
   markUserNotificationsRead,
   RealtimeUserNotification,
@@ -1003,9 +1004,32 @@ export default function App() {
       const bufferedEarlyIce = earlyIceByCallId.get(incomingCallId) || [];
       earlyIceByCallId.delete(incomingCallId);
 
+      // Prevent overlapping calls if user is already in an active outgoing or incoming call
+      const activeLocalCall = getLocalActiveCall();
+      if (activeLocalCall && activeLocalCall.callId !== incomingCallId) {
+        console.log('[Call] Busy - rejecting overlapping incoming call', {
+          incomingCallId,
+          activeCallId: activeLocalCall.callId,
+        });
+        const busyPayload = {
+          type: 'call_busy',
+          fromUserId: me.id,
+          targetUserId: signal.fromUserId,
+          callId: signal.callId,
+          signalId: `sig_busy_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        };
+        realtimeSocket.sendCallSignal(signal.fromUserId, busyPayload);
+        sendFirestoreCallSignal(signal.fromUserId, busyPayload).catch(() => {});
+        return;
+      }
+
       setIncomingCall((prev) => {
         if (prev && prev.peer.id !== signal.fromUserId) {
           // Already handling another caller's call: reply busy
+          console.log('[Call] Busy - rejecting overlapping incoming call', {
+            incomingCallId,
+            activePeerId: prev.peer.id,
+          });
           const busyPayload = {
             type: 'call_busy',
             fromUserId: me.id,
