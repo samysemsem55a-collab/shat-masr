@@ -51,8 +51,7 @@ import {
 } from './services/pushNotifications';
 import { 
   CLIENT_APP_VERSION,
-  subscribeToRoomMessages, 
-  fetchOlderRoomMessages,
+  subscribeToRoomMessages,
   sendFirestoreMessage, 
   sendDirectMessage,
   subscribeToRoomPresence, 
@@ -87,7 +86,9 @@ import {
   subscribeToRegisteredUsersCount,
   createDailyBackupSnapshot,
   grantUserXp,
+  sendFirestoreCallSignal,
   subscribeToFirestoreCallSignals,
+  deleteFirestoreCallSignal,
   AppUpdateNotice
 } from './services/firebase';
 import { isUserTrulyOnline, getServerNowMs } from './utils/presenceStatus';
@@ -374,14 +375,18 @@ export default function App() {
     return hydrateRoomBg(INITIAL_ROOMS);
   });
 
-  // Real-time messages for active room from Firestore (30 initial + upward pagination)
+  // Real-time messages for active room from Firestore (30 initial + pure onSnapshot limit expansion)
   const [activeRoomMessages, setActiveRoomMessages] = useState<Message[]>([]);
+  const [roomMessagesLimit, setRoomMessagesLimit] = useState<number>(30);
   const [hasMoreRoomMessages, setHasMoreRoomMessages] = useState<boolean>(false);
   const [isLoadingOlderRoomMsgs, setIsLoadingOlderRoomMsgs] = useState<boolean>(false);
   const activeRoomMessagesRef = useRef<Message[]>([]);
   useEffect(() => {
     activeRoomMessagesRef.current = activeRoomMessages;
   }, [activeRoomMessages]);
+  const pendingOlderRoomResolveRef = useRef<((added: number) => void) | null>(null);
+  const prevRoomMsgCountBeforeExpandRef = useRef<number>(0);
+  const isPrivateCallActiveRef = useRef<boolean>(false);
   const [activeRoom, setActiveRoom] = useState<Room | null>(null);
   const [currentTab, setCurrentTab] = useState<NavTab>('home');
 
@@ -999,6 +1004,7 @@ export default function App() {
 
     // Listen to incoming WebRTC calls targeting current user (WebSocket + Firestore/RTDB relay)
     const processedCallSignals = new Set<string>();
+    const processedOfferCallIds = new Set<string>();
     const handleIncomingCallSignal = (signal: any) => {
       const me = currentUserRef.current;
       if (!signal) return;
@@ -1015,7 +1021,12 @@ export default function App() {
       if (signal.type === 'call_end' || signal.type === 'call_reject') {
         setIncomingCall((prev) => {
           if (!prev) return null;
-          if (!signal.fromUserId || prev.peer.id === signal.fromUserId || signal.targetUserId === me.id) {
+          const sameCall = !signal.callId || !prev.signal?.callId || signal.callId === prev.signal.callId;
+          const samePeer = !signal.fromUserId || prev.peer.id === signal.fromUserId;
+          if (sameCall && samePeer) {
+            if (signal.signalId) {
+              deleteFirestoreCallSignal(me.id, signal.signalId);
+            }
             return null;
           }
           return prev;
@@ -1026,35 +1037,84 @@ export default function App() {
       if (signal.type !== 'call_offer') return;
       if (!signal.fromUserId || signal.fromUserId === me.id) return;
 
-      sounds.playNotificationChime();
-      setIncomingCall({
-        peer: {
-          id: signal.fromUserId,
-          name: signal.callerName || 'عضو متصل',
-          username: (signal.callerName || 'member').toLowerCase(),
-          avatar: signal.callerAvatar || '',
-          bio: 'عضو في شات مصر',
-          country: 'مصر',
-          countryFlag: signal.callerFlag || '🇪🇬',
-          role: 'member',
-          coins: 0,
-          earningsEgp: 0,
-          earningsUsd: 0,
-          vipBadge: '',
-          frameStyle: 'border-slate-300',
-          profileWallpaper: '',
-          fontPreference: 'cairo',
-          isOnline: true,
-          status: 'online',
-          joinedAt: new Date().toISOString(),
-          gender: 'male',
-          level: 1,
-          likesReceived: 0,
-          giftsReceivedCount: 0,
-          badges: [],
-        },
-        callType: signal.callType === 'video' ? 'video' : 'audio',
-        signal,
+      // Consume the offer signal from Firestore so refreshes don't replay stale calls
+      if (signal.signalId) {
+        deleteFirestoreCallSignal(me.id, signal.signalId);
+      }
+
+      // Ignore stale call offers older than 40s (supports createdAtMs or createdAt)
+      const sigTs = typeof signal.createdAtMs === 'number'
+        ? signal.createdAtMs
+        : (typeof signal.createdAt === 'number' ? signal.createdAt : 0);
+      if (sigTs > 0 && getServerNowMs() - sigTs > 40000) {
+        return;
+      }
+
+      const incomingCallId = signal.callId ? String(signal.callId) : `${signal.fromUserId}_${signal.signalId || Date.now()}`;
+      if (processedOfferCallIds.has(incomingCallId)) return;
+      processedOfferCallIds.add(incomingCallId);
+      if (processedOfferCallIds.size > 100) {
+        const oldestOffer = processedOfferCallIds.values().next().value;
+        if (oldestOffer) processedOfferCallIds.delete(oldestOffer);
+      }
+
+      if (isPrivateCallActiveRef.current) {
+        const busyPayload = {
+          type: 'call_busy',
+          fromUserId: me.id,
+          targetUserId: signal.fromUserId,
+          callId: signal.callId,
+          signalId: `sig_busy_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        };
+        realtimeSocket.sendCallSignal(signal.fromUserId, busyPayload);
+        sendFirestoreCallSignal(signal.fromUserId, busyPayload).catch(() => {});
+        return;
+      }
+
+      setIncomingCall((prev) => {
+        if (prev && prev.peer.id !== signal.fromUserId) {
+          // Already handling another caller's call: reply busy
+          const busyPayload = {
+            type: 'call_busy',
+            fromUserId: me.id,
+            targetUserId: signal.fromUserId,
+            callId: signal.callId,
+            signalId: `sig_busy_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          };
+          realtimeSocket.sendCallSignal(signal.fromUserId, busyPayload);
+          sendFirestoreCallSignal(signal.fromUserId, busyPayload).catch(() => {});
+          return prev;
+        }
+        sounds.playNotificationChime();
+        return {
+          peer: {
+            id: signal.fromUserId,
+            name: signal.callerName || 'عضو متصل',
+            username: (signal.callerName || 'member').toLowerCase(),
+            avatar: signal.callerAvatar || '',
+            bio: 'عضو في شات مصر',
+            country: 'مصر',
+            countryFlag: signal.callerFlag || '🇪🇬',
+            role: 'member',
+            coins: 0,
+            earningsEgp: 0,
+            earningsUsd: 0,
+            vipBadge: '',
+            frameStyle: 'border-slate-300',
+            profileWallpaper: '',
+            fontPreference: 'cairo',
+            isOnline: true,
+            status: 'online',
+            joinedAt: new Date().toISOString(),
+            gender: 'male',
+            level: 1,
+            likesReceived: 0,
+            giftsReceivedCount: 0,
+            badges: [],
+          },
+          callType: signal.callType === 'video' ? 'video' : 'audio',
+          signal,
+        };
       });
     };
 
@@ -1514,27 +1574,42 @@ export default function App() {
   // Track already-processed first-entry welcome checks in current session
   const welcomedPublicRoomKeysRef = useRef<Set<string>>(new Set());
 
-  // Load older room messages upward (30 per page)
+  // Reset room pagination limit cleanly whenever switching rooms
+  useEffect(() => {
+    setRoomMessagesLimit(30);
+    setHasMoreRoomMessages(false);
+    setIsLoadingOlderRoomMsgs(false);
+    if (pendingOlderRoomResolveRef.current) {
+      pendingOlderRoomResolveRef.current(0);
+      pendingOlderRoomResolveRef.current = null;
+    }
+  }, [activeRoom?.id]);
+
+  // Load older room messages upward (pure onSnapshot limit expansion, zero getDocs)
   const handleLoadOlderRoomMessages = useCallback(async (): Promise<number> => {
     if (!activeRoom?.id || isLoadingOlderRoomMsgs) return 0;
-    const currentList = activeRoomMessagesRef.current;
-    const oldestTs = currentList.reduce(
-      (min, m) => (m.timestamp && m.timestamp < min ? m.timestamp : min),
-      currentList[0]?.timestamp || Date.now()
-    );
-    setIsLoadingOlderRoomMsgs(true);
-    try {
-      const older = await fetchOlderRoomMessages(activeRoom.id, oldestTs, 30);
-      if (!older || older.length === 0) {
-        setHasMoreRoomMessages(false);
-        return 0;
-      }
-      setHasMoreRoomMessages(older.length >= 30);
-      setActiveRoomMessages(prev => mergeRoomMessageList(prev, older));
-      return older.length;
-    } finally {
-      setIsLoadingOlderRoomMsgs(false);
+    if (pendingOlderRoomResolveRef.current) {
+      pendingOlderRoomResolveRef.current(0);
+      pendingOlderRoomResolveRef.current = null;
     }
+    prevRoomMsgCountBeforeExpandRef.current = activeRoomMessagesRef.current.length;
+    setIsLoadingOlderRoomMsgs(true);
+    return new Promise<number>((resolve) => {
+      let settled = false;
+      const finish = (added: number) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeoutId);
+        if (pendingOlderRoomResolveRef.current === finish) {
+          pendingOlderRoomResolveRef.current = null;
+        }
+        setIsLoadingOlderRoomMsgs(false);
+        resolve(added);
+      };
+      const timeoutId = setTimeout(() => finish(0), 2500);
+      pendingOlderRoomResolveRef.current = finish;
+      setRoomMessagesLimit((prev) => prev + 30);
+    });
   }, [activeRoom?.id, isLoadingOlderRoomMsgs]);
 
   // Real-Time Room WebSocket & Firebase synchronization for active room
@@ -1651,39 +1726,6 @@ export default function App() {
       }
     );
 
-    // Also attach Firebase listener (last 30 messages) with window-safe deletion reconciliation
-    let prevFirebaseMsgs = new Map<string, number>();
-    const unsubFirebase = subscribeToRoomMessages(activeRoom.id, (msgs) => {
-      const incomingList = Array.isArray(msgs) ? msgs : [];
-      if (incomingList.length >= 30) {
-        setHasMoreRoomMessages(true);
-      }
-      const nextFirebaseMsgs = new Map<string, number>();
-      let minIncomingTs = Infinity;
-      incomingList.forEach((m) => {
-        const ts = typeof m.timestamp === 'number' ? m.timestamp : 0;
-        nextFirebaseMsgs.set(m.id, ts);
-        if (ts > 0 && ts < minIncomingTs) minIncomingTs = ts;
-      });
-      const deletedFromFirebase = new Set<string>();
-      prevFirebaseMsgs.forEach((oldTs, oldId) => {
-        if (!nextFirebaseMsgs.has(oldId)) {
-          // Only treat as deleted if within active 30-message window (not slid out into older history)
-          if (incomingList.length < 30 || oldTs >= minIncomingTs) {
-            deletedFromFirebase.add(oldId);
-          }
-        }
-      });
-      prevFirebaseMsgs = nextFirebaseMsgs;
-
-      setActiveRoomMessages(prev => {
-        const filteredPrev = deletedFromFirebase.size > 0
-          ? prev.filter(m => !deletedFromFirebase.has(m.id))
-          : prev;
-        return mergeRoomMessageList(filteredPrev, incomingList);
-      });
-    }, 30);
-
     // Listen to instant WebSocket message deletions & room purge events
     const unsubDeleted = realtimeSocket.subscribeToRoomMessageDeleted(activeRoom.id, (deletedMessageId) => {
       setActiveRoomMessages(prev => prev.filter(m => m.id !== deletedMessageId));
@@ -1766,11 +1808,80 @@ export default function App() {
       unsubMessages();
       unsubReactions();
       unsubRead();
-      unsubFirebase();
       unsubDeleted();
       unsubPurged();
     };
   }, [activeRoom?.id, currentUser.id]);
+
+  // Dedicated Firestore real-time onSnapshot listener for active room messages (30 initial + limit expansion)
+  useEffect(() => {
+    if (!activeRoom?.id) return;
+    const roomId = activeRoom.id;
+    const activeLimit = roomMessagesLimit;
+    let prevFirebaseMsgs = new Map<string, number>();
+
+    const unsubFirebase = subscribeToRoomMessages(
+      roomId,
+      (msgs, meta) => {
+        const incomingList = Array.isArray(msgs) ? msgs : [];
+        const nextFirebaseMsgs = new Map<string, number>();
+        let minIncomingTs = Infinity;
+        incomingList.forEach((m) => {
+          const ts = typeof m.timestamp === 'number' ? m.timestamp : 0;
+          nextFirebaseMsgs.set(m.id, ts);
+          if (ts > 0 && ts < minIncomingTs) minIncomingTs = ts;
+        });
+
+        const deletedFromFirebase = new Set<string>();
+        if (meta?.fromFirestore && !meta.fromCache) {
+          prevFirebaseMsgs.forEach((oldTs, oldId) => {
+            if (!nextFirebaseMsgs.has(oldId)) {
+              if (meta.serverCount < activeLimit || oldTs >= minIncomingTs) {
+                deletedFromFirebase.add(oldId);
+              }
+            }
+          });
+          prevFirebaseMsgs = nextFirebaseMsgs;
+        } else if (meta?.fromFirestore) {
+          prevFirebaseMsgs = nextFirebaseMsgs;
+        }
+
+        if (meta?.fromFirestore) {
+          if (!meta.fromCache) {
+            setHasMoreRoomMessages(meta.serverCount >= activeLimit);
+          } else if (meta.serverCount >= activeLimit) {
+            setHasMoreRoomMessages(true);
+          }
+        } else if (incomingList.length >= activeLimit) {
+          setHasMoreRoomMessages(true);
+        }
+
+        setActiveRoomMessages((prev) => {
+          const filteredPrev = deletedFromFirebase.size > 0
+            ? prev.filter((m) => !deletedFromFirebase.has(m.id))
+            : prev;
+          return mergeRoomMessageList(filteredPrev, incomingList);
+        });
+
+        if (meta?.fromFirestore && !meta.fromCache && pendingOlderRoomResolveRef.current) {
+          const prevBase = deletedFromFirebase.size > 0
+            ? activeRoomMessagesRef.current.filter((m) => !deletedFromFirebase.has(m.id))
+            : activeRoomMessagesRef.current;
+          const mergedLen = mergeRoomMessageList(prevBase, incomingList).length;
+          const added = Math.max(0, mergedLen - prevRoomMsgCountBeforeExpandRef.current);
+          const resolveFn = pendingOlderRoomResolveRef.current;
+          pendingOlderRoomResolveRef.current = null;
+          setIsLoadingOlderRoomMsgs(false);
+          resolveFn(added);
+        }
+      },
+      activeLimit
+    );
+
+    return () => {
+      unsubFirebase();
+    };
+  }, [activeRoom?.id, roomMessagesLimit]);
 
   // Listen for incoming consent requests (Audio Call / Video Call / Send Image)
   useEffect(() => {
@@ -1886,8 +1997,8 @@ export default function App() {
         reactions: {},
         userReactions: {},
         reactionUsers: {},
-        createdAt: Date.now(),
-        timestamp: Date.now(),
+        createdAt: getServerNowMs(),
+        timestamp: getServerNowMs(),
         status: msgData.status || (typeof navigator !== 'undefined' && navigator.onLine === false ? 'pending_offline' : 'sent')
       };
 
@@ -3052,6 +3163,7 @@ export default function App() {
                   onClearAllUnreadMessages={clearAllUnreadMessages}
                   prefilledDraft={privateChatDraft}
                   onClearPrefilledDraft={() => setPrivateChatDraft(null)}
+                  onCallActiveChange={(active) => { isPrivateCallActiveRef.current = active; }}
                 />
               )}
 
@@ -3227,6 +3339,7 @@ export default function App() {
                 onClearAllUnreadMessages={clearAllUnreadMessages}
                 prefilledDraft={privateChatDraft}
                 onClearPrefilledDraft={() => setPrivateChatDraft(null)}
+                onCallActiveChange={(active) => { isPrivateCallActiveRef.current = active; }}
               />
             </motion.div>
           </motion.div>

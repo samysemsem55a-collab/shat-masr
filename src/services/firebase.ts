@@ -682,8 +682,6 @@ function mergeTwoMessages(prev: Message | undefined, next: Message): Message {
   };
 }
 
-const roomOlderCursorMap = new Map<string, QueryDocumentSnapshot<DocumentData> | null>();
-
 function mapFirestoreRoomMessage(
   roomId: string,
   docSnap: QueryDocumentSnapshot<DocumentData>
@@ -736,7 +734,7 @@ function mapFirestoreRoomMessage(
 
 export function subscribeToRoomMessages(
   roomId: string,
-  onMessages: (messages: Message[]) => void,
+  onMessages: (messages: Message[], meta?: { fromFirestore: boolean; fromCache: boolean }) => void,
   initialLimit: number = 30
 ): () => void {
   const localKey = `messages_room_${roomId}`;
@@ -744,10 +742,8 @@ export function subscribeToRoomMessages(
   const localMsgsMap = new Map<string, Message>();
   const tempIdToRealId = new Map<string, string>();
   const seenFsIds = new Set<string>();
-  roomOlderCursorMap.delete(roomId);
-  let hasInitialCursor = false;
 
-  const emitMerged = () => {
+  const emitMerged = (meta: { fromFirestore: boolean; fromCache: boolean } = { fromFirestore: false, fromCache: false }) => {
     const combined = new Map<string, Message>();
     localMsgsMap.forEach((m, id) => {
       if (!m || !id) return;
@@ -769,7 +765,7 @@ export function subscribeToRoomMessages(
     try {
       localStorage.setItem(localKey, JSON.stringify(list.slice(-60)));
     } catch {}
-    onMessages(list);
+    onMessages(list, meta);
   };
 
   try {
@@ -797,10 +793,6 @@ export function subscribeToRoomMessages(
 
           // Reverse descending server docs so chronological oldest -> newest order
           const orderedDocs = [...snapshot.docs].reverse();
-          if (!hasInitialCursor && snapshot.docs.length > 0) {
-            roomOlderCursorMap.set(roomId, snapshot.docs[snapshot.docs.length - 1]);
-            hasInitialCursor = true;
-          }
 
           orderedDocs.forEach((docSnap) => {
             const msgItem = mapFirestoreRoomMessage(roomId, docSnap);
@@ -822,7 +814,7 @@ export function subscribeToRoomMessages(
             });
           }
 
-          emitMerged();
+          emitMerged({ fromFirestore: true, fromCache: snapshot.metadata.fromCache });
         },
         (err) => {
           handleFirestoreError(err, OperationType.LIST, `rooms/${roomId}/messages`);
@@ -866,39 +858,6 @@ export function subscribeToRoomMessages(
     if (firestoreUnsub) firestoreUnsub();
     liveChatBus?.removeEventListener('message', handleBroadcast);
   };
-}
-
-// Fetch older room messages using QueryDocumentSnapshot startAfter cursor
-export async function fetchOlderRoomMessages(
-  roomId: string,
-  _beforeTimestamp?: number,
-  pageSize: number = 30
-): Promise<Message[]> {
-  if (!roomId || !db) return [];
-  const cursor = roomOlderCursorMap.get(roomId);
-  if (!cursor) return [];
-
-  try {
-    const messagesRef = collection(db, 'rooms', roomId, 'messages');
-    const q = query(
-      messagesRef,
-      orderBy('createdAt', 'desc'),
-      startAfter(cursor),
-      limit(pageSize)
-    );
-    const snap = await getDocs(q);
-    if (snap.empty) {
-      roomOlderCursorMap.set(roomId, null);
-      return [];
-    }
-    roomOlderCursorMap.set(roomId, snap.docs[snap.docs.length - 1]);
-    return [...snap.docs]
-      .reverse()
-      .map((docSnap) => mapFirestoreRoomMessage(roomId, docSnap));
-  } catch (err) {
-    handleFirestoreError(err, OperationType.LIST, `rooms/${roomId}/messages`);
-    return [];
-  }
 }
 
 // Send Real Message to Firestore (`rooms/{roomId}/messages`) with serverTimestamp & tempId
@@ -5588,6 +5547,15 @@ async function compressImageToDataUrl(file: File, maxDim = 900, quality = 0.72):
   });
 }
 
+function fileBlobToDataUrl(file: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(new Error('تعذر قراءة الملف'));
+    reader.readAsDataURL(file);
+  });
+}
+
 export async function uploadPrivateChatMedia(
   file: File,
   convId: string,
@@ -5597,15 +5565,24 @@ export async function uploadPrivateChatMedia(
   const mediaType: 'image' | 'video' = isVideo ? 'video' : 'image';
   const safeName = `${Date.now()}_${file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
 
-  // Try Firebase Storage first
+  // Try Firebase Storage first with cache metadata & resumable progress
   if (storage) {
     try {
       const fileRef = storageRef(storage, `private_media/${convId}/${safeName}`);
       const url = await new Promise<string>((resolve, reject) => {
-        const task = uploadBytesResumable(fileRef, file);
+        const task = uploadBytesResumable(fileRef, file, {
+          contentType: file.type || (isVideo ? 'video/mp4' : 'image/jpeg'),
+          cacheControl: 'public, max-age=31536000',
+        });
+        let settled = false;
         const timeoutId = setTimeout(() => {
+          if (settled) return;
+          settled = true;
+          try {
+            task.cancel();
+          } catch {}
           reject(new Error('Storage upload timeout'));
-        }, 12000);
+        }, isVideo ? 20000 : 8000);
         task.on(
           'state_changed',
           (snapshot) => {
@@ -5614,10 +5591,14 @@ export async function uploadPrivateChatMedia(
             }
           },
           (err) => {
+            if (settled) return;
+            settled = true;
             clearTimeout(timeoutId);
             reject(err);
           },
           async () => {
+            if (settled) return;
+            settled = true;
             clearTimeout(timeoutId);
             try {
               const dl = await getDownloadURL(task.snapshot.ref);
@@ -5634,9 +5615,10 @@ export async function uploadPrivateChatMedia(
     }
   }
 
-  // Fallback for images when Storage CORS/rules block
+  // Fast fallback for images when Storage CORS/rules block: reuse already-compressed Blob directly
   if (!isVideo) {
-    const compressedUrl = await compressImageToDataUrl(file);
+    const compressedUrl =
+      file.size <= 350 * 1024 ? await fileBlobToDataUrl(file) : await compressImageToDataUrl(file);
     if (onProgress) onProgress(100);
     return { url: compressedUrl, mediaType: 'image' };
   }
@@ -7239,23 +7221,36 @@ export function subscribeToAppUpdateNotices(
 export async function sendFirestoreCallSignal(targetUserId: string, signal: any): Promise<void> {
   if (!targetUserId || !signal) return;
   const signalId = signal.signalId || `sig_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+  const now = Date.now();
   const payload = {
     ...signal,
     signalId,
     targetUserId,
-    createdAt: Date.now(),
-    expiresAt: Date.now() + 90_000,
+    createdAt: now,
+    expiresAt: now + 90_000,
   };
 
   if (db) {
     try {
       await setDoc(doc(db, 'users', targetUserId, 'call_signals', signalId), payload);
-    } catch {}
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, `users/${targetUserId}/call_signals/${signalId}`);
+    }
   }
   if (rtdb) {
     try {
       await set(ref(rtdb, `call_signals/${targetUserId}/${signalId}`), payload);
     } catch {}
+  }
+}
+
+export async function deleteFirestoreCallSignal(userId: string, signalId: string): Promise<void> {
+  if (!userId || !signalId) return;
+  if (db) {
+    deleteDoc(doc(db, 'users', userId, 'call_signals', signalId)).catch(() => {});
+  }
+  if (rtdb) {
+    remove(ref(rtdb, `call_signals/${userId}/${signalId}`)).catch(() => {});
   }
 }
 
@@ -7271,10 +7266,18 @@ export function subscribeToFirestoreCallSignals(
     if (!raw || typeof raw !== 'object') return;
     const id = String(raw.signalId || fallbackId || '');
     if (!id || seenIds.has(id)) return;
+    const now = Date.now();
     const createdAt = typeof raw.createdAt === 'number' ? raw.createdAt : 0;
+    if (typeof raw.expiresAt === 'number' && raw.expiresAt < now) {
+      deleteFirestoreCallSignal(userId, id);
+      return;
+    }
     if (createdAt > 0 && createdAt < mountTs) return;
-    if (typeof raw.expiresAt === 'number' && raw.expiresAt < Date.now()) return;
     seenIds.add(id);
+    if (seenIds.size > 300) {
+      const oldest = seenIds.values().next().value;
+      if (oldest) seenIds.delete(oldest);
+    }
     onSignal({ ...raw, signalId: id });
   };
 
@@ -7291,7 +7294,9 @@ export function subscribeToFirestoreCallSignals(
             }
           });
         },
-        () => {}
+        (err) => {
+          handleFirestoreError(err, OperationType.LIST, `users/${userId}/call_signals`);
+        }
       );
     } catch {}
   }

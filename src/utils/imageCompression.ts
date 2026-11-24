@@ -10,73 +10,67 @@ export interface CompressImageOptions {
   initialQuality?: number;
 }
 
-export async function compressImageFile(
+export function compressImageFile(
   file: File,
   options: CompressImageOptions = {}
 ): Promise<string> {
   const maxWidth = options.maxWidth ?? 800;
   const maxHeight = options.maxHeight ?? 800;
-  const maxBytes = options.maxBytes ?? 295 * 1024; // < 300KB
-  let quality = options.initialQuality ?? 0.84;
+  const maxBytes = options.maxBytes ?? 295 * 1024;
+  let quality = options.initialQuality ?? 0.82;
 
-  const dataUrl = await new Promise<string>((resolve, reject) => {
+  return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result || ''));
-    reader.onerror = () => reject(new Error('تعذر قراءة الصورة'));
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        try {
+          let width = img.width;
+          let height = img.height;
+
+          const scale = Math.min(1, maxWidth / Math.max(1, width), maxHeight / Math.max(1, height));
+          width = Math.max(1, Math.round(width * scale));
+          height = Math.max(1, Math.round(height * scale));
+
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            resolve(String(e.target?.result || ''));
+            return;
+          }
+
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+          let out = canvas.toDataURL('image/jpeg', quality);
+          let attempts = 0;
+          while (estimateDataUrlBytes(out) > maxBytes && attempts < 6) {
+            attempts += 1;
+            if (quality > 0.45) {
+              quality = Math.max(0.4, quality - 0.12);
+            } else {
+              canvas.width = Math.max(320, Math.round(canvas.width * 0.78));
+              canvas.height = Math.max(200, Math.round(canvas.height * 0.78));
+              const resizedCtx = canvas.getContext('2d');
+              if (resizedCtx) {
+                resizedCtx.drawImage(img, 0, 0, canvas.width, canvas.height);
+              }
+            }
+            out = canvas.toDataURL('image/jpeg', quality);
+          }
+
+          resolve(out);
+        } catch (err) {
+          reject(err);
+        }
+      };
+      img.onerror = () => reject(new Error('تعذر قراءة الصورة المختارة'));
+      img.src = String(e.target?.result || '');
+    };
+    reader.onerror = () => reject(new Error('تعذر تحميل الملف'));
     reader.readAsDataURL(file);
   });
-
-  const img = await new Promise<HTMLImageElement>((resolve, reject) => {
-    const el = new Image();
-    el.onload = () => resolve(el);
-    el.onerror = () => reject(new Error('صيغة الصورة غير مدعومة'));
-    el.src = dataUrl;
-  });
-
-  let width = img.naturalWidth || img.width || maxWidth;
-  let height = img.naturalHeight || img.height || maxHeight;
-
-  if (width > maxWidth) {
-    height = Math.round((height * maxWidth) / width);
-    width = maxWidth;
-  }
-  if (height > maxHeight) {
-    width = Math.round((width * maxHeight) / height);
-    height = maxHeight;
-  }
-
-  const canvas = document.createElement('canvas');
-  canvas.width = Math.max(1, width);
-  canvas.height = Math.max(1, height);
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return dataUrl;
-
-  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-
-  // Iteratively adjust quality and dimensions until size <= maxBytes
-  let output = canvas.toDataURL('image/jpeg', quality);
-  let attempts = 0;
-  while (estimateDataUrlBytes(output) > maxBytes && attempts < 7) {
-    attempts += 1;
-    if (quality > 0.45) {
-      quality = Math.max(0.4, quality - 0.12);
-    } else {
-      canvas.width = Math.max(320, Math.round(canvas.width * 0.8));
-      canvas.height = Math.max(180, Math.round(canvas.height * 0.8));
-      const resizedCtx = canvas.getContext('2d');
-      if (resizedCtx) {
-        resizedCtx.drawImage(img, 0, 0, canvas.width, canvas.height);
-      }
-    }
-    output = canvas.toDataURL('image/jpeg', quality);
-  }
-
-  return output;
-}
-
-export async function dataUrlToBlob(dataUrl: string): Promise<Blob> {
-  const res = await fetch(dataUrl);
-  return await res.blob();
 }
 
 export async function compressImageFileToBlob(
@@ -86,6 +80,11 @@ export async function compressImageFileToBlob(
   const dataUrl = await compressImageFile(file, options);
   const blob = await dataUrlToBlob(dataUrl);
   return { blob, dataUrl };
+}
+
+export async function dataUrlToBlob(dataUrl: string): Promise<Blob> {
+  const res = await fetch(dataUrl);
+  return await res.blob();
 }
 
 export function estimateDataUrlBytes(dataUrl: string): number {
