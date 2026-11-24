@@ -1,24 +1,15 @@
-/**
- * Direct client-side image download utility (no window.open / popup).
- * Supports data: URLs, blob: URLs, and CORS-enabled remote image URLs (Firebase Storage, etc.).
- */
 export async function downloadImageToDevice(
-  url: string,
-  preferredFilename?: string
-): Promise<boolean> {
-  if (!url || typeof document === 'undefined') return false;
+  imageUrl: string,
+  filename?: string
+): Promise<void> {
+  if (!imageUrl || typeof document === 'undefined') {
+    throw new Error('Invalid image URL');
+  }
 
-  const cleanName = (() => {
-    if (preferredFilename && preferredFilename.trim()) {
-      return preferredFilename.trim();
-    }
-    return `shat_masr_${Date.now()}.jpg`;
-  })();
-
-  const triggerAnchorDownload = (href: string, name: string) => {
+  const triggerDownload = (href: string, targetName: string) => {
     const link = document.createElement('a');
     link.href = href;
-    link.download = name;
+    link.download = targetName;
     link.rel = 'noopener noreferrer';
     link.style.display = 'none';
     document.body.appendChild(link);
@@ -26,37 +17,51 @@ export async function downloadImageToDevice(
     document.body.removeChild(link);
   };
 
-  if (url.startsWith('data:') || url.startsWith('blob:')) {
-    triggerAnchorDownload(url, cleanName);
-    return true;
+  const inferExtension = (mime?: string): string => {
+    if (!mime) return 'jpg';
+    const lower = mime.toLowerCase();
+    if (lower.includes('png')) return 'png';
+    if (lower.includes('webp')) return 'webp';
+    if (lower.includes('gif')) return 'gif';
+    if (lower.includes('svg')) return 'svg';
+    return 'jpg';
+  };
+
+  const resolveFilename = (mime?: string): string => {
+    if (filename && filename.trim()) return filename.trim();
+    const ext = inferExtension(mime);
+    return `chat_photo_${Date.now()}.${ext}`;
+  };
+
+  if (imageUrl.startsWith('data:')) {
+    const mimeMatch = imageUrl.match(/^data:([^;]+);/i);
+    triggerDownload(imageUrl, resolveFilename(mimeMatch?.[1]));
+    return;
   }
 
-  // Try fetch -> Blob -> ObjectURL for guaranteed direct device save across origins
+  if (imageUrl.startsWith('blob:')) {
+    triggerDownload(imageUrl, resolveFilename());
+    return;
+  }
+
+  // Remote URL (e.g. Firebase Storage): fetch as Blob so mobile & desktop browsers save to device directly
   try {
-    const response = await fetch(url, { mode: 'cors', credentials: 'omit' });
-    if (!response.ok) throw new Error(`HTTP_${response.status}`);
+    const response = await fetch(imageUrl, { mode: 'cors' });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
     const blob = await response.blob();
-    const ext =
-      blob.type === 'image/png'
-        ? 'png'
-        : blob.type === 'image/webp'
-        ? 'webp'
-        : blob.type === 'image/gif'
-        ? 'gif'
-        : 'jpg';
-    const finalName = cleanName.includes('.') ? cleanName : `${cleanName}.${ext}`;
     const objectUrl = URL.createObjectURL(blob);
-    triggerAnchorDownload(objectUrl, finalName);
-    setTimeout(() => {
-      try {
-        URL.revokeObjectURL(objectUrl);
-      } catch {}
-    }, 4000);
-    return true;
-  } catch {
-    // Canvas CORS fallback
     try {
-      const blob = await new Promise<Blob | null>((resolve) => {
+      triggerDownload(objectUrl, resolveFilename(blob.type));
+    } finally {
+      setTimeout(() => URL.revokeObjectURL(objectUrl), 1500);
+    }
+    return;
+  } catch {
+    // Fallback: draw onto canvas if CORS headers allow image element
+    try {
+      const blob = await new Promise<Blob>((resolve, reject) => {
         const img = new Image();
         img.crossOrigin = 'anonymous';
         img.onload = () => {
@@ -65,30 +70,37 @@ export async function downloadImageToDevice(
             canvas.width = img.naturalWidth || img.width;
             canvas.height = img.naturalHeight || img.height;
             const ctx = canvas.getContext('2d');
-            if (!ctx) return resolve(null);
+            if (!ctx) {
+              reject(new Error('No canvas context'));
+              return;
+            }
             ctx.drawImage(img, 0, 0);
-            canvas.toBlob((b) => resolve(b), 'image/jpeg', 0.92);
-          } catch {
-            resolve(null);
+            canvas.toBlob(
+              (result) => {
+                if (result) resolve(result);
+                else reject(new Error('Canvas toBlob failed'));
+              },
+              'image/jpeg',
+              0.92
+            );
+          } catch (err) {
+            reject(err);
           }
         };
-        img.onerror = () => resolve(null);
-        img.src = url;
+        img.onerror = () => reject(new Error('Image load failed'));
+        img.src = imageUrl;
       });
-      if (blob) {
-        const objectUrl = URL.createObjectURL(blob);
-        triggerAnchorDownload(objectUrl, cleanName);
-        setTimeout(() => {
-          try {
-            URL.revokeObjectURL(objectUrl);
-          } catch {}
-        }, 4000);
-        return true;
-      }
-    } catch {}
-  }
 
-  // Final fallback: anchor download attribute
-  triggerAnchorDownload(url, cleanName);
-  return true;
+      const objectUrl = URL.createObjectURL(blob);
+      try {
+        triggerDownload(objectUrl, resolveFilename(blob.type));
+      } finally {
+        setTimeout(() => URL.revokeObjectURL(objectUrl), 1500);
+      }
+      return;
+    } catch {
+      // Final fallback without window.open
+      triggerDownload(imageUrl, resolveFilename());
+    }
+  }
 }

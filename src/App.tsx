@@ -51,8 +51,7 @@ import {
 } from './services/pushNotifications';
 import { 
   CLIENT_APP_VERSION,
-  subscribeToRoomMessages, 
-  fetchOlderRoomMessages,
+  subscribeToRoomMessages,
   sendFirestoreMessage, 
   sendDirectMessage,
   subscribeToRoomPresence, 
@@ -376,10 +375,15 @@ export default function App() {
     return hydrateRoomBg(INITIAL_ROOMS);
   });
 
-  // Real-time messages for active room from Firestore (30 initial + upward pagination)
+  // Real-time messages for active room from Firestore (30 initial + pure onSnapshot upward pagination)
   const [activeRoomMessages, setActiveRoomMessages] = useState<Message[]>([]);
+  const [roomMsgLimit, setRoomMsgLimit] = useState<number>(30);
   const [hasMoreRoomMessages, setHasMoreRoomMessages] = useState<boolean>(false);
   const [isLoadingOlderRoomMsgs, setIsLoadingOlderRoomMsgs] = useState<boolean>(false);
+  const noMoreOlderRoomMsgsRef = useRef<boolean>(false);
+  const prevRoomIdForLimitRef = useRef<string | null>(null);
+  const pendingRoomOlderResolveRef = useRef<((added: number) => void) | null>(null);
+  const prevRoomMsgCountBeforeExpandRef = useRef<number>(0);
   const activeRoomMessagesRef = useRef<Message[]>([]);
   useEffect(() => {
     activeRoomMessagesRef.current = activeRoomMessages;
@@ -424,7 +428,7 @@ export default function App() {
   const [allRegisteredUsers, setAllRegisteredUsers] = useState<User[]>([]);
 
   const trulyOnlineUsers = useMemo(() => {
-    const now = Math.max(getServerNowMs(), presenceClock);
+    const now = getServerNowMs();
     return globalOnlineUsers.filter((u) => {
       if (!u || !u.id) return false;
       if (u.id === currentUser.id) return currentUser.status !== 'offline';
@@ -784,24 +788,18 @@ export default function App() {
     const activeUser = currentUserRef.current;
     realtimeSocket.connect(activeUser);
 
-    let wsGlobalUsers: User[] = [];
     let dbGlobalUsers: User[] = [];
 
     const syncMergedGlobalPresence = () => {
       const nowTs = getServerNowMs();
       const isBrowserOnline = typeof navigator === 'undefined' || navigator.onLine !== false;
       setGlobalOnlineUsers(prev => {
-        if (!isBrowserOnline && wsGlobalUsers.length === 0 && dbGlobalUsers.length <= 1 && prev.length > 1) {
+        if (!isBrowserOnline && dbGlobalUsers.length <= 1 && prev.length > 1) {
           return prev;
         }
         const self = currentUserRef.current;
         const map = new Map<string, User>();
         map.set(self.id, { ...self, isOnline: self.status !== 'offline', lastSeen: nowTs });
-        wsGlobalUsers.forEach(u => {
-          if (u && u.id && u.id !== self.id && u.status !== 'offline') {
-            map.set(u.id, { ...map.get(u.id), ...u, isOnline: true, lastSeen: (u as any).lastSeen || nowTs });
-          }
-        });
         dbGlobalUsers.forEach(u => {
           if (u && u.id && u.id !== self.id && isUserTrulyOnline(u, nowTs)) {
             map.set(u.id, { ...map.get(u.id), ...u, isOnline: true });
@@ -812,50 +810,19 @@ export default function App() {
       });
     };
 
-    // Listen to global presence updates (real connected users via WebSocket)
-    const unsubGlobal = realtimeSocket.subscribeToGlobalPresence((liveUsers) => {
-      wsGlobalUsers = Array.isArray(liveUsers) ? liveUsers : [];
-      syncMergedGlobalPresence();
-    });
-
-    // Listen to authoritative Firestore/RTDB global presence
+    // Listen exclusively to RTDB global presence (`presence/{userId}`)
     const unsubFirestorePresence = subscribeToGlobalPresence(activeUser, (liveUsers) => {
       dbGlobalUsers = Array.isArray(liveUsers) ? liveUsers : [];
       syncMergedGlobalPresence();
     });
 
-    // Automatically refresh presence and active room messages on reconnect
+    // Automatically re-register user and room on socket reconnect
     const unsubReconnect = realtimeSocket.subscribeToReconnectSuccess(() => {
       const me = currentUserRef.current;
       realtimeSocket.registerUser(me);
-      realtimeSocket.apiFetchWithRefresh('/api/presence')
-        .then(r => (r.ok ? r.json() : null))
-        .then(data => {
-          if (Array.isArray(data?.users)) {
-            wsGlobalUsers = data.users;
-            syncMergedGlobalPresence();
-          }
-        })
-        .catch(() => {});
-
       const currentRoom = activeRoomRef.current;
       if (currentRoom) {
         realtimeSocket.joinRoom(currentRoom.id, me);
-        realtimeSocket.apiFetchWithRefresh(`/api/messages/${encodeURIComponent(currentRoom.id)}`)
-          .then(r => (r.ok ? r.json() : null))
-          .then(data => {
-            if (Array.isArray(data?.messages) && data.messages.length > 0) {
-              setActiveRoomMessages(prev => {
-                const map = new Map<string, Message>();
-                prev.forEach(m => map.set(m.id, m));
-                data.messages.forEach((m: Message) => {
-                  if (m && m.id) map.set(m.id, m);
-                });
-                return Array.from(map.values()).sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
-              });
-            }
-          })
-          .catch(() => {});
       }
     });
 
@@ -875,54 +842,6 @@ export default function App() {
         });
         return changed ? next : prev;
       });
-    });
-
-    // Listen to incoming friend requests over instant WebSocket (merges cleanly sorted newest-first)
-    const unsubFriend = realtimeSocket.subscribeToFriendRequests((req) => {
-      const me = currentUserRef.current;
-      const targetId = req?.toId || req?.receiverId;
-      const sId = req?.fromId || req?.senderId;
-      const sName = req?.fromName || req?.senderName || 'عضو شات مصر';
-      const sAvatar = req?.fromAvatar || req?.senderAvatar || '';
-      if (
-        req &&
-        (targetId === me.id || (Boolean(me.sessionId) && targetId === me.sessionId)) &&
-        req.status === 'pending' &&
-        sId &&
-        sId !== me.id
-      ) {
-        const normalizedReq: FriendRequest = {
-          ...req,
-          fromId: sId,
-          fromName: sName,
-          fromAvatar: sAvatar,
-          toId: targetId || me.id,
-          senderId: sId,
-          senderName: sName,
-          senderAvatar: sAvatar,
-          receiverId: targetId || me.id,
-        };
-        if (!seenFriendBannerIdsRef.current.has(normalizedReq.id)) {
-          seenFriendBannerIdsRef.current.add(normalizedReq.id);
-          sounds.playNotificationChime();
-          setFriendReqBanner(normalizedReq);
-          if (friendReqBannerTimerRef.current) clearTimeout(friendReqBannerTimerRef.current);
-          friendReqBannerTimerRef.current = setTimeout(() => {
-            setFriendReqBanner((curr) => (curr?.id === normalizedReq.id ? null : curr));
-          }, 10000);
-          if (typeof document !== 'undefined' && document.hidden) {
-            triggerExternalBrowserNotification(
-              `طلب صداقة جديد من ${sName}`,
-              'اضغط لقبول أو رفض طلب الصداقة',
-              { senderId: sId }
-            );
-          }
-        }
-        setPendingFriendRequests(prev => {
-          const filtered = prev.filter(r => r.id !== normalizedReq.id && r.senderId !== sId && r.fromId !== sId);
-          return [normalizedReq, ...filtered].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-        });
-      }
     });
 
     // Do NOT trigger join notifications upon app login — only inside active rooms
@@ -1127,13 +1046,11 @@ export default function App() {
     });
 
     return () => {
-      unsubGlobal();
       unsubFirestorePresence();
       unsubRegisteredUsers();
       unsubRoomOnlineCounts();
       unsubReconnect();
       unsubAdmin();
-      unsubFriend();
       unsubGlobalJoin();
       unsubAppUpdate();
       unsubRoomLastMsgs();
@@ -1555,59 +1472,140 @@ export default function App() {
   // Track already-processed first-entry welcome checks in current session
   const welcomedPublicRoomKeysRef = useRef<Set<string>>(new Set());
 
-  // Load older room messages upward (30 per page)
+  // Load older room messages upward (30 per page via pure onSnapshot limit expansion)
   const handleLoadOlderRoomMessages = useCallback(async (): Promise<number> => {
-    if (!activeRoom?.id || isLoadingOlderRoomMsgs) return 0;
-    const currentList = activeRoomMessagesRef.current;
-    const oldestTs = currentList.reduce(
-      (min, m) => (m.timestamp && m.timestamp < min ? m.timestamp : min),
-      currentList[0]?.timestamp || Date.now()
-    );
+    if (!activeRoom?.id || isLoadingOlderRoomMsgs || noMoreOlderRoomMsgsRef.current) return 0;
+    prevRoomMsgCountBeforeExpandRef.current = activeRoomMessagesRef.current.length;
     setIsLoadingOlderRoomMsgs(true);
-    try {
-      const older = await fetchOlderRoomMessages(activeRoom.id, oldestTs, 30);
-      if (!older || older.length === 0) {
-        setHasMoreRoomMessages(false);
-        return 0;
-      }
-      setHasMoreRoomMessages(older.length >= 30);
-      setActiveRoomMessages(prev => mergeRoomMessageList(prev, older));
-      return older.length;
-    } finally {
-      setIsLoadingOlderRoomMsgs(false);
-    }
+    return new Promise<number>((resolve) => {
+      const wrappedResolve = (added: number) => {
+        clearTimeout(timeout);
+        resolve(added);
+      };
+      const timeout = setTimeout(() => {
+        if (pendingRoomOlderResolveRef.current === wrappedResolve) {
+          pendingRoomOlderResolveRef.current = null;
+          setIsLoadingOlderRoomMsgs(false);
+          resolve(0);
+        }
+      }, 6000);
+      pendingRoomOlderResolveRef.current = wrappedResolve;
+      setRoomMsgLimit((prev) => prev + 30);
+    });
   }, [activeRoom?.id, isLoadingOlderRoomMsgs]);
 
-  // Real-Time Room WebSocket & Firebase synchronization for active room
+  // Dedicated real-time Firestore onSnapshot listener for active room messages (orderBy createdAt desc, limit(30+), reverse())
   useEffect(() => {
-    if (!activeRoom) {
+    if (!activeRoom?.id) {
+      prevRoomIdForLimitRef.current = null;
+      noMoreOlderRoomMsgsRef.current = false;
+      if (pendingRoomOlderResolveRef.current) {
+        pendingRoomOlderResolveRef.current(0);
+        pendingRoomOlderResolveRef.current = null;
+      }
       setActiveRoomMessages([]);
+      setRoomMsgLimit(30);
       setHasMoreRoomMessages(false);
       setIsLoadingOlderRoomMsgs(false);
       return;
     }
 
-    setHasMoreRoomMessages(false);
+    const roomId = activeRoom.id;
+    if (prevRoomIdForLimitRef.current !== roomId) {
+      prevRoomIdForLimitRef.current = roomId;
+      noMoreOlderRoomMsgsRef.current = false;
+      if (pendingRoomOlderResolveRef.current) {
+        pendingRoomOlderResolveRef.current(0);
+        pendingRoomOlderResolveRef.current = null;
+      }
+      setActiveRoomMessages([]);
+      setHasMoreRoomMessages(false);
+      setIsLoadingOlderRoomMsgs(false);
+      if (roomMsgLimit !== 30) {
+        setRoomMsgLimit(30);
+        return;
+      }
+    }
+
+    const activeLimit = roomMsgLimit;
+    let prevFirebaseMsgs = new Map<string, number>();
+
+    const unsubFirebase = subscribeToRoomMessages(
+      roomId,
+      (msgs, meta) => {
+        const incomingList = Array.isArray(msgs) ? msgs : [];
+        if (meta?.fromFirestore && !meta.fromCache) {
+          if (incomingList.length < activeLimit) {
+            noMoreOlderRoomMsgsRef.current = true;
+            setHasMoreRoomMessages(false);
+          } else if (!noMoreOlderRoomMsgsRef.current) {
+            setHasMoreRoomMessages(true);
+          }
+        } else if (incomingList.length >= activeLimit && !noMoreOlderRoomMsgsRef.current) {
+          setHasMoreRoomMessages(true);
+        }
+
+        const nextFirebaseMsgs = new Map<string, number>();
+        let minIncomingTs = Infinity;
+        incomingList.forEach((m) => {
+          const ts = typeof m.timestamp === 'number' ? m.timestamp : 0;
+          nextFirebaseMsgs.set(m.id, ts);
+          if (ts > 0 && ts < minIncomingTs) minIncomingTs = ts;
+        });
+        const deletedFromFirebase = new Set<string>();
+        prevFirebaseMsgs.forEach((oldTs, oldId) => {
+          if (!nextFirebaseMsgs.has(oldId)) {
+            if (incomingList.length < activeLimit || oldTs >= minIncomingTs) {
+              deletedFromFirebase.add(oldId);
+            }
+          }
+        });
+        prevFirebaseMsgs = nextFirebaseMsgs;
+
+        setActiveRoomMessages((prev) => {
+          const filteredPrev =
+            deletedFromFirebase.size > 0
+              ? prev.filter((m) => !deletedFromFirebase.has(m.id))
+              : prev;
+          return mergeRoomMessageList(filteredPrev, incomingList);
+        });
+
+        if (meta?.fromFirestore && !meta.fromCache && pendingRoomOlderResolveRef.current) {
+          const resolvePending = pendingRoomOlderResolveRef.current;
+          pendingRoomOlderResolveRef.current = null;
+          setIsLoadingOlderRoomMsgs(false);
+          const added = Math.max(0, incomingList.length - prevRoomMsgCountBeforeExpandRef.current);
+          resolvePending(added);
+        }
+      },
+      activeLimit
+    );
+
+    return () => {
+      unsubFirebase();
+    };
+  }, [activeRoom?.id, roomMsgLimit]);
+
+  // Real-Time Room WebSocket & RTDB presence synchronization for active room
+  useEffect(() => {
+    if (!activeRoom) {
+      return;
+    }
+
     let isCancelled = false;
     let welcomeBotTimer: ReturnType<typeof setTimeout> | null = null;
 
     // Join room on real-time server
     realtimeSocket.joinRoom(activeRoom.id, currentUser);
 
-    // Subscribe to server-side + Firestore/RTDB room presence cleanly without overwriting one source with the other
-    let wsOccupantsList: User[] = [];
-    let fsOccupantsList: User[] = [];
-
-    const syncMergedRoomPresence = () => {
+    // Subscribe to RTDB room presence (`presence/{userId}`)
+    const unsubRoomFirestorePresence = subscribeToRoomPresence(activeRoom.id, currentUser, (_fsCount, fsOccupants) => {
       const me = currentUserRef.current;
       const mergedMap = new Map<string, User>();
       if (me?.id) {
         mergedMap.set(me.id, { ...me, isOnline: true });
       }
-      wsOccupantsList.forEach((u) => {
-        if (u && u.id) mergedMap.set(u.id, { ...mergedMap.get(u.id), ...u, isOnline: true });
-      });
-      fsOccupantsList.forEach((u) => {
+      (Array.isArray(fsOccupants) ? fsOccupants : []).forEach((u) => {
         if (u && u.id) mergedMap.set(u.id, { ...mergedMap.get(u.id), ...u, isOnline: true });
       });
       const merged = Array.from(mergedMap.values());
@@ -1625,16 +1623,6 @@ export default function App() {
         });
         return changed ? next : prev;
       });
-    };
-
-    const unsubPresence = realtimeSocket.subscribeToPresence(activeRoom.id, (_count, occupants) => {
-      wsOccupantsList = Array.isArray(occupants) ? occupants : [];
-      syncMergedRoomPresence();
-    });
-
-    const unsubRoomFirestorePresence = subscribeToRoomPresence(activeRoom.id, currentUser, (_fsCount, fsOccupants) => {
-      fsOccupantsList = Array.isArray(fsOccupants) ? fsOccupants : [];
-      syncMergedRoomPresence();
     });
 
     // Subscribe to server-side messages & history
@@ -1691,39 +1679,6 @@ export default function App() {
         );
       }
     );
-
-    // Also attach Firebase listener (last 30 messages) with window-safe deletion reconciliation
-    let prevFirebaseMsgs = new Map<string, number>();
-    const unsubFirebase = subscribeToRoomMessages(activeRoom.id, (msgs) => {
-      const incomingList = Array.isArray(msgs) ? msgs : [];
-      if (incomingList.length >= 30) {
-        setHasMoreRoomMessages(true);
-      }
-      const nextFirebaseMsgs = new Map<string, number>();
-      let minIncomingTs = Infinity;
-      incomingList.forEach((m) => {
-        const ts = typeof m.timestamp === 'number' ? m.timestamp : 0;
-        nextFirebaseMsgs.set(m.id, ts);
-        if (ts > 0 && ts < minIncomingTs) minIncomingTs = ts;
-      });
-      const deletedFromFirebase = new Set<string>();
-      prevFirebaseMsgs.forEach((oldTs, oldId) => {
-        if (!nextFirebaseMsgs.has(oldId)) {
-          // Only treat as deleted if within active 30-message window (not slid out into older history)
-          if (incomingList.length < 30 || oldTs >= minIncomingTs) {
-            deletedFromFirebase.add(oldId);
-          }
-        }
-      });
-      prevFirebaseMsgs = nextFirebaseMsgs;
-
-      setActiveRoomMessages(prev => {
-        const filteredPrev = deletedFromFirebase.size > 0
-          ? prev.filter(m => !deletedFromFirebase.has(m.id))
-          : prev;
-        return mergeRoomMessageList(filteredPrev, incomingList);
-      });
-    }, 30);
 
     // Listen to instant WebSocket message deletions & room purge events
     const unsubDeleted = realtimeSocket.subscribeToRoomMessageDeleted(activeRoom.id, (deletedMessageId) => {
@@ -1802,12 +1757,10 @@ export default function App() {
       if (welcomeBotTimer) clearTimeout(welcomeBotTimer);
       welcomedPublicRoomKeysRef.current.delete(sessionKey);
       realtimeSocket.leaveRoom(activeRoom.id, currentUser.id);
-      unsubPresence();
       unsubRoomFirestorePresence();
       unsubMessages();
       unsubReactions();
       unsubRead();
-      unsubFirebase();
       unsubDeleted();
       unsubPurged();
     };

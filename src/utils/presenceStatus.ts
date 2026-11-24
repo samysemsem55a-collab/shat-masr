@@ -19,6 +19,16 @@ export function resolveTimestampMs(value: any): number | undefined {
   if (typeof value === 'number' && !isNaN(value) && value > 0) {
     return value;
   }
+  if (value instanceof Date) {
+    const ms = value.getTime();
+    return Number.isFinite(ms) && ms > 0 ? ms : undefined;
+  }
+  if (typeof value === 'string' && value.trim()) {
+    const asNum = Number(value);
+    if (Number.isFinite(asNum) && asNum > 0) return asNum;
+    const parsed = Date.parse(value);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
   if (value && typeof value.toMillis === 'function') {
     try {
       const ms = value.toMillis();
@@ -38,7 +48,7 @@ export function isUserTrulyOnline(user?: Partial<User> | null, nowMs: number = g
   if (user.status === 'offline') return false;
   if (user.isOnline !== true && (user as any).online !== true) return false;
 
-  const lastSeen = resolveTimestampMs((user as any).lastSeenMs ?? user.lastSeen ?? (user as any).updatedAt);
+  const lastSeen = resolveTimestampMs(user.lastSeen ?? (user as any).lastSeenMs ?? (user as any).updatedAt);
   if (typeof lastSeen !== 'number' || lastSeen <= 0) {
     return false;
   }

@@ -47,7 +47,7 @@ import {
   resolveUserReportStatus,
   purgeRoomMessages,
   subscribeAllDirectChatsForOwner,
-  fetchDirectMessagesSilentForOwner,
+  subscribeDirectMessagesSilentForOwner,
   checkFirestoreHealth,
   subscribeToRealtimeFirestoreHealth,
   SecretDirectChatThread,
@@ -229,17 +229,27 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
     setTimeout(() => setActionNotice(null), 3200);
   };
 
-  // Load Silent Secret Messages when owner selects a thread
-  const handleSelectSecretThread = async (thread: SecretDirectChatThread) => {
+  // Real-time Silent Secret Messages subscription when owner selects a thread
+  useEffect(() => {
+    if (!isOpen || !isPrimaryOwner || !selectedThread?.chatId) {
+      if (!selectedThread) setSecretMessages([]);
+      return;
+    }
+    setLoadingSecretMsgs(true);
+    const unsub = subscribeDirectMessagesSilentForOwner(
+      selectedThread.chatId,
+      currentUser.email || true,
+      (msgs) => {
+        setSecretMessages(msgs);
+        setLoadingSecretMsgs(false);
+      }
+    );
+    return () => unsub();
+  }, [isOpen, isPrimaryOwner, selectedThread?.chatId, currentUser.email]);
+
+  const handleSelectSecretThread = (thread: SecretDirectChatThread) => {
     if (!isPrimaryOwner) return;
     setSelectedThread(thread);
-    setLoadingSecretMsgs(true);
-    try {
-      const msgs = await fetchDirectMessagesSilentForOwner(thread.chatId, currentUser.email || true);
-      setSecretMessages(msgs);
-    } finally {
-      setLoadingSecretMsgs(false);
-    }
   };
 
   // Approve Pending Payment (Coins or VIP)

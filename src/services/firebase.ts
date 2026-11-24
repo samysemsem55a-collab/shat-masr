@@ -24,7 +24,6 @@ import {
   arrayRemove,
   deleteField,
   runTransaction,
-  startAfter,
   writeBatch,
   QueryDocumentSnapshot,
   DocumentData
@@ -279,6 +278,54 @@ const liveChatBus = typeof window !== 'undefined' ? new BroadcastChannel('arab_c
 const roomPresenceSelfState = new Map<string, string | null>();
 const typingThrottleMap = new Map<string, number>();
 
+type RtdbPresenceListener = (presenceMap: Record<string, any>) => void;
+const sharedRtdbPresenceListeners = new Set<RtdbPresenceListener>();
+let sharedRtdbPresenceCache: Record<string, any> = {};
+let sharedRtdbPresenceUnsub: (() => void) | null = null;
+let sharedRtdbPresenceInitialized = false;
+
+export function subscribeSharedRtdbPresence(listener: RtdbPresenceListener): () => void {
+  sharedRtdbPresenceListeners.add(listener);
+  if (sharedRtdbPresenceInitialized) {
+    try {
+      listener(sharedRtdbPresenceCache);
+    } catch {}
+  }
+
+  if (!sharedRtdbPresenceUnsub && rtdb) {
+    try {
+      sharedRtdbPresenceUnsub = onValue(
+        ref(rtdb, 'presence'),
+        (snap) => {
+          const val = snap.val();
+          sharedRtdbPresenceCache = val && typeof val === 'object' ? val : {};
+          sharedRtdbPresenceInitialized = true;
+          sharedRtdbPresenceListeners.forEach((cb) => {
+            try {
+              cb(sharedRtdbPresenceCache);
+            } catch {}
+          });
+        },
+        (err) => {
+          console.warn('RTDB presence listener notice:', err);
+        }
+      );
+    } catch (e) {
+      console.warn('RTDB presence setup notice:', e);
+    }
+  }
+
+  return () => {
+    sharedRtdbPresenceListeners.delete(listener);
+    if (sharedRtdbPresenceListeners.size === 0 && sharedRtdbPresenceUnsub) {
+      sharedRtdbPresenceUnsub();
+      sharedRtdbPresenceUnsub = null;
+      sharedRtdbPresenceInitialized = false;
+      sharedRtdbPresenceCache = {};
+    }
+  };
+}
+
 export function subscribeToRoomPresence(
   roomId: string,
   user: User,
@@ -291,7 +338,7 @@ export function subscribeToRoomPresence(
     const nowTs = getServerNowMs();
     const combined = new Map<string, User>();
     rtdbUsersMap.forEach((u, id) => {
-      const seen = resolveTimestampMs((u as any).lastSeenMs ?? u.lastSeen) || 0;
+      const seen = resolveTimestampMs(u.lastSeen ?? (u as any).lastSeenMs) || 0;
       if (u && u.id && u.isOnline === true && seen > 0 && nowTs - seen <= PRESENCE_OFFLINE_TIMEOUT_MS) {
         combined.set(id, { ...u, isOnline: true, lastSeen: seen });
       }
@@ -306,130 +353,65 @@ export function subscribeToRoomPresence(
     onCountChange(Math.max(1, list.length), list);
   };
 
-  let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
-  let freshnessInterval: ReturnType<typeof setInterval> | null = null;
-  let unsubPresence: (() => void) | null = null;
-  let unsubConnected: (() => void) | null = null;
-  let focusOnlineHandler: (() => void) | null = null;
-  let visibilityHandler: (() => void) | null = null;
-
   if (user?.id) {
     roomPresenceSelfState.set(user.id, roomId);
-  }
-
-  const pushRoomHeartbeat = () => {
-    if (!rtdb || !user?.id || (typeof navigator !== 'undefined' && navigator.onLine === false)) return;
-    const nowTs = getServerNowMs();
-    const userPresenceRef = ref(rtdb, `presence/${user.id}`);
-    const payload = {
-      userId: user.id,
-      id: user.id,
-      username: user.name || user.username || 'عضو شات مصر',
-      name: user.name || user.username || 'عضو شات مصر',
-      avatar: user.avatar || '',
-      role: user.role || 'member',
-      vipBadge: user.vipBadge || '',
-      countryFlag: user.countryFlag || '🇪🇬',
-      badges: user.badges || [],
-      gender: user.gender || 'male',
-      frameStyle: user.frameStyle || '',
-      status: user.status === 'offline' ? 'online' : (user.status || 'online'),
-      currentRoom: roomId,
-      isOnline: true,
-      isBanned: Boolean(user.isBanned),
-      isMuted: Boolean(user.isMuted),
-      lastSeen: rtdbServerTimestamp(),
-      lastSeenMs: nowTs,
-    };
-    update(userPresenceRef, payload).catch(() => {});
-  };
-
-  if (rtdb && user?.id) {
-    try {
-      const connectedRef = ref(rtdb, '.info/connected');
-      const userPresenceRef = ref(rtdb, `presence/${user.id}`);
-      const allPresenceRef = ref(rtdb, 'presence');
-
-      unsubConnected = onValue(connectedRef, (snap) => {
-        if (snap.val() === true) {
-          onDisconnect(userPresenceRef).update({
-            isOnline: false,
-            currentRoom: null,
-            lastSeen: rtdbServerTimestamp()
-          }).catch(() => {});
-          pushRoomHeartbeat();
-        }
-      });
-
-      pushRoomHeartbeat();
-      heartbeatTimer = setInterval(pushRoomHeartbeat, PRESENCE_HEARTBEAT_MS);
-      freshnessInterval = setInterval(emitRoomUsers, 15000);
-
-      focusOnlineHandler = () => pushRoomHeartbeat();
-      visibilityHandler = () => {
-        if (typeof document === 'undefined' || document.visibilityState === 'visible') {
-          pushRoomHeartbeat();
-        }
-      };
-      if (typeof window !== 'undefined') {
-        window.addEventListener('focus', focusOnlineHandler);
-        window.addEventListener('online', focusOnlineHandler);
-      }
-      if (typeof document !== 'undefined') {
-        document.addEventListener('visibilitychange', visibilityHandler);
-      }
-
-      unsubPresence = onValue(
-        allPresenceRef,
-        (snapshot) => {
-          const data = snapshot.val();
-          const nowTs = getServerNowMs();
-          rtdbUsersMap.clear();
-          if (data && typeof data === 'object') {
-            Object.entries(data).forEach(([uid, u]: [string, any]) => {
-              if (!u || typeof u !== 'object') return;
-              const resolvedId = String(u.userId || u.id || uid);
-              if (u.isOnline !== true || u.status === 'offline') return;
-              if (u.currentRoom !== roomId) return;
-              const seen = resolveTimestampMs(u.lastSeen ?? u.lastSeenMs) || 0;
-              if (resolvedId === user.id || (seen > 0 && nowTs - seen <= PRESENCE_OFFLINE_TIMEOUT_MS)) {
-                rtdbUsersMap.set(resolvedId, {
-                  ...u,
-                  id: resolvedId,
-                  name: u.username || u.name || 'عضو',
-                  username: u.username || u.name || resolvedId,
-                  avatar: u.avatar || '',
-                  isOnline: true,
-                  lastSeen: seen || nowTs
-                } as User);
-              }
-            });
-          }
-          emitRoomUsers();
-        },
-        (err) => {
-          console.warn('RTDB room presence listener notice:', err);
-        }
-      );
-    } catch (e) {
-      console.warn('RTDB room presence setup notice:', e);
+    if (rtdb && (typeof navigator === 'undefined' || navigator.onLine !== false)) {
+      const nowTs = getServerNowMs();
+      update(ref(rtdb, `presence/${user.id}`), {
+        userId: user.id,
+        id: user.id,
+        username: user.name || user.username || 'عضو شات مصر',
+        name: user.name || user.username || 'عضو شات مصر',
+        avatar: user.avatar || '',
+        role: user.role || 'member',
+        vipBadge: user.vipBadge || '',
+        countryFlag: user.countryFlag || '🇪🇬',
+        badges: user.badges || [],
+        gender: user.gender || 'male',
+        frameStyle: user.frameStyle || '',
+        status: user.status === 'offline' ? 'online' : (user.status || 'online'),
+        currentRoom: roomId,
+        isOnline: true,
+        isBanned: Boolean(user.isBanned),
+        isMuted: Boolean(user.isMuted),
+        lastSeen: rtdbServerTimestamp(),
+        lastSeenMs: nowTs,
+      }).catch(() => {});
     }
   }
 
+  const unsubPresence = subscribeSharedRtdbPresence((data) => {
+    const nowTs = getServerNowMs();
+    rtdbUsersMap.clear();
+    if (data && typeof data === 'object') {
+      Object.entries(data).forEach(([uid, u]: [string, any]) => {
+        if (!u || typeof u !== 'object') return;
+        const resolvedId = String(u.userId || u.id || uid);
+        if (u.isOnline !== true || u.status === 'offline') return;
+        if (u.currentRoom !== roomId) return;
+        const seen = resolveTimestampMs(u.lastSeen ?? u.lastSeenMs) || 0;
+        if (resolvedId === user.id || (seen > 0 && nowTs - seen <= PRESENCE_OFFLINE_TIMEOUT_MS)) {
+          rtdbUsersMap.set(resolvedId, {
+            ...u,
+            id: resolvedId,
+            name: u.username || u.name || 'عضو',
+            username: u.username || u.name || resolvedId,
+            avatar: u.avatar || '',
+            isOnline: true,
+            lastSeen: seen || nowTs
+          } as User);
+        }
+      });
+    }
+    emitRoomUsers();
+  });
+
+  const freshnessInterval = setInterval(emitRoomUsers, 15000);
   emitRoomUsers();
 
   return () => {
-    if (heartbeatTimer) clearInterval(heartbeatTimer);
-    if (freshnessInterval) clearInterval(freshnessInterval);
-    if (unsubConnected) unsubConnected();
-    if (unsubPresence) unsubPresence();
-    if (focusOnlineHandler && typeof window !== 'undefined') {
-      window.removeEventListener('focus', focusOnlineHandler);
-      window.removeEventListener('online', focusOnlineHandler);
-    }
-    if (visibilityHandler && typeof document !== 'undefined') {
-      document.removeEventListener('visibilitychange', visibilityHandler);
-    }
+    clearInterval(freshnessInterval);
+    unsubPresence();
     if (user?.id && roomPresenceSelfState.get(user.id) === roomId) {
       roomPresenceSelfState.set(user.id, null);
       if (rtdb) {
@@ -451,7 +433,6 @@ export function subscribeToGlobalPresence(
   const globalKey = 'arab_chat_global_presence';
   const rtdbUsersMap = new Map<string, User>();
   let lastPresenceSignature = '';
-  let rtdbConnectedState = false;
 
   const emitPresence = () => {
     const nowTs = getServerNowMs();
@@ -460,7 +441,7 @@ export function subscribeToGlobalPresence(
     rtdbUsersMap.forEach((u, id) => {
       if (!u || !id) return;
       if (u.status === 'offline' || u.isOnline !== true) return;
-      const seen = resolveTimestampMs((u as any).lastSeenMs ?? u.lastSeen);
+      const seen = resolveTimestampMs(u.lastSeen ?? (u as any).lastSeenMs);
       if (id !== user?.id && (typeof seen !== 'number' || nowTs - seen > PRESENCE_OFFLINE_TIMEOUT_MS)) {
         return;
       }
@@ -544,7 +525,6 @@ export function subscribeToGlobalPresence(
 
   if (rtdb && user && user.id) {
     const globalStatusRef = ref(rtdb, `presence/${user.id}`);
-    const allGlobalRef = ref(rtdb, 'presence');
     const connectedRef = ref(rtdb, '.info/connected');
 
     const sendPresenceHeartbeat = () => {
@@ -552,59 +532,48 @@ export function subscribeToGlobalPresence(
       const nowTs = getServerNowMs();
       const payload = buildOnlinePayload(nowTs);
       rtdbUsersMap.set(user.id, { ...rtdbUsersMap.get(user.id), ...user, isOnline: true, lastSeen: nowTs });
-      if (rtdbConnectedState) {
-        update(globalStatusRef, payload).catch(() => {});
-      }
+      update(globalStatusRef, payload).catch(() => {});
     };
 
     try {
       unsubConnected = onValue(connectedRef, (snap) => {
-        rtdbConnectedState = snap.val() === true;
-        if (rtdbConnectedState) {
-          const nowTs = getServerNowMs();
+        if (snap.val() === true) {
           onDisconnect(globalStatusRef).update({
             isOnline: false,
             currentRoom: null,
             lastSeen: rtdbServerTimestamp()
           }).catch(() => {});
-          update(globalStatusRef, buildOnlinePayload(nowTs)).catch(() => {});
+          sendPresenceHeartbeat();
         }
       });
 
-      unsubAll = onValue(
-        allGlobalRef,
-        (snap) => {
-          const val = snap.val();
-          const nowTs = getServerNowMs();
-          rtdbUsersMap.clear();
-          if (val && typeof val === 'object') {
-            Object.entries(val).forEach(([uid, u]: [string, any]) => {
-              if (!u || typeof u !== 'object') return;
-              const resolvedId = String(u.userId || u.id || uid);
-              if (u.isOnline !== true || u.status === 'offline') return;
-              const seen = resolveTimestampMs(u.lastSeen ?? u.lastSeenMs) || 0;
-              if (resolvedId === user.id || (seen > 0 && nowTs - seen <= PRESENCE_OFFLINE_TIMEOUT_MS)) {
-                rtdbUsersMap.set(resolvedId, {
-                  ...u,
-                  id: resolvedId,
-                  name: u.name || u.username || 'عضو شات مصر',
-                  username: u.username || u.name || resolvedId,
-                  avatar: u.avatar || '',
-                  isOnline: true,
-                  lastSeen: seen || nowTs
-                } as User);
-              }
-            });
-          }
-          emitPresence();
-        },
-        (err) => {
-          console.warn('RTDB global presence listener notice:', err);
+      unsubAll = subscribeSharedRtdbPresence((val) => {
+        const nowTs = getServerNowMs();
+        rtdbUsersMap.clear();
+        if (val && typeof val === 'object') {
+          Object.entries(val).forEach(([uid, u]: [string, any]) => {
+            if (!u || typeof u !== 'object') return;
+            const resolvedId = String(u.userId || u.id || uid);
+            if (u.isOnline !== true || u.status === 'offline') return;
+            const seen = resolveTimestampMs(u.lastSeen ?? u.lastSeenMs) || 0;
+            if (resolvedId === user.id || (seen > 0 && nowTs - seen <= PRESENCE_OFFLINE_TIMEOUT_MS)) {
+              rtdbUsersMap.set(resolvedId, {
+                ...u,
+                id: resolvedId,
+                name: u.name || u.username || 'عضو شات مصر',
+                username: u.username || u.name || resolvedId,
+                avatar: u.avatar || '',
+                isOnline: true,
+                lastSeen: seen || nowTs
+              } as User);
+            }
+          });
         }
-      );
+        emitPresence();
+      });
 
+      sendPresenceHeartbeat();
       heartbeatTimer = setInterval(sendPresenceHeartbeat, PRESENCE_HEARTBEAT_MS);
-      // Re-evaluate 60s lastSeen freshness every 15s using setInterval (never setTimeout per user)
       freshnessInterval = setInterval(emitPresence, 15000);
 
       focusOnlineHandler = () => sendPresenceHeartbeat();
@@ -682,8 +651,6 @@ function mergeTwoMessages(prev: Message | undefined, next: Message): Message {
   };
 }
 
-const roomOlderCursorMap = new Map<string, QueryDocumentSnapshot<DocumentData> | null>();
-
 function mapFirestoreRoomMessage(
   roomId: string,
   docSnap: QueryDocumentSnapshot<DocumentData>
@@ -736,7 +703,7 @@ function mapFirestoreRoomMessage(
 
 export function subscribeToRoomMessages(
   roomId: string,
-  onMessages: (messages: Message[]) => void,
+  onMessages: (messages: Message[], meta?: { fromFirestore: boolean; fromCache: boolean }) => void,
   initialLimit: number = 30
 ): () => void {
   const localKey = `messages_room_${roomId}`;
@@ -744,10 +711,8 @@ export function subscribeToRoomMessages(
   const localMsgsMap = new Map<string, Message>();
   const tempIdToRealId = new Map<string, string>();
   const seenFsIds = new Set<string>();
-  roomOlderCursorMap.delete(roomId);
-  let hasInitialCursor = false;
 
-  const emitMerged = () => {
+  const emitMerged = (meta: { fromFirestore: boolean; fromCache: boolean } = { fromFirestore: false, fromCache: false }) => {
     const combined = new Map<string, Message>();
     localMsgsMap.forEach((m, id) => {
       if (!m || !id) return;
@@ -769,7 +734,7 @@ export function subscribeToRoomMessages(
     try {
       localStorage.setItem(localKey, JSON.stringify(list.slice(-60)));
     } catch {}
-    onMessages(list);
+    onMessages(list, meta);
   };
 
   try {
@@ -797,15 +762,14 @@ export function subscribeToRoomMessages(
 
           // Reverse descending server docs so chronological oldest -> newest order
           const orderedDocs = [...snapshot.docs].reverse();
-          if (!hasInitialCursor && snapshot.docs.length > 0) {
-            roomOlderCursorMap.set(roomId, snapshot.docs[snapshot.docs.length - 1]);
-            hasInitialCursor = true;
-          }
+          let oldestServerTs = Infinity;
 
           orderedDocs.forEach((docSnap) => {
             const msgItem = mapFirestoreRoomMessage(roomId, docSnap);
             nextIds.add(msgItem.id);
             seenFsIds.add(msgItem.id);
+            const itemTs = msgItem.createdAt || msgItem.timestamp || 0;
+            if (itemTs > 0 && itemTs < oldestServerTs) oldestServerTs = itemTs;
             if (msgItem.tempId) {
               tempIdToRealId.set(msgItem.tempId, msgItem.id);
               localMsgsMap.delete(msgItem.tempId);
@@ -814,15 +778,26 @@ export function subscribeToRoomMessages(
           });
 
           if (!snapshot.metadata.fromCache) {
+            const nowMs = Date.now();
             Array.from(seenFsIds).forEach((prevId) => {
               if (!nextIds.has(prevId) && snapshot.docs.length < initialLimit) {
                 seenFsIds.delete(prevId);
                 localMsgsMap.delete(prevId);
               }
             });
+            Array.from(localMsgsMap.entries()).forEach(([localId, localMsg]) => {
+              if (nextIds.has(localId)) return;
+              if (localMsg.status === 'pending_offline' || localMsg.status === 'failed') return;
+              const localTs = localMsg.createdAt || localMsg.timestamp || 0;
+              const isRecentInFlight = localTs > 0 && nowMs - localTs < 12000;
+              if (isRecentInFlight) return;
+              if (snapshot.docs.length < initialLimit || localTs >= oldestServerTs) {
+                localMsgsMap.delete(localId);
+              }
+            });
           }
 
-          emitMerged();
+          emitMerged({ fromFirestore: true, fromCache: snapshot.metadata.fromCache });
         },
         (err) => {
           handleFirestoreError(err, OperationType.LIST, `rooms/${roomId}/messages`);
@@ -866,39 +841,6 @@ export function subscribeToRoomMessages(
     if (firestoreUnsub) firestoreUnsub();
     liveChatBus?.removeEventListener('message', handleBroadcast);
   };
-}
-
-// Fetch older room messages using QueryDocumentSnapshot startAfter cursor
-export async function fetchOlderRoomMessages(
-  roomId: string,
-  _beforeTimestamp?: number,
-  pageSize: number = 30
-): Promise<Message[]> {
-  if (!roomId || !db) return [];
-  const cursor = roomOlderCursorMap.get(roomId);
-  if (!cursor) return [];
-
-  try {
-    const messagesRef = collection(db, 'rooms', roomId, 'messages');
-    const q = query(
-      messagesRef,
-      orderBy('createdAt', 'desc'),
-      startAfter(cursor),
-      limit(pageSize)
-    );
-    const snap = await getDocs(q);
-    if (snap.empty) {
-      roomOlderCursorMap.set(roomId, null);
-      return [];
-    }
-    roomOlderCursorMap.set(roomId, snap.docs[snap.docs.length - 1]);
-    return [...snap.docs]
-      .reverse()
-      .map((docSnap) => mapFirestoreRoomMessage(roomId, docSnap));
-  } catch (err) {
-    handleFirestoreError(err, OperationType.LIST, `rooms/${roomId}/messages`);
-    return [];
-  }
 }
 
 // Send Real Message to Firestore (`rooms/{roomId}/messages`) with serverTimestamp & tempId
@@ -1347,36 +1289,30 @@ export function subscribeToAllUsers(
     emit();
   });
 
-  let unsubRtdbPresence: (() => void) | null = null;
-  if (rtdb) {
-    try {
-      unsubRtdbPresence = onValue(ref(rtdb, 'presence'), (snapshot) => {
-        const val = snapshot.val();
-        const now = getServerNowMs();
-        rtdbPresenceMap.clear();
-        if (val && typeof val === 'object') {
-          Object.entries(val).forEach(([uid, entry]: [string, any]) => {
-            if (!entry || typeof entry !== 'object') return;
-            const resolvedId = String(entry.userId || entry.id || uid);
-            const seen = resolveTimestampMs(entry.lastSeen ?? entry.lastSeenMs) || 0;
-            if (entry.isOnline === true && entry.status !== 'offline' && seen > 0 && now - seen <= PRESENCE_OFFLINE_TIMEOUT_MS) {
-              rtdbPresenceMap.set(resolvedId, {
-                isOnline: true,
-                lastSeen: seen,
-                status: entry.status || 'online',
-                currentRoom: entry.currentRoom ?? null
-              });
-            }
+  const unsubRtdbPresence = subscribeSharedRtdbPresence((val) => {
+    const now = getServerNowMs();
+    rtdbPresenceMap.clear();
+    if (val && typeof val === 'object') {
+      Object.entries(val).forEach(([uid, entry]: [string, any]) => {
+        if (!entry || typeof entry !== 'object') return;
+        const resolvedId = String(entry.userId || entry.id || uid);
+        const seen = resolveTimestampMs(entry.lastSeen ?? entry.lastSeenMs) || 0;
+        if (entry.isOnline === true && entry.status !== 'offline' && seen > 0 && now - seen <= PRESENCE_OFFLINE_TIMEOUT_MS) {
+          rtdbPresenceMap.set(resolvedId, {
+            isOnline: true,
+            lastSeen: seen,
+            status: entry.status || 'online',
+            currentRoom: entry.currentRoom ?? null
           });
         }
-        emit();
       });
-    } catch {}
-  }
+    }
+    emit();
+  });
 
   return () => {
     unsubFirestore();
-    if (unsubRtdbPresence) unsubRtdbPresence();
+    unsubRtdbPresence();
   };
 }
 
@@ -2063,8 +1999,6 @@ export function subscribeToFriendRequests(
   }
   const localKey = `friend_requests_${userId}`;
   const toIdMap = new Map<string, FriendRequest>();
-  const receiverIdMap = new Map<string, FriendRequest>();
-  const legacySubMap = new Map<string, FriendRequest>();
   const socketMap = new Map<string, FriendRequest>();
   const localSeedMap = new Map<string, FriendRequest>();
   const resolvedIds = new Set<string>();
@@ -2085,8 +2019,8 @@ export function subscribeToFriendRequests(
 
     const combinedById = new Map<string, FriendRequest>();
     const sources = hasServerSnapshot
-      ? [socketMap, legacySubMap, receiverIdMap, toIdMap]
-      : [localSeedMap, socketMap, legacySubMap, receiverIdMap, toIdMap];
+      ? [socketMap, toIdMap]
+      : [localSeedMap, socketMap, toIdMap];
     sources.forEach((source) => {
       source.forEach((req, id) => {
         if (resolvedIds.has(id)) return;
@@ -2124,76 +2058,50 @@ export function subscribeToFriendRequests(
   } catch {}
   emit();
 
-  // Listen on Firestore `friendRequests` for BOTH `toId == userId` and `receiverId == userId`,
-  // plus legacy `users/{userId}/friend_requests` subcollection (sorted in JS without orderBy).
+  // Single unified Firestore listener on `friendRequests` where `toId == userId`
   let unsubToId: (() => void) | null = null;
-  let unsubReceiverId: (() => void) | null = null;
-  let unsubLegacySub: (() => void) | null = null;
-
-  const ingestSnapshot = (
-    snap: any,
-    targetMap: Map<string, FriendRequest>
-  ) => {
-    hasServerSnapshot = true;
-    targetMap.clear();
-    snap.docs.forEach((docSnap: QueryDocumentSnapshot<DocumentData>) => {
-      const data = docSnap.data({ serverTimestamps: 'estimate' }) || {};
-      const sId = String(data.fromId || data.senderId || '');
-      const rId = String(data.toId || data.receiverId || userId);
-      if (!sId || sId === userId) return;
-      if (data.status === 'pending') {
-        resolvedIds.delete(docSnap.id);
-        trackPendingRequestId(sId, rId, docSnap.id);
-        const createdMs = resolveTimestampMs(data.createdAt ?? data.timestamp) ?? Date.now();
-        const sName = data.fromName || data.senderName || 'عضو شات مصر';
-        const sAvatar = data.fromAvatar || data.senderAvatar || '';
-        targetMap.set(docSnap.id, {
-          id: docSnap.id,
-          fromId: sId,
-          fromName: sName,
-          fromAvatar: sAvatar,
-          toId: rId,
-          senderId: sId,
-          senderName: sName,
-          senderAvatar: sAvatar,
-          receiverId: rId,
-          status: 'pending',
-          createdAt: createdMs
-        });
-      } else {
-        resolvedIds.add(docSnap.id);
-        socketMap.delete(docSnap.id);
-        localSeedMap.delete(docSnap.id);
-        toIdMap.delete(docSnap.id);
-        receiverIdMap.delete(docSnap.id);
-        legacySubMap.delete(docSnap.id);
-      }
-    });
-    emit();
-  };
 
   if (db) {
     try {
       unsubToId = onSnapshot(
         query(collection(db, 'friendRequests'), where('toId', '==', userId)),
-        (snap) => ingestSnapshot(snap, toIdMap),
-        (err) => handleFirestoreError(err, OperationType.LIST, 'friendRequests(toId)')
-      );
-    } catch {}
-
-    try {
-      unsubReceiverId = onSnapshot(
-        query(collection(db, 'friendRequests'), where('receiverId', '==', userId)),
-        (snap) => ingestSnapshot(snap, receiverIdMap),
-        (err) => handleFirestoreError(err, OperationType.LIST, 'friendRequests(receiverId)')
-      );
-    } catch {}
-
-    try {
-      unsubLegacySub = onSnapshot(
-        collection(db, 'users', userId, 'friend_requests'),
-        (snap) => ingestSnapshot(snap, legacySubMap),
-        (err) => handleFirestoreError(err, OperationType.LIST, `users/${userId}/friend_requests`)
+        (snap) => {
+          hasServerSnapshot = true;
+          toIdMap.clear();
+          snap.docs.forEach((docSnap: QueryDocumentSnapshot<DocumentData>) => {
+            const data = docSnap.data({ serverTimestamps: 'estimate' }) || {};
+            const sId = String(data.fromId || data.senderId || '');
+            const rId = String(data.toId || data.receiverId || userId);
+            if (!sId || sId === userId) return;
+            if (data.status === 'pending') {
+              resolvedIds.delete(docSnap.id);
+              trackPendingRequestId(sId, rId, docSnap.id);
+              const createdMs = resolveTimestampMs(data.createdAt ?? data.timestamp) ?? Date.now();
+              const sName = data.fromName || data.senderName || 'عضو شات مصر';
+              const sAvatar = data.fromAvatar || data.senderAvatar || '';
+              toIdMap.set(docSnap.id, {
+                id: docSnap.id,
+                fromId: sId,
+                fromName: sName,
+                fromAvatar: sAvatar,
+                toId: rId,
+                senderId: sId,
+                senderName: sName,
+                senderAvatar: sAvatar,
+                receiverId: rId,
+                status: 'pending',
+                createdAt: createdMs
+              });
+            } else {
+              resolvedIds.add(docSnap.id);
+              socketMap.delete(docSnap.id);
+              localSeedMap.delete(docSnap.id);
+              toIdMap.delete(docSnap.id);
+            }
+          });
+          emit();
+        },
+        (err) => handleFirestoreError(err, OperationType.LIST, 'friendRequests')
       );
     } catch {}
   }
@@ -2229,13 +2137,11 @@ export function subscribeToFriendRequests(
       if (reqId) {
         resolvedIds.add(reqId);
         toIdMap.delete(reqId);
-        receiverIdMap.delete(reqId);
-        legacySubMap.delete(reqId);
         socketMap.delete(reqId);
         localSeedMap.delete(reqId);
       }
       if (resolvedSenderId) {
-        [toIdMap, receiverIdMap, legacySubMap, socketMap, localSeedMap].forEach((m) => {
+        [toIdMap, socketMap, localSeedMap].forEach((m) => {
           Array.from(m.entries()).forEach(([key, val]) => {
             if (val.fromId === resolvedSenderId || val.senderId === resolvedSenderId) {
               resolvedIds.add(key);
@@ -2251,8 +2157,6 @@ export function subscribeToFriendRequests(
 
   return () => {
     if (unsubToId) unsubToId();
-    if (unsubReceiverId) unsubReceiverId();
-    if (unsubLegacySub) unsubLegacySub();
     unsubSocket();
     liveChatBus?.removeEventListener('message', handleMsg);
   };
@@ -2357,7 +2261,6 @@ export async function acceptFriendRequestInDB(
           },
           { merge: true }
         );
-        batch.delete(doc(db!, 'users', currentUserId, 'friend_requests', id));
       });
 
       await batch.commit();
@@ -2416,7 +2319,6 @@ export async function declineFriendRequestInDB(
           },
           { merge: true }
         );
-        batch.delete(doc(db!, 'users', currentUserId, 'friend_requests', id));
       });
       await batch.commit();
       if (senderId) {
@@ -2691,30 +2593,25 @@ export function subscribeToFriendsList(
     } catch {}
   }
 
-  // 2. RTDB ONLY presence join on `presence` (60s freshness rule)
-  if (rtdb) {
-    try {
-      unsubRtdbPresence = onValue(ref(rtdb, 'presence'), (snap) => {
-        const val = snap.val();
-        const now = getServerNowMs();
-        rtdbOnlineSet.clear();
-        if (val && typeof val === 'object') {
-          Object.entries(val).forEach(([uid, uData]: [string, any]) => {
-            if (!uData || typeof uData !== 'object') return;
-            const seen = resolveTimestampMs(uData.lastSeen ?? uData.lastSeenMs) || 0;
-            if (seen) lastSeenMap.set(uid, seen);
-            if (uData.isOnline === true && uData.status !== 'offline' && seen > 0 && now - seen <= PRESENCE_OFFLINE_TIMEOUT_MS) {
-              rtdbOnlineSet.add(uid);
-              onlineStatusMap.set(uid, (uData.status as User['status']) || 'online');
-            } else {
-              onlineStatusMap.delete(uid);
-            }
-          });
+  // 2. RTDB ONLY presence join via shared listener (60s freshness rule)
+  unsubRtdbPresence = subscribeSharedRtdbPresence((val) => {
+    const now = getServerNowMs();
+    rtdbOnlineSet.clear();
+    if (val && typeof val === 'object') {
+      Object.entries(val).forEach(([uid, uData]: [string, any]) => {
+        if (!uData || typeof uData !== 'object') return;
+        const seen = resolveTimestampMs(uData.lastSeen ?? uData.lastSeenMs) || 0;
+        if (seen) lastSeenMap.set(uid, seen);
+        if (uData.isOnline === true && uData.status !== 'offline' && seen > 0 && now - seen <= PRESENCE_OFFLINE_TIMEOUT_MS) {
+          rtdbOnlineSet.add(uid);
+          onlineStatusMap.set(uid, (uData.status as User['status']) || 'online');
+        } else {
+          onlineStatusMap.delete(uid);
         }
-        emitUpdatedFriends();
       });
-    } catch {}
-  }
+    }
+    emitUpdatedFriends();
+  });
 
   const handleBroadcast = (e: MessageEvent) => {
     if (e.data?.type === 'FRIENDS_LIST_UPDATED') {
@@ -3149,18 +3046,14 @@ export async function logOutUser(): Promise<void> {
 }
 
 // ==========================================
-// 14. DIRECT MESSAGING (Canonical `privateChats/{chatId}/messages` + Legacy `direct_chats/{chatId}/messages`)
+// 14. DIRECT MESSAGING (Unified `privateChats/{chatId}/messages`)
 // ==========================================
 export function getConversationId(userId1: string, userId2: string): string {
   return [userId1, userId2].sort().join('_');
 }
 
-const dmDocSourceColMap = new Map<string, 'privateChats' | 'direct_chats'>();
-
 function mapFirestoreDirectMessage(
-  docSnap: QueryDocumentSnapshot<DocumentData>,
-  sourceCol?: 'privateChats' | 'direct_chats',
-  convId?: string
+  docSnap: QueryDocumentSnapshot<DocumentData>
 ): Message {
   const data = docSnap.data({ serverTimestamps: 'estimate' }) || {};
   const createdMs =
@@ -3169,9 +3062,6 @@ function mapFirestoreDirectMessage(
     Date.now();
   const ts = resolveTimestampMs(data.timestamp) ?? createdMs;
   const msgId = String(data.id || docSnap.id);
-  if (sourceCol && convId) {
-    dmDocSourceColMap.set(`${convId}::${msgId}`, sourceCol);
-  }
   return {
     id: msgId,
     tempId: data.tempId || data.clientId || msgId,
@@ -3222,12 +3112,10 @@ export function subscribeToDirectMessages(
   const localKey = `direct_messages_${convId}`;
   const localMsgsMap = new Map<string, Message>();
   const wsMsgsMap = new Map<string, Message>();
-  const legacyFsMsgsMap = new Map<string, Message>();
   const fsMsgsMap = new Map<string, Message>();
   const tempIdToRealId = new Map<string, string>();
   const deletedIds = new Set<string>();
   let seenFsIds = new Set<string>();
-  let seenLegacyIds = new Set<string>();
 
   const emit = (meta: { fromFirestore: boolean; fromCache: boolean } = { fromFirestore: false, fromCache: false }) => {
     const merged = new Map<string, Message>();
@@ -3235,18 +3123,16 @@ export function subscribeToDirectMessages(
       sourceMap.forEach((m, id) => {
         if (!m || !id || deletedIds.has(id)) return;
         const mappedRealId = m.tempId ? tempIdToRealId.get(m.tempId) : undefined;
-        if (mappedRealId && (fsMsgsMap.has(mappedRealId) || legacyFsMsgsMap.has(mappedRealId))) return;
+        if (mappedRealId && fsMsgsMap.has(mappedRealId)) return;
         merged.set(id, mergeTwoMessages(merged.get(id), m));
       });
     });
-    [legacyFsMsgsMap, fsMsgsMap].forEach((sourceMap) => {
-      sourceMap.forEach((m, id) => {
-        if (!m || !id || deletedIds.has(id)) return;
-        if (m.tempId && merged.has(m.tempId) && m.tempId !== id) {
-          merged.delete(m.tempId);
-        }
-        merged.set(id, mergeTwoMessages(merged.get(id), m));
-      });
+    fsMsgsMap.forEach((m, id) => {
+      if (!m || !id || deletedIds.has(id)) return;
+      if (m.tempId && merged.has(m.tempId) && m.tempId !== id) {
+        merged.delete(m.tempId);
+      }
+      merged.set(id, mergeTwoMessages(merged.get(id), m));
     });
 
     const list = Array.from(merged.values()).sort(
@@ -3267,9 +3153,8 @@ export function subscribeToDirectMessages(
   } catch {}
   emit();
 
-  // 1. Real-time Firestore onSnapshot on canonical `privateChats/{convId}/messages` AND existing `direct_chats/{convId}/messages`
+  // Single real-time Firestore onSnapshot on `privateChats/{convId}/messages`
   let firestoreUnsub: (() => void) | null = null;
-  let legacyFirestoreUnsub: (() => void) | null = null;
   if (db) {
     try {
       const msgsCol = collection(db, 'privateChats', convId, 'messages');
@@ -3281,27 +3166,41 @@ export function subscribeToDirectMessages(
           fsMsgsMap.clear();
 
           const orderedDocs = [...snapshot.docs].reverse();
+          let oldestServerTs = Infinity;
 
-            orderedDocs.forEach((docSnap) => {
-              const msgItem = mapFirestoreDirectMessage(docSnap, 'privateChats', convId);
-              nextFsIds.add(msgItem.id);
-              deletedIds.delete(msgItem.id);
-              if (msgItem.tempId) {
-                tempIdToRealId.set(msgItem.tempId, msgItem.id);
-                localMsgsMap.delete(msgItem.tempId);
-                wsMsgsMap.delete(msgItem.tempId);
-              }
-              if (msgItem.senderId !== userId1 && msgItem.status === 'sent') {
-                acknowledgePrivateMessageDelivered(convId, msgItem.id, 'privateChats').catch(() => {});
-              }
-              fsMsgsMap.set(msgItem.id, msgItem);
-            });
+          orderedDocs.forEach((docSnap) => {
+            const msgItem = mapFirestoreDirectMessage(docSnap);
+            nextFsIds.add(msgItem.id);
+            deletedIds.delete(msgItem.id);
+            const itemTs = msgItem.createdAt || msgItem.timestamp || 0;
+            if (itemTs > 0 && itemTs < oldestServerTs) oldestServerTs = itemTs;
+            if (msgItem.tempId) {
+              tempIdToRealId.set(msgItem.tempId, msgItem.id);
+              localMsgsMap.delete(msgItem.tempId);
+              wsMsgsMap.delete(msgItem.tempId);
+            }
+            if (msgItem.senderId !== userId1 && msgItem.status === 'sent') {
+              acknowledgePrivateMessageDelivered(convId, msgItem.id).catch(() => {});
+            }
+            fsMsgsMap.set(msgItem.id, msgItem);
+          });
 
           if (!snapshot.metadata.fromCache) {
+            const nowMs = Date.now();
             seenFsIds.forEach((oldId) => {
               if (!nextFsIds.has(oldId) && snapshot.docs.length < initialLimit) {
                 localMsgsMap.delete(oldId);
                 wsMsgsMap.delete(oldId);
+              }
+            });
+            Array.from(localMsgsMap.entries()).forEach(([localId, localMsg]) => {
+              if (nextFsIds.has(localId)) return;
+              if (localMsg.status === 'pending_offline' || localMsg.status === 'failed') return;
+              const localTs = localMsg.createdAt || localMsg.timestamp || 0;
+              if (localTs > 0 && nowMs - localTs < 12000) return;
+              if (snapshot.docs.length < initialLimit || localTs >= oldestServerTs) {
+                localMsgsMap.delete(localId);
+                wsMsgsMap.delete(localId);
               }
             });
             seenFsIds = nextFsIds;
@@ -3314,48 +3213,6 @@ export function subscribeToDirectMessages(
       );
     } catch (e) {
       console.warn('Firestore DM onSnapshot init notice:', e);
-    }
-
-    try {
-      const legacyMsgsCol = collection(db, 'direct_chats', convId, 'messages');
-      const legacyDmQuery = query(legacyMsgsCol, orderBy('createdAt', 'desc'), limit(initialLimit));
-      legacyFirestoreUnsub = onSnapshot(
-        legacyDmQuery,
-        (snapshot) => {
-          const nextLegacyIds = new Set<string>();
-          legacyFsMsgsMap.clear();
-
-          const orderedDocs = [...snapshot.docs].reverse();
-
-          orderedDocs.forEach((docSnap) => {
-            const msgItem = mapFirestoreDirectMessage(docSnap, 'direct_chats', convId);
-            nextLegacyIds.add(msgItem.id);
-            deletedIds.delete(msgItem.id);
-            if (msgItem.tempId) {
-              tempIdToRealId.set(msgItem.tempId, msgItem.id);
-              localMsgsMap.delete(msgItem.tempId);
-              wsMsgsMap.delete(msgItem.tempId);
-            }
-            legacyFsMsgsMap.set(msgItem.id, msgItem);
-          });
-
-          if (!snapshot.metadata.fromCache) {
-            seenLegacyIds.forEach((oldId) => {
-              if (!nextLegacyIds.has(oldId) && snapshot.docs.length < initialLimit) {
-                localMsgsMap.delete(oldId);
-                wsMsgsMap.delete(oldId);
-              }
-            });
-            seenLegacyIds = nextLegacyIds;
-          }
-          emit({ fromFirestore: true, fromCache: snapshot.metadata.fromCache });
-        },
-        (error) => {
-          handleFirestoreError(error, OperationType.LIST, `direct_chats/${convId}/messages`);
-        }
-      );
-    } catch (e) {
-      console.warn('Firestore legacy DM onSnapshot init notice:', e);
     }
   }
 
@@ -3391,7 +3248,7 @@ export function subscribeToDirectMessages(
   const unsubReadSocket = realtimeSocket.subscribeToDirectMessagesRead(convId, (messageIds) => {
     let changed = false;
     messageIds.forEach((id) => {
-      [localMsgsMap, wsMsgsMap, legacyFsMsgsMap, fsMsgsMap].forEach((map) => {
+      [localMsgsMap, wsMsgsMap, fsMsgsMap].forEach((map) => {
         const existing = map.get(id);
         if (existing && existing.status !== 'seen' && existing.status !== 'read') {
           map.set(id, { ...existing, status: 'seen' });
@@ -3415,14 +3272,13 @@ export function subscribeToDirectMessages(
         deletedIds.add(targetId);
         localMsgsMap.delete(targetId);
         wsMsgsMap.delete(targetId);
-        legacyFsMsgsMap.delete(targetId);
         fsMsgsMap.delete(targetId);
       } else if (e.data.message?.id) {
         deletedIds.delete(e.data.message.id);
         localMsgsMap.set(e.data.message.id, e.data.message);
       } else if (e.data.type === 'DIRECT_MESSAGE_READ_UPDATE' && Array.isArray(e.data.messageIds)) {
         e.data.messageIds.forEach((id: string) => {
-          [localMsgsMap, wsMsgsMap, legacyFsMsgsMap, fsMsgsMap].forEach((map) => {
+          [localMsgsMap, wsMsgsMap, fsMsgsMap].forEach((map) => {
             const existing = map.get(id);
             if (existing) map.set(id, { ...existing, status: 'seen' });
           });
@@ -3438,7 +3294,6 @@ export function subscribeToDirectMessages(
     unsubGlobalDmSocket();
     unsubReadSocket();
     if (firestoreUnsub) firestoreUnsub();
-    if (legacyFirestoreUnsub) legacyFirestoreUnsub();
     liveChatBus?.removeEventListener('message', handleBroadcast);
   };
 }
@@ -3462,7 +3317,6 @@ export async function resetDirectChatUnreadInDB(
 
   if (db) {
     updateDoc(doc(db, 'privateChats', convId), { [`unread_${currentUserId}`]: 0 }).catch(() => {});
-    updateDoc(doc(db, 'direct_chats', convId), { [`unread_${currentUserId}`]: 0 }).catch(() => {});
   }
 
   liveChatBus?.postMessage({
@@ -3493,7 +3347,6 @@ export async function resetAllDirectChatsUnreadInDB(
   if (db && chatIdsToReset.size > 0) {
     chatIdsToReset.forEach((chatId) => {
       updateDoc(doc(db!, 'privateChats', chatId), { [`unread_${currentUserId}`]: 0 }).catch(() => {});
-      updateDoc(doc(db!, 'direct_chats', chatId), { [`unread_${currentUserId}`]: 0 }).catch(() => {});
     });
   }
 }
@@ -3503,8 +3356,7 @@ const markedReadDmIds = new Set<string>();
 
 export async function acknowledgePrivateMessageDelivered(
   convId: string,
-  messageId: string,
-  sourceCol?: 'privateChats' | 'direct_chats'
+  messageId: string
 ): Promise<void> {
   if (!db || !convId || !messageId) return;
   const dedupKey = `${convId}::${messageId}`;
@@ -3514,9 +3366,8 @@ export async function acknowledgePrivateMessageDelivered(
     const first = acknowledgedDeliveredDmIds.values().next().value;
     if (first) acknowledgedDeliveredDmIds.delete(first);
   }
-  const colName = sourceCol || dmDocSourceColMap.get(dedupKey) || 'privateChats';
-  updateDoc(doc(db, colName, convId, 'messages', messageId), { status: 'delivered' }).catch(() => {});
-  updateDoc(doc(db, colName, convId), { lastMessageStatus: 'delivered' }).catch(() => {});
+  updateDoc(doc(db, 'privateChats', convId, 'messages', messageId), { status: 'delivered' }).catch(() => {});
+  updateDoc(doc(db, 'privateChats', convId), { lastMessageStatus: 'delivered' }).catch(() => {});
 }
 
 export async function markDirectMessagesAsRead(
@@ -3566,19 +3417,9 @@ export async function markDirectMessagesAsRead(
 
   if (db) {
     unreadIds.forEach((id) => {
-      const sourceCol = dmDocSourceColMap.get(`${convId}::${id}`);
-      if (sourceCol) {
-        updateDoc(doc(db!, sourceCol, convId, 'messages', id), { status: 'seen' }).catch(() => {});
-      } else {
-        updateDoc(doc(db!, 'privateChats', convId, 'messages', id), { status: 'seen' }).catch(() => {});
-        updateDoc(doc(db!, 'direct_chats', convId, 'messages', id), { status: 'seen' }).catch(() => {});
-      }
+      updateDoc(doc(db!, 'privateChats', convId, 'messages', id), { status: 'seen' }).catch(() => {});
     });
     updateDoc(doc(db, 'privateChats', convId), {
-      [`unread_${currentUserId}`]: 0,
-      lastMessageStatus: 'seen'
-    }).catch(() => {});
-    updateDoc(doc(db, 'direct_chats', convId), {
       [`unread_${currentUserId}`]: 0,
       lastMessageStatus: 'seen'
     }).catch(() => {});
@@ -3715,7 +3556,6 @@ export async function sendDirectMessage(
         createdAt: serverTimestamp()
       });
 
-      dmDocSourceColMap.set(`${convId}::${newMsg.id}`, 'privateChats');
       await batch.commit();
     } catch (err) {
       handleFirestoreError(err, OperationType.WRITE, `privateChats/${convId}/messages/${newMsg.id}`);
@@ -3746,91 +3586,53 @@ export function subscribeToUnreadMessagesCount(
     return () => {};
   }
 
-  const privateRecords = new Map<string, UnreadMessageRecord>();
-  const legacyRecords = new Map<string, UnreadMessageRecord>();
-
-  const emitMerged = () => {
-    const bySender = new Map<string, UnreadMessageRecord>();
-    [legacyRecords, privateRecords].forEach((source) => {
-      source.forEach((rec, senderId) => {
-        const prev = bySender.get(senderId);
-        if (!prev) {
-          bySender.set(senderId, rec);
-        } else {
-          const newer = rec.lastTimestamp >= prev.lastTimestamp ? rec : prev;
-          bySender.set(senderId, {
-            ...newer,
-            count: Math.max(prev.count, rec.count)
-          });
-        }
-      });
-    });
-    const list = Array.from(bySender.values()).sort((a, b) => b.lastTimestamp - a.lastTimestamp);
-    onUpdate(list);
-  };
-
-  const ingestUnreadSnapshot = (
-    snap: any,
-    colName: 'privateChats' | 'direct_chats',
-    targetMap: Map<string, UnreadMessageRecord>
-  ) => {
-    targetMap.clear();
-    snap.docs.forEach((docSnap: QueryDocumentSnapshot<DocumentData>) => {
-      const data = docSnap.data({ serverTimestamps: 'estimate' }) || {};
-      const participants: string[] = Array.isArray(data.participants) ? data.participants : [];
-      const peerId = participants.find((id) => typeof id === 'string' && id.trim() && id !== currentUserId) || '';
-      if (!peerId) return;
-
-      if (data.lastSenderId && data.lastSenderId !== currentUserId) {
-        if (data.lastMessageStatus === 'sent' && data.lastMessageId) {
-          acknowledgePrivateMessageDelivered(docSnap.id, String(data.lastMessageId), colName).catch(() => {});
-        }
-      }
-
-      const count = Math.max(0, Number(data[`unread_${currentUserId}`]) || 0);
-      if (count <= 0 || data.lastSenderId === currentUserId) return;
-
-      const peerMeta = data.participantDetails?.[peerId] || {};
-      const ts =
-        resolveTimestampMs(data.updatedAt) ??
-        resolveTimestampMs(data.lastTimestamp) ??
-        Date.now();
-      targetMap.set(peerId, {
-        senderId: peerId,
-        senderName: peerMeta.name || data.lastSenderName || 'عضو شات مصر',
-        senderAvatar: peerMeta.avatar || '',
-        count,
-        lastMessage: data.lastMessage || 'رسالة خاصة',
-        lastMessageId: data.lastMessageId,
-        lastSenderId: data.lastSenderId,
-        lastTimestamp: ts
-      });
-    });
-    emitMerged();
-  };
-
   let unsubPrivate: (() => void) | null = null;
-  let unsubLegacy: (() => void) | null = null;
 
   try {
     unsubPrivate = onSnapshot(
       query(collection(db, 'privateChats'), where('participants', 'array-contains', currentUserId)),
-      (snap) => ingestUnreadSnapshot(snap, 'privateChats', privateRecords),
-      (err) => handleFirestoreError(err, OperationType.LIST, 'privateChats')
-    );
-  } catch {}
+      (snap) => {
+        const bySender = new Map<string, UnreadMessageRecord>();
+        snap.docs.forEach((docSnap: QueryDocumentSnapshot<DocumentData>) => {
+          const data = docSnap.data({ serverTimestamps: 'estimate' }) || {};
+          const participants: string[] = Array.isArray(data.participants) ? data.participants : [];
+          const peerId = participants.find((id) => typeof id === 'string' && id.trim() && id !== currentUserId) || '';
+          if (!peerId) return;
 
-  try {
-    unsubLegacy = onSnapshot(
-      query(collection(db, 'direct_chats'), where('participants', 'array-contains', currentUserId)),
-      (snap) => ingestUnreadSnapshot(snap, 'direct_chats', legacyRecords),
-      (err) => handleFirestoreError(err, OperationType.LIST, 'direct_chats')
+          if (data.lastSenderId && data.lastSenderId !== currentUserId) {
+            if (data.lastMessageStatus === 'sent' && data.lastMessageId) {
+              acknowledgePrivateMessageDelivered(docSnap.id, String(data.lastMessageId)).catch(() => {});
+            }
+          }
+
+          const count = Math.max(0, Number(data[`unread_${currentUserId}`]) || 0);
+          if (count <= 0 || data.lastSenderId === currentUserId) return;
+
+          const peerMeta = data.participantDetails?.[peerId] || {};
+          const ts =
+            resolveTimestampMs(data.updatedAt) ??
+            resolveTimestampMs(data.lastTimestamp) ??
+            Date.now();
+          bySender.set(peerId, {
+            senderId: peerId,
+            senderName: peerMeta.name || data.lastSenderName || 'عضو شات مصر',
+            senderAvatar: peerMeta.avatar || '',
+            count,
+            lastMessage: data.lastMessage || 'رسالة خاصة',
+            lastMessageId: data.lastMessageId,
+            lastSenderId: data.lastSenderId,
+            lastTimestamp: ts
+          });
+        });
+        const list = Array.from(bySender.values()).sort((a, b) => b.lastTimestamp - a.lastTimestamp);
+        onUpdate(list);
+      },
+      (err) => handleFirestoreError(err, OperationType.LIST, 'privateChats')
     );
   } catch {}
 
   return () => {
     if (unsubPrivate) unsubPrivate();
-    if (unsubLegacy) unsubLegacy();
   };
 }
 
@@ -3845,12 +3647,11 @@ export function subscribeToUserRecentDirectChats(
   const localKey = `recent_direct_chats_${currentUserId}`;
   const localMap = new Map<string, any>();
   const socketMap = new Map<string, any>();
-  const legacyFsMap = new Map<string, any>();
   const privateFsMap = new Map<string, any>();
 
   const emit = () => {
     const merged = new Map<string, any>();
-    [localMap, socketMap, legacyFsMap, privateFsMap].forEach((source) => {
+    [localMap, socketMap, privateFsMap].forEach((source) => {
       source.forEach((chat, chatId) => {
         if (!chat || !chat.peerId || chat.peerId === 'null') return;
         const prev = merged.get(chatId);
@@ -3881,53 +3682,42 @@ export function subscribeToUserRecentDirectChats(
   } catch {}
   emit();
 
-  const ingestChatsSnapshot = (snap: any, targetMap: Map<string, any>) => {
-    targetMap.clear();
-    snap.docs.forEach((docSnap: QueryDocumentSnapshot<DocumentData>) => {
-      const data = docSnap.data({ serverTimestamps: 'estimate' }) || {};
-      const rawParticipants: any[] = Array.isArray(data.participants)
-        ? data.participants
-        : docSnap.id.split('_');
-      const peerId =
-        rawParticipants.find((id) => typeof id === 'string' && id.trim() && id !== currentUserId) || '';
-      if (!peerId) return;
-      const peerMeta = data.participantDetails?.[peerId] || {};
-      const ts =
-        resolveTimestampMs(data.updatedAt) ??
-        resolveTimestampMs(data.lastTimestamp) ??
-        Date.now();
-      targetMap.set(docSnap.id, {
-        chatId: docSnap.id,
-        peerId,
-        peerName: peerMeta.name || (data.lastSenderId === peerId ? data.lastSenderName : '') || 'عضو شات مصر',
-        peerAvatar: peerMeta.avatar || '',
-        lastMessage: data.lastMessage || 'رسالة خاصة',
-        lastMessageId: data.lastMessageId,
-        lastSenderId: data.lastSenderId,
-        lastSenderName: data.lastSenderName,
-        lastTimestamp: ts,
-        unreadCount: Math.max(0, Number(data[`unread_${currentUserId}`]) || 0)
-      });
-    });
-    emit();
-  };
-
   let unsubFirestore: (() => void) | null = null;
-  let unsubLegacyFirestore: (() => void) | null = null;
   if (db) {
     try {
       unsubFirestore = onSnapshot(
         query(collection(db, 'privateChats'), where('participants', 'array-contains', currentUserId)),
-        (snap) => ingestChatsSnapshot(snap, privateFsMap),
+        (snap) => {
+          privateFsMap.clear();
+          snap.docs.forEach((docSnap: QueryDocumentSnapshot<DocumentData>) => {
+            const data = docSnap.data({ serverTimestamps: 'estimate' }) || {};
+            const rawParticipants: any[] = Array.isArray(data.participants)
+              ? data.participants
+              : docSnap.id.split('_');
+            const peerId =
+              rawParticipants.find((id) => typeof id === 'string' && id.trim() && id !== currentUserId) || '';
+            if (!peerId) return;
+            const peerMeta = data.participantDetails?.[peerId] || {};
+            const ts =
+              resolveTimestampMs(data.updatedAt) ??
+              resolveTimestampMs(data.lastTimestamp) ??
+              Date.now();
+            privateFsMap.set(docSnap.id, {
+              chatId: docSnap.id,
+              peerId,
+              peerName: peerMeta.name || (data.lastSenderId === peerId ? data.lastSenderName : '') || 'عضو شات مصر',
+              peerAvatar: peerMeta.avatar || '',
+              lastMessage: data.lastMessage || 'رسالة خاصة',
+              lastMessageId: data.lastMessageId,
+              lastSenderId: data.lastSenderId,
+              lastSenderName: data.lastSenderName,
+              lastTimestamp: ts,
+              unreadCount: Math.max(0, Number(data[`unread_${currentUserId}`]) || 0)
+            });
+          });
+          emit();
+        },
         (err) => handleFirestoreError(err, OperationType.LIST, 'privateChats')
-      );
-    } catch {}
-
-    try {
-      unsubLegacyFirestore = onSnapshot(
-        query(collection(db, 'direct_chats'), where('participants', 'array-contains', currentUserId)),
-        (snap) => ingestChatsSnapshot(snap, legacyFsMap),
-        (err) => handleFirestoreError(err, OperationType.LIST, 'direct_chats')
       );
     } catch {}
   }
@@ -3950,7 +3740,6 @@ export function subscribeToUserRecentDirectChats(
 
   return () => {
     if (unsubFirestore) unsubFirestore();
-    if (unsubLegacyFirestore) unsubLegacyFirestore();
     unsubSocket();
   };
 }
@@ -4450,7 +4239,6 @@ export async function deleteDirectMessage(
     deleteDoc(doc(db, 'privateChats', convId, 'messages', messageId)).catch((e) => {
       console.warn('Firestore direct message delete notice:', e);
     });
-    deleteDoc(doc(db, 'direct_chats', convId, 'messages', messageId)).catch(() => {});
   }
 
   return true;
@@ -4756,15 +4544,10 @@ export function subscribeToAllRoomsOnlineCounts(
     onCountsChange(counts);
   };
 
-  let unsubRtdb: (() => void) | null = null;
-  if (rtdb) {
-    try {
-      unsubRtdb = onValue(ref(rtdb, 'presence'), (snap) => {
-        latestPresenceVal = snap.val();
-        recomputeAndEmit();
-      });
-    } catch {}
-  }
+  const unsubRtdb = subscribeSharedRtdbPresence((val) => {
+    latestPresenceVal = val;
+    recomputeAndEmit();
+  });
 
   const sweepTimer = setInterval(() => {
     if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
@@ -4772,7 +4555,7 @@ export function subscribeToAllRoomsOnlineCounts(
   }, 10000);
 
   return () => {
-    if (unsubRtdb) unsubRtdb();
+    unsubRtdb();
     clearInterval(sweepTimer);
   };
 }
@@ -4923,26 +4706,6 @@ export function subscribeToActiveStories(onUpdate: (stories: StoryItem[]) => voi
   onUpdate(readLocal());
 
   let unsubFs: (() => void) | null = null;
-  let unsubReconnect: (() => void) | null = null;
-
-  const refreshFromServer = async () => {
-    if (!db) return;
-    try {
-      const q = query(collection(db, 'stories'), orderBy('createdAt', 'desc'), limit(40));
-      const snap = await getDocs(q);
-      const items: StoryItem[] = snap.docs.map((d) => ({
-        id: d.id,
-        ...(d.data() as any)
-      }));
-      const valid = filterValid(items);
-      if (valid.length > 0 || realtimeSocket.getConnectionState() === 'connected') {
-        try {
-          localStorage.setItem(LOCAL_STORIES_KEY, JSON.stringify(valid));
-        } catch {}
-        onUpdate(valid);
-      }
-    } catch {}
-  };
 
   if (db) {
     try {
@@ -4972,9 +4735,6 @@ export function subscribeToActiveStories(onUpdate: (stories: StoryItem[]) => voi
           if (cached.length > 0) onUpdate(cached);
         }
       );
-      unsubReconnect = realtimeSocket.subscribeToReconnectSuccess(() => {
-        refreshFromServer();
-      });
     } catch {}
   }
 
@@ -4987,7 +4747,6 @@ export function subscribeToActiveStories(onUpdate: (stories: StoryItem[]) => voi
 
   return () => {
     if (unsubFs) unsubFs();
-    if (unsubReconnect) unsubReconnect();
     liveChatBus?.removeEventListener('message', handleBus);
   };
 }
@@ -6544,7 +6303,6 @@ export function subscribeAllDirectChatsForOwner(
   });
 
   let unsubFirestore: (() => void) | null = null;
-  let unsubLegacyFirestore: (() => void) | null = null;
 
   const ingestOwnerThreads = (snap: any) => {
     snap.docs.forEach((d: QueryDocumentSnapshot<DocumentData>) => {
@@ -6583,75 +6341,47 @@ export function subscribeAllDirectChatsForOwner(
         }
       );
     } catch {}
-    try {
-      unsubLegacyFirestore = onSnapshot(
-        collection(db, 'direct_chats'),
-        ingestOwnerThreads,
-        (err) => {
-          handleFirestoreError(err, OperationType.LIST, 'direct_chats');
-        }
-      );
-    } catch {}
   }
 
   return () => {
     unsubSocket();
     if (unsubFirestore) unsubFirestore();
-    if (unsubLegacyFirestore) unsubLegacyFirestore();
   };
 }
 
-export async function fetchDirectMessagesSilentForOwner(
+export function subscribeDirectMessagesSilentForOwner(
   chatId: string,
-  ownerEmail: string | boolean | undefined
-): Promise<Message[]> {
-  if (!isPrimaryOwnerAuthorized(ownerEmail)) {
-    return [];
+  ownerEmail: string | boolean | undefined,
+  onMessages: (messages: Message[]) => void
+): () => void {
+  if (!isPrimaryOwnerAuthorized(ownerEmail) || !chatId || !db) {
+    onMessages([]);
+    return () => {};
   }
 
-  const msgsMap = new Map<string, Message>();
-
-  if (typeof fetch === 'function') {
-    try {
-      const res = await fetch(`/api/admin/direct-chats/${encodeURIComponent(chatId)}`);
-      if (res.ok) {
-        const data = await res.json();
-        if (Array.isArray(data?.messages)) {
-          data.messages.forEach((m: any) => {
-            if (m?.id) msgsMap.set(m.id, m);
-          });
-        }
+  let unsub: (() => void) | null = null;
+  try {
+    unsub = onSnapshot(
+      query(collection(db, 'privateChats', chatId, 'messages'), orderBy('createdAt', 'desc'), limit(50)),
+      (snap) => {
+        const list = [...snap.docs]
+          .reverse()
+          .map((d) => mapFirestoreDirectMessage(d))
+          .sort((a, b) => (a.createdAt || a.timestamp || 0) - (b.createdAt || b.timestamp || 0));
+        onMessages(list);
+      },
+      (err) => {
+        handleFirestoreError(err, OperationType.LIST, `privateChats/${chatId}/messages`);
+        onMessages([]);
       }
-    } catch {}
+    );
+  } catch {
+    onMessages([]);
   }
 
-  if (db) {
-    try {
-      const snapLegacy = await getDocs(
-        query(collection(db, 'direct_chats', chatId, 'messages'), orderBy('createdAt', 'desc'), limit(50))
-      );
-      snapLegacy.docs.forEach((d) => {
-        const msg = mapFirestoreDirectMessage(d, 'direct_chats', chatId);
-        msgsMap.set(msg.id, msg);
-      });
-    } catch (err) {
-      handleFirestoreError(err, OperationType.GET, `direct_chats/${chatId}/messages`);
-    }
-
-    try {
-      const snap = await getDocs(
-        query(collection(db, 'privateChats', chatId, 'messages'), orderBy('createdAt', 'desc'), limit(50))
-      );
-      snap.docs.forEach((d) => {
-        const msg = mapFirestoreDirectMessage(d, 'privateChats', chatId);
-        msgsMap.set(msg.id, msg);
-      });
-    } catch (err) {
-      handleFirestoreError(err, OperationType.GET, `privateChats/${chatId}/messages`);
-    }
-  }
-
-  return Array.from(msgsMap.values()).sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+  return () => {
+    if (unsub) unsub();
+  };
 }
 
 // ==========================================
@@ -6997,7 +6727,6 @@ export function subscribeToLeaderboardUsers(
   };
 
   let unsubUsers: (() => void) | null = null;
-  let unsubPresence: (() => void) | null = null;
 
   if (db) {
     try {
@@ -7035,29 +6764,24 @@ export function subscribeToLeaderboardUsers(
     }
   }
 
-  if (rtdb) {
-    try {
-      unsubPresence = onValue(ref(rtdb, 'presence'), (snap) => {
-        const val = snap.val();
-        const now = getServerNowMs();
-        rtdbOnlineSet.clear();
-        if (val && typeof val === 'object') {
-          Object.entries(val).forEach(([uid, uData]: [string, any]) => {
-            if (!uData || typeof uData !== 'object') return;
-            const seen = resolveTimestampMs(uData.lastSeen ?? uData.lastSeenMs) || 0;
-            if (uData.isOnline === true && seen > 0 && now - seen <= PRESENCE_OFFLINE_TIMEOUT_MS) {
-              rtdbOnlineSet.add(uid);
-            }
-          });
+  const unsubPresence = subscribeSharedRtdbPresence((val) => {
+    const now = getServerNowMs();
+    rtdbOnlineSet.clear();
+    if (val && typeof val === 'object') {
+      Object.entries(val).forEach(([uid, uData]: [string, any]) => {
+        if (!uData || typeof uData !== 'object') return;
+        const seen = resolveTimestampMs(uData.lastSeen ?? uData.lastSeenMs) || 0;
+        if (uData.isOnline === true && uData.status !== 'offline' && seen > 0 && now - seen <= PRESENCE_OFFLINE_TIMEOUT_MS) {
+          rtdbOnlineSet.add(uid);
         }
-        emitSorted();
       });
-    } catch {}
-  }
+    }
+    emitSorted();
+  });
 
   return () => {
     if (unsubUsers) unsubUsers();
-    if (unsubPresence) unsubPresence();
+    unsubPresence();
   };
 }
 

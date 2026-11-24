@@ -91,6 +91,7 @@ interface PrivateChatViewProps {
   onCloseDrawer?: () => void;
   prefilledDraft?: string | null;
   onClearPrefilledDraft?: () => void;
+  reconcileEpoch?: number;
 }
 
 interface ChatContact {
@@ -123,7 +124,8 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
   isDrawer = false,
   onCloseDrawer,
   prefilledDraft = null,
-  onClearPrefilledDraft
+  onClearPrefilledDraft,
+  reconcileEpoch = 0
 }) => {
   // Navigation tabs when in list view
   const [activeTab, setActiveTab] = useState<'chats' | 'friends' | 'online'>('chats');
@@ -132,6 +134,8 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
   const [recentChats, setRecentChats] = useState<any[]>([]);
   const [friendsList, setFriendsList] = useState<Friend[]>([]);
   const [activeContact, setActiveContact] = useState<ChatContact | null>(null);
+  const activeContactIdRef = useRef<string | null>(null);
+  activeContactIdRef.current = activeContact?.id || null;
 
   useEffect(() => {
     onChatActiveChange?.(Boolean(activeContact));
@@ -296,14 +300,14 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
     recordGiftRecipientStats(activeContact.id, gift.cost).catch(() => {});
   };
 
-  // 1. Subscribe to Real-Time Recent Chats from DB
+  // 1. Subscribe to Real-Time Recent Chats from DB (pure onSnapshot)
   useEffect(() => {
     if (!currentUser?.id) return;
     const unsub = subscribeToUserRecentDirectChats(currentUser.id, (loaded) => {
       setRecentChats(loaded || []);
     });
     return () => unsub();
-  }, [currentUser?.id]);
+  }, [currentUser?.id, reconcileEpoch]);
 
   // 2. Subscribe to Real-Time Friends from Firestore /users/{uid}/friends
   useEffect(() => {
@@ -312,11 +316,11 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
       setFriendsList(loaded || []);
     });
     return () => unsub();
-  }, [currentUser?.id]);
+  }, [currentUser?.id, reconcileEpoch]);
 
-  // 3. Handle External Navigation from UserProfileModal or OnlineUsersModal
+  // 3. Handle External Navigation & Reconciliation from UserProfileModal / OnlineUsersModal / App
   useEffect(() => {
-    if (targetUser && targetUser.id !== currentUser.id) {
+    if (targetUser && targetUser.id && targetUser.id !== currentUser.id) {
       onMarkSenderRead?.(targetUser.id);
       const isOnline = globalOnlineUsers.some(u => u.id === targetUser.id) || targetUser.isOnline;
       const targetContact: ChatContact = {
@@ -332,7 +336,7 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
       };
       setActiveContact(targetContact);
     }
-  }, [targetUser?.id, currentUser.id]);
+  }, [targetUser?.id, targetUser?.name, targetUser?.avatar, currentUser.id, reconcileEpoch]);
 
   // 4. Real-time Messages for Active 1-on-1 Chat (pure onSnapshot, expanding limit for older history without getDocs)
   const [liveMessages, setLiveMessages] = useState<Message[]>([]);
@@ -374,11 +378,13 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
       }
     }
 
+    const subscribedPeerId = activeContact.id;
     const activeLimit = dmLimit;
     const unsub = subscribeToDirectMessages(
       currentUser.id,
-      activeContact.id,
+      subscribedPeerId,
       (loadedMsgs, meta) => {
+        if (activeContactIdRef.current !== subscribedPeerId) return;
         const next = loadedMsgs || [];
         setLiveMessages(next);
 
@@ -407,7 +413,7 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
       activeLimit
     );
     return () => unsub();
-  }, [activeContact?.id, currentUser.id, dmLimit]);
+  }, [activeContact?.id, currentUser.id, dmLimit, reconcileEpoch]);
 
   const setMessages: React.Dispatch<React.SetStateAction<Message[]>> = setLiveMessages;
   const messages = liveMessages;
@@ -535,7 +541,7 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
       }
       setIsPeerTyping(false);
     };
-  }, [activeContact?.id, currentUser?.id]);
+  }, [activeContact?.id, currentUser?.id, reconcileEpoch]);
 
   // Clear peer typing immediately when a fresh message from the active peer arrives
   useEffect(() => {
