@@ -1032,6 +1032,9 @@ export const CallModal: React.FC<CallModalProps> = ({
   useEffect(() => {
     if (remoteAudioRef.current) {
       remoteAudioRef.current.muted = !isSpeakerOn;
+      if (isSpeakerOn && remoteAudioRef.current.srcObject) {
+        remoteAudioRef.current.play().catch(() => {});
+      }
     }
   }, [isSpeakerOn]);
 
@@ -1155,6 +1158,14 @@ export const CallModal: React.FC<CallModalProps> = ({
           fromUserId: myId,
           sdp: { type: answer.type, sdp: answer.sdp },
         });
+        if (!connectFallbackTimerRef.current) {
+          connectFallbackTimerRef.current = setTimeout(() => {
+            connectFallbackTimerRef.current = null;
+            if (!hasEndedRef.current && !isUnmountedOrClosedRef.current && callStateRef.current === 'connecting') {
+              setMicWarning('جاري محاولة تقوية اتصال الشبكة بالمكالمة...');
+            }
+          }, 15000);
+        }
       } catch (err) {
         console.error('[Call] Call answer negotiation error:', err);
         setMicWarning('تعذر ربط المكالمة — يرجى التحقق من الشبكة والمحاولة مرة أخرى.');

@@ -969,8 +969,8 @@ export default function App() {
           earlyIceByCallId.delete(String(signal.callId));
         }
         setIncomingCall((prev) => {
-          // If CallModal is already mounted for this call, let CallModal handle call_end/call_reject cleanly
-          if (prev) return prev;
+          // If CallModal is already mounted for this call (incoming or outgoing), let CallModal handle & delete cleanly
+          if (prev || getLocalActiveCall()) return prev;
           if (signal.signalId) {
             deleteFirestoreCallSignal(me.id, signal.signalId);
           }
