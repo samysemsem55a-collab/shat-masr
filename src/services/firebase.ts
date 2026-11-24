@@ -7202,11 +7202,31 @@ export interface LocalActiveCallInfo {
   userId: string;
   peerId: string;
   callType: 'audio' | 'video';
+  expiresAt?: number;
 }
+
+const CALL_ACTIVE_TTL_MS = 65_000;
 
 let activeLocalCallSession: LocalActiveCallInfo | null = null;
 
+function isActiveCallRecordFresh(val: any, now: number): boolean {
+  if (!val || typeof val !== 'object' || !val.isActive || !val.callId) return false;
+  const updatedAt = Number(val.updatedAt || 0);
+  const expiresAt = Number(val.expiresAt || 0);
+  if (expiresAt > 0 && expiresAt <= now) return false;
+  if (updatedAt > 0 && now - updatedAt > CALL_ACTIVE_TTL_MS) return false;
+  if (!updatedAt && !expiresAt) return false;
+  return true;
+}
+
 export function getLocalActiveCall(): LocalActiveCallInfo | null {
+  if (
+    activeLocalCallSession &&
+    activeLocalCallSession.expiresAt &&
+    activeLocalCallSession.expiresAt <= Date.now()
+  ) {
+    activeLocalCallSession = null;
+  }
   return activeLocalCallSession;
 }
 
@@ -7217,7 +7237,13 @@ export async function registerLocalActiveCall(
   callType: 'audio' | 'video'
 ): Promise<void> {
   if (!callId || !userId) return;
-  activeLocalCallSession = { callId, userId, peerId, callType };
+  activeLocalCallSession = {
+    callId,
+    userId,
+    peerId,
+    callType,
+    expiresAt: Date.now() + CALL_ACTIVE_TTL_MS,
+  };
   const now = getServerNowMs();
   const payload = {
     callId,
@@ -7226,7 +7252,7 @@ export async function registerLocalActiveCall(
     callType,
     isActive: true,
     updatedAt: now,
-    expiresAt: now + 180_000,
+    expiresAt: now + CALL_ACTIVE_TTL_MS,
   };
   const tasks: Promise<any>[] = [];
   if (rtdb) {
@@ -7246,6 +7272,32 @@ export async function registerLocalActiveCall(
   }
 }
 
+export async function refreshLocalActiveCall(callId: string, userId: string): Promise<void> {
+  if (!callId || !userId) return;
+  if (!activeLocalCallSession || activeLocalCallSession.callId !== callId) return;
+  activeLocalCallSession.expiresAt = Date.now() + CALL_ACTIVE_TTL_MS;
+  const now = getServerNowMs();
+  const payload = {
+    callId,
+    userId,
+    peerId: activeLocalCallSession.peerId,
+    callType: activeLocalCallSession.callType,
+    isActive: true,
+    updatedAt: now,
+    expiresAt: now + CALL_ACTIVE_TTL_MS,
+  };
+  const tasks: Promise<any>[] = [];
+  if (rtdb) {
+    tasks.push(set(ref(rtdb, `call_signals/${userId}/_active`), payload).catch(() => {}));
+  }
+  if (db) {
+    tasks.push(setDoc(doc(db, 'users', userId, 'call_signals', '_active'), payload).catch(() => {}));
+  }
+  if (tasks.length > 0) {
+    await Promise.allSettled(tasks);
+  }
+}
+
 export async function unregisterLocalActiveCall(callId: string, userId: string): Promise<void> {
   if (activeLocalCallSession && (!callId || activeLocalCallSession.callId === callId)) {
     activeLocalCallSession = null;
@@ -7253,7 +7305,11 @@ export async function unregisterLocalActiveCall(callId: string, userId: string):
   if (!userId) return;
   const tasks: Promise<any>[] = [];
   if (rtdb) {
-    tasks.push(remove(ref(rtdb, `call_signals/${userId}/_active`)).catch(() => {}));
+    const activeRef = ref(rtdb, `call_signals/${userId}/_active`);
+    try {
+      onDisconnect(activeRef).cancel().catch(() => {});
+    } catch {}
+    tasks.push(remove(activeRef).catch(() => {}));
   }
   if (db) {
     tasks.push(deleteDoc(doc(db, 'users', userId, 'call_signals', '_active')).catch(() => {}));
@@ -7263,31 +7319,76 @@ export async function unregisterLocalActiveCall(callId: string, userId: string):
   }
 }
 
-export async function checkTargetUserInCall(targetUserId: string): Promise<boolean> {
+export async function checkTargetUserInCall(
+  targetUserId: string,
+  callerUserId?: string
+): Promise<boolean> {
   if (!targetUserId) return false;
   const now = getServerNowMs();
-  if (rtdb) {
-    try {
-      const snap = await get(ref(rtdb, `call_signals/${targetUserId}/_active`));
-      if (snap.exists()) {
-        const val = snap.val();
-        if (val?.isActive && (!val.expiresAt || Number(val.expiresAt) > now)) {
-          return true;
-        }
-      }
-    } catch {}
-  }
+
+  const withTimeout = <T,>(promise: Promise<T>, ms: number, fallback: T): Promise<T> =>
+    Promise.race([
+      promise,
+      new Promise<T>((resolve) => setTimeout(() => resolve(fallback), ms)),
+    ]);
+
+  let firestoreChecked = false;
+  let firestoreVal: any = null;
+
   if (db) {
     try {
-      const snap = await getDoc(doc(db, 'users', targetUserId, 'call_signals', '_active'));
-      if (snap.exists()) {
-        const val = snap.data() as any;
-        if (val?.isActive && (!val.expiresAt || Number(val.expiresAt) > now)) {
-          return true;
-        }
+      const snap = await withTimeout(
+        getDoc(doc(db, 'users', targetUserId, 'call_signals', '_active')),
+        1800,
+        null
+      );
+      if (snap !== null) {
+        firestoreChecked = true;
+        firestoreVal = snap.exists() ? snap.data() : null;
       }
     } catch {}
   }
+
+  if (firestoreChecked) {
+    if (!firestoreVal) {
+      // Firestore has no active call for target; clean up any stale RTDB _active leftover
+      if (rtdb) {
+        remove(ref(rtdb, `call_signals/${targetUserId}/_active`)).catch(() => {});
+      }
+      return false;
+    }
+    if (!isActiveCallRecordFresh(firestoreVal, now)) {
+      unregisterLocalActiveCall(String(firestoreVal.callId || ''), targetUserId).catch(() => {});
+      return false;
+    }
+    if (callerUserId && firestoreVal.peerId && String(firestoreVal.peerId) === String(callerUserId)) {
+      return false;
+    }
+    return true;
+  }
+
+  // Fallback to RTDB only if Firestore check failed or timed out
+  if (rtdb) {
+    try {
+      const snap = await withTimeout(
+        get(ref(rtdb, `call_signals/${targetUserId}/_active`)),
+        1800,
+        null
+      );
+      if (snap && snap.exists()) {
+        const val = snap.val();
+        if (!isActiveCallRecordFresh(val, now)) {
+          remove(ref(rtdb, `call_signals/${targetUserId}/_active`)).catch(() => {});
+          return false;
+        }
+        if (callerUserId && val.peerId && String(val.peerId) === String(callerUserId)) {
+          return false;
+        }
+        return true;
+      }
+    } catch {}
+  }
+
   return false;
 }
 
@@ -7298,6 +7399,7 @@ export async function cleanupCallSignalsForCall(
 ): Promise<void> {
   if (!userId || !callId) return;
   const typeFilter = onlyTypes && onlyTypes.length > 0 ? new Set(onlyTypes) : null;
+  const now = getServerNowMs();
   const tasks: Promise<any>[] = [];
 
   const rtdbInstance = rtdb;
@@ -7310,7 +7412,16 @@ export async function cleanupCallSignalsForCall(
           const val = snap.val() as Record<string, any>;
           await Promise.allSettled(
             Object.entries(val).map(([key, data]) => {
-              if (key === '_active') return Promise.resolve();
+              if (key === '_active') {
+                if (!isActiveCallRecordFresh(data, now) || (!onlyTypes && data?.callId === callId)) {
+                  return remove(ref(rtdbInstance, `call_signals/${userId}/_active`)).catch(() => {});
+                }
+                return Promise.resolve();
+              }
+              const isExpired = typeof data?.expiresAt === 'number' && data.expiresAt < now;
+              if (isExpired) {
+                return remove(ref(rtdbInstance, `call_signals/${userId}/${key}`)).catch(() => {});
+              }
               if (data?.callId !== callId) return Promise.resolve();
               if (typeFilter && !typeFilter.has(String(data?.type || ''))) return Promise.resolve();
               return remove(ref(rtdbInstance, `call_signals/${userId}/${key}`)).catch(() => {});
@@ -7333,8 +7444,13 @@ export async function cleanupCallSignalsForCall(
           const snap = await getDocs(q);
           await Promise.allSettled(
             snap.docs.map((d) => {
-              if (d.id === '_active') return Promise.resolve();
               const data = d.data() as any;
+              if (d.id === '_active') {
+                if (!isActiveCallRecordFresh(data, now) || !onlyTypes) {
+                  return deleteDoc(d.ref).catch(() => {});
+                }
+                return Promise.resolve();
+              }
               if (typeFilter && !typeFilter.has(String(data?.type || ''))) return Promise.resolve();
               return deleteDoc(d.ref).catch(() => {});
             })

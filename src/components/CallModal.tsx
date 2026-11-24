@@ -21,6 +21,7 @@ import {
   deleteFirestoreCallSignal,
   getLocalActiveCall,
   registerLocalActiveCall,
+  refreshLocalActiveCall,
   unregisterLocalActiveCall,
   checkTargetUserInCall,
   cleanupCallSignalsForCall,
@@ -52,6 +53,14 @@ const ICE_SERVERS: RTCConfiguration = {
   ],
   iceCandidatePoolSize: 10,
 };
+
+const resolveUserIdValue = (user: any): string =>
+  String(user?.id || user?.uid || user?.userId || '').trim();
+
+const resolvePeerIdValue = (peer: any, signal?: any): string =>
+  String(
+    peer?.id || peer?.uid || peer?.userId || peer?.friendId || signal?.fromUserId || ''
+  ).trim();
 
 export const CallModal: React.FC<CallModalProps> = ({
   isOpen,
@@ -125,6 +134,7 @@ export const CallModal: React.FC<CallModalProps> = ({
   const isUnmountedOrClosedRef = useRef<boolean>(false);
   const connectFallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const iceDisconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const activeHeartbeatTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const iceRestartCountRef = useRef<number>(0);
   const unsubSignalsRef = useRef<(() => void) | null>(null);
   const unsubFirestoreSignalsRef = useRef<(() => void) | null>(null);
@@ -172,6 +182,10 @@ export const CallModal: React.FC<CallModalProps> = ({
     if (iceDisconnectTimerRef.current) {
       clearTimeout(iceDisconnectTimerRef.current);
       iceDisconnectTimerRef.current = null;
+    }
+    if (activeHeartbeatTimerRef.current) {
+      clearInterval(activeHeartbeatTimerRef.current);
+      activeHeartbeatTimerRef.current = null;
     }
   }, []);
 
@@ -263,8 +277,15 @@ export const CallModal: React.FC<CallModalProps> = ({
   );
 
   const emitCallSignal = useCallback((signalBody: Record<string, any>) => {
-    const targetId = signalBody.targetUserId || sessionPeerIdRef.current;
-    if (!targetId) return;
+    const targetId = String(
+      signalBody.targetUserId ||
+        sessionPeerIdRef.current ||
+        resolvePeerIdValue(peerUserRef.current, incomingSignalRef.current)
+    ).trim();
+    if (!targetId) {
+      console.warn('[Call] Missing targetUserId for call signal:', signalBody.type);
+      return;
+    }
     const enriched = {
       ...signalBody,
       targetUserId: targetId,
@@ -656,14 +677,30 @@ export const CallModal: React.FC<CallModalProps> = ({
     if (!isOpen) return;
     globalRadioPlayer.pauseForCall();
 
-    const myId = currentUserRef.current.id;
     const activePeer = peerUserRef.current;
     const activeType = propCallTypeRef.current;
     const isIncoming = propIncomingModeRef.current;
     const initialIncoming = incomingSignalRef.current;
+    const myId = resolveUserIdValue(currentUserRef.current);
+    const resolvedPeerId = resolvePeerIdValue(activePeer, isIncoming ? initialIncoming : null);
+
+    if (!myId || !resolvedPeerId) {
+      isUnmountedOrClosedRef.current = false;
+      hasEndedRef.current = true;
+      console.warn('[Call] Missing caller/target user ID', { myId, resolvedPeerId });
+      setEndReason('تعذر تحديد هوية طرفي المكالمة');
+      setCallState('ended');
+      const t = setTimeout(() => {
+        if (!isUnmountedOrClosedRef.current) onCloseRef.current();
+      }, 1200);
+      return () => {
+        isUnmountedOrClosedRef.current = true;
+        clearTimeout(t);
+      };
+    }
 
     sessionUserIdRef.current = myId;
-    sessionPeerIdRef.current = activePeer.id;
+    sessionPeerIdRef.current = resolvedPeerId;
     sessionCallTypeRef.current = activeType;
     sessionIncomingModeRef.current = isIncoming;
 
@@ -671,9 +708,9 @@ export const CallModal: React.FC<CallModalProps> = ({
       ? String(initialIncoming?.callId || `call_in_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`)
       : `call_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
 
-    // Prevent overlapping local calls if another call session is already active
+    // Prevent overlapping local calls if another live call session is active for this user
     const existingLocal = getLocalActiveCall();
-    if (existingLocal && existingLocal.callId !== sessionCallId) {
+    if (existingLocal && existingLocal.callId !== sessionCallId && existingLocal.userId === myId) {
       isUnmountedOrClosedRef.current = false;
       hasEndedRef.current = true;
       setEndReason('أنت بالفعل في مكالمة نشطة حالياً');
@@ -703,13 +740,27 @@ export const CallModal: React.FC<CallModalProps> = ({
     pendingIceRef.current = Array.isArray(initialIncoming?._earlyIce) ? [...initialIncoming._earlyIce] : [];
     const processedSignals = new Set<string>();
 
-    registerLocalActiveCall(sessionCallId, myId, activePeer.id, activeType).catch(() => {});
+    registerLocalActiveCall(sessionCallId, myId, resolvedPeerId, activeType).catch(() => {});
+    if (activeHeartbeatTimerRef.current) {
+      clearInterval(activeHeartbeatTimerRef.current);
+    }
+    activeHeartbeatTimerRef.current = setInterval(() => {
+      if (!isUnmountedOrClosedRef.current && !hasEndedRef.current) {
+        refreshLocalActiveCall(sessionCallId, myId).catch(() => {});
+      }
+    }, 25000);
+
+    const handlePageUnloadCleanup = () => {
+      unregisterLocalActiveCall(sessionCallId, myId).catch(() => {});
+    };
+    window.addEventListener('pagehide', handlePageUnloadCleanup);
+    window.addEventListener('beforeunload', handlePageUnloadCleanup);
 
     const closeGracefully = (reason?: string, preserveTerminalPeerSignal: boolean = false) => {
       if (hasEndedRef.current) return;
       hasEndedRef.current = true;
       sounds.stopCallRing();
-      detachSignalListenersAndCleanDb(sessionCallId, myId, activePeer.id, preserveTerminalPeerSignal);
+      detachSignalListenersAndCleanDb(sessionCallId, myId, resolvedPeerId, preserveTerminalPeerSignal);
       cleanupMediaAndPeer();
       if (reason) setEndReason(reason);
       setCallState('ended');
@@ -723,7 +774,7 @@ export const CallModal: React.FC<CallModalProps> = ({
     const handleIncomingSignal = async (signal: any) => {
       if (isUnmountedOrClosedRef.current || !signal) return;
       if (signal.targetUserId && signal.targetUserId !== myId) return;
-      if (signal.fromUserId && signal.fromUserId !== activePeer.id) return;
+      if (signal.fromUserId && signal.fromUserId !== resolvedPeerId) return;
       if (signal.callId && callIdRef.current && signal.callId !== callIdRef.current) {
         return;
       }
@@ -735,11 +786,11 @@ export const CallModal: React.FC<CallModalProps> = ({
 
       if (signal.type === 'call_end' || signal.type === 'call_reject' || signal.type === 'call_busy') {
         if (signal.type === 'call_reject') {
-          console.log('[Call] Call declined', { callId: sessionCallId, by: activePeer.id });
+          console.log('[Call] Call declined', { callId: sessionCallId, by: resolvedPeerId });
         } else if (signal.type === 'call_busy') {
-          console.log('[Call] Target user is busy', { callId: sessionCallId, by: activePeer.id });
+          console.log('[Call] Target user is busy', { callId: sessionCallId, by: resolvedPeerId });
         } else {
-          console.log('[Call] Call hangup', { callId: sessionCallId, by: activePeer.id });
+          console.log('[Call] Call hangup', { callId: sessionCallId, by: resolvedPeerId });
         }
         const msg =
           signal.type === 'call_busy'
@@ -756,7 +807,7 @@ export const CallModal: React.FC<CallModalProps> = ({
           clearTimeout(ringTimerRef.current);
           ringTimerRef.current = null;
         }
-        console.log('[Call] Call accepted', { callId: sessionCallId, by: activePeer.id });
+        console.log('[Call] Call accepted', { callId: sessionCallId, by: resolvedPeerId });
         sounds.stopCallRing();
         sounds.playMessageReceived();
         setCallState((prev) => (prev === 'connected' || prev === 'ended' ? prev : 'connected'));
@@ -838,7 +889,7 @@ export const CallModal: React.FC<CallModalProps> = ({
           clearTimeout(ringTimerRef.current);
           ringTimerRef.current = null;
         }
-        console.log('[Call] Answer received', { callId: sessionCallId, from: activePeer.id });
+        console.log('[Call] Answer received', { callId: sessionCallId, from: resolvedPeerId });
         try {
           if (pcRef.current.signalingState === 'have-local-offer') {
             await pcRef.current.setRemoteDescription(new RTCSessionDescription(signal.sdp));
@@ -900,11 +951,11 @@ export const CallModal: React.FC<CallModalProps> = ({
 
     if (!isIncoming) {
       (async () => {
-        // Check if target user is already in an active call before placing offer
-        const targetBusy = await checkTargetUserInCall(activePeer.id);
+        // Check if target user is genuinely in an active call (ignores stale RTDB/expired _active)
+        const targetBusy = await checkTargetUserInCall(resolvedPeerId, myId);
         if (isUnmountedOrClosedRef.current || hasEndedRef.current) return;
         if (targetBusy) {
-          console.log('[Call] Target user is busy', { callId: sessionCallId, targetUserId: activePeer.id });
+          console.log('[Call] Target user is busy', { callId: sessionCallId, targetUserId: resolvedPeerId });
           closeGracefully('الطرف الآخر مشغول في مكالمة أخرى', false);
           return;
         }
@@ -922,6 +973,7 @@ export const CallModal: React.FC<CallModalProps> = ({
           emitCallSignal({
             type: 'call_offer',
             fromUserId: myId,
+            targetUserId: resolvedPeerId,
             callerName: userMetaRef.current.name,
             callerAvatar: userMetaRef.current.avatar,
             callerFlag: userMetaRef.current.countryFlag,
@@ -929,7 +981,7 @@ export const CallModal: React.FC<CallModalProps> = ({
             createdAtMs: Date.now(),
             sdp: { type: offer.type, sdp: offer.sdp },
           });
-          console.log('[Call] Offer sent', { callId: sessionCallId, callType: activeType, to: activePeer.id });
+          console.log('[Call] Offer sent', { callId: sessionCallId, callType: activeType, to: resolvedPeerId });
         } catch (err) {
           console.error('[Call] Offer creation failed:', err);
           if (isUnmountedOrClosedRef.current || hasEndedRef.current) return;
@@ -937,13 +989,14 @@ export const CallModal: React.FC<CallModalProps> = ({
           emitCallSignal({
             type: 'call_offer',
             fromUserId: myId,
+            targetUserId: resolvedPeerId,
             callerName: userMetaRef.current.name,
             callerAvatar: userMetaRef.current.avatar,
             callerFlag: userMetaRef.current.countryFlag,
             callType: activeType,
             createdAtMs: Date.now(),
           });
-          console.log('[Call] Offer sent', { callId: sessionCallId, callType: activeType, to: activePeer.id });
+          console.log('[Call] Offer sent', { callId: sessionCallId, callType: activeType, to: resolvedPeerId });
         }
 
         // End unanswered outgoing call cleanly after 45s, notify peer, and clean call_signals
@@ -953,6 +1006,7 @@ export const CallModal: React.FC<CallModalProps> = ({
             emitCallSignal({
               type: 'call_end',
               fromUserId: myId,
+              targetUserId: resolvedPeerId,
             });
             closeGracefully('لم يرد الطرف الآخر', true);
           }
@@ -966,6 +1020,7 @@ export const CallModal: React.FC<CallModalProps> = ({
           emitCallSignal({
             type: 'call_end',
             fromUserId: myId,
+            targetUserId: resolvedPeerId,
           });
           closeGracefully('لم يتم الرد على المكالمة', true);
         }
@@ -976,6 +1031,8 @@ export const CallModal: React.FC<CallModalProps> = ({
       isUnmountedOrClosedRef.current = true;
       sounds.stopCallRing();
       window.removeEventListener('shatmasr:call_early_ice', handleEarlyIceEvent);
+      window.removeEventListener('pagehide', handlePageUnloadCleanup);
+      window.removeEventListener('beforeunload', handlePageUnloadCleanup);
       let sentTerminal = false;
       if (!hasEndedRef.current && callStateRef.current !== 'ended') {
         hasEndedRef.current = true;
@@ -989,9 +1046,10 @@ export const CallModal: React.FC<CallModalProps> = ({
         emitCallSignal({
           type: termType,
           fromUserId: myId,
+          targetUserId: resolvedPeerId,
         });
       }
-      detachSignalListenersAndCleanDb(sessionCallId, myId, activePeer.id, sentTerminal);
+      detachSignalListenersAndCleanDb(sessionCallId, myId, resolvedPeerId, sentTerminal);
       cleanupMediaAndPeer();
     };
   }, [isOpen]); // Strictly keyed on [isOpen] so parent/user state updates never drop active calls
