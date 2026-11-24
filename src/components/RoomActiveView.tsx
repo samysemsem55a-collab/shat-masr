@@ -40,8 +40,7 @@ import {
   Crown,
   Trash2,
   Copy,
-  MessageCircle,
-  Download
+  MessageCircle
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { toast } from '../utils/appToast';
@@ -59,7 +58,6 @@ import { ANIMATED_INLINE_EMOJIS, InlineRichText } from './InlineRichText';
 import { offlineQueue } from '../services/offlineQueue';
 import { buildSmartAssistantReply } from '../utils/translateMessage';
 import { compressImageFileToBlob } from '../utils/imageCompression';
-import { downloadImageToDevice } from '../utils/downloadImage';
 import { 
   getWallpaperStyleById, 
   ROOM_BACKGROUND_THEMES, 
@@ -473,8 +471,6 @@ const RoomPublicMessageRow = React.memo<RoomPublicMessageRowProps>(({
                 src={msg.mediaUrl || msg.imageUrl || ''}
                 alt="صورة مرسلة في الغرفة"
                 autoReveal={false}
-                uploadProgress={msg.uploadProgress}
-                downloadFilename={`room_${msg.id || Date.now()}.jpg`}
                 onOpenFull={(url) => onOpenLightbox(url)}
                 className="max-h-56 w-full object-cover rounded-xl"
               />
@@ -743,53 +739,7 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
   const headerToolsRef = useRef<HTMLDivElement>(null);
   const roomImageInputRef = useRef<HTMLInputElement>(null);
   const [isUploadingRoomImage, setIsUploadingRoomImage] = useState(false);
-  const [uploadingRoomImages, setUploadingRoomImages] = useState<Message[]>([]);
-  const roomPreviewUrlsRef = useRef<Set<string>>(new Set());
   const [lightboxImageUrl, setLightboxImageUrl] = useState<string | null>(null);
-
-  useEffect(() => {
-    setUploadingRoomImages([]);
-    roomPreviewUrlsRef.current.forEach((u) => {
-      try { URL.revokeObjectURL(u); } catch {}
-    });
-    roomPreviewUrlsRef.current.clear();
-  }, [room.id]);
-
-  useEffect(() => {
-    return () => {
-      roomPreviewUrlsRef.current.forEach((u) => {
-        try { URL.revokeObjectURL(u); } catch {}
-      });
-      roomPreviewUrlsRef.current.clear();
-    };
-  }, []);
-
-  useEffect(() => {
-    if (uploadingRoomImages.length === 0) return;
-    const confirmedIds = new Set<string>();
-    for (const m of messages) {
-      if (m.id) confirmedIds.add(m.id);
-      if (m.tempId) confirmedIds.add(m.tempId);
-      if (m.clientId) confirmedIds.add(m.clientId);
-    }
-    setUploadingRoomImages((prev) => {
-      const next = prev.filter((item) => {
-        const isConfirmed =
-          confirmedIds.has(item.id) ||
-          (item.tempId ? confirmedIds.has(item.tempId) : false) ||
-          (item.clientId ? confirmedIds.has(item.clientId) : false);
-        if (isConfirmed && item.mediaUrl?.startsWith('blob:')) {
-          const urlToRevoke = item.mediaUrl;
-          roomPreviewUrlsRef.current.delete(urlToRevoke);
-          setTimeout(() => {
-            try { URL.revokeObjectURL(urlToRevoke); } catch {}
-          }, 1500);
-        }
-        return !isConfirmed;
-      });
-      return next.length === prev.length ? prev : next;
-    });
-  }, [messages, uploadingRoomImages.length]);
 
   useEffect(() => {
     if (!isHeaderToolsOpen) return;
@@ -1291,19 +1241,16 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [isEmojiPickerOpen]);
 
-  // Deduplicate messages by ID and content fingerprint (including optimistic uploading room images)
+  // Deduplicate messages by ID and content fingerprint
   const uniqueMessages = React.useMemo(() => {
     const seen = new Set<string>();
-    const combined = uploadingRoomImages.length > 0 ? [...messages, ...uploadingRoomImages] : messages;
-    return combined.filter((msg) => {
-      const primaryKey = msg.id || `${msg.senderId}_${msg.content}_${Math.floor((msg.timestamp || 0) / 3000)}`;
-      if (seen.has(primaryKey)) return false;
-      if (msg.tempId && seen.has(msg.tempId)) return false;
-      seen.add(primaryKey);
-      if (msg.tempId) seen.add(msg.tempId);
+    return messages.filter((msg) => {
+      const key = msg.id || `${msg.senderId}_${msg.content}_${Math.floor((msg.timestamp || 0) / 3000)}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
       return true;
     });
-  }, [messages, uploadingRoomImages]);
+  }, [messages]);
 
   // Filter messages by type (All, Text only, Images only, Gifts only) + Search query
   const displayedMessages = React.useMemo(() => {
@@ -1558,7 +1505,7 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
     setIsEmojiPickerOpen(false);
   };
 
-  // WhatsApp-style Room Image Upload: 0ms blob preview + fast compression + progress
+  // Unrestricted Room Image Upload Handler (compressed <= 800px & < 300KB)
   const handleRoomImageSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = '';
@@ -1576,67 +1523,18 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
       return;
     }
 
-    const now = Date.now();
-    const tempId = `room_img_${now}_${Math.random().toString(36).slice(2, 7)}`;
-    const rawPreviewUrl = URL.createObjectURL(file);
-    roomPreviewUrlsRef.current.add(rawPreviewUrl);
-    const replyPayload = replyingTo
-      ? {
-          id: replyingTo.id,
-          senderName: replyingTo.senderName,
-          content: replyingTo.content || replyingTo.text || '',
-          type: replyingTo.type,
-        }
-      : undefined;
-
-    const optimisticMsg: Message = {
-      id: tempId,
-      tempId,
-      clientId: tempId,
-      roomId: room.id,
-      senderId: currentUser.id,
-      senderName: currentUser.name,
-      senderAvatar: currentUser.avatar,
-      senderRole: currentUser.role,
-      senderVipBadge: currentUser.vipBadge,
-      badges: currentUser.badges || ['عضو نشط'],
-      type: 'image',
-      mediaUrl: rawPreviewUrl,
-      imageUrl: rawPreviewUrl,
-      mediaType: 'image',
-      content: '🖼️ صورة مرفقة',
-      text: '🖼️ صورة مرفقة',
-      replyTo: replyPayload,
-      uploadProgress: 5,
-      createdAt: now,
-      timestamp: now,
-      status: 'sent',
-    };
-
-    setUploadingRoomImages((prev) => [...prev, optimisticMsg]);
     setIsUploadingRoomImage(true);
     try {
       const { blob } = await compressImageFileToBlob(file, {
-        maxWidth: 1080,
-        maxHeight: 1080,
-        maxBytes: 220 * 1024,
-        initialQuality: 0.8,
+        maxWidth: 800,
+        maxBytes: 295 * 1024,
       });
-      setUploadingRoomImages((prev) =>
-        prev.map((m) => (m.id === tempId ? { ...m, uploadProgress: 20 } : m))
-      );
       const baseName = file.name.replace(/\.[^.]+$/, '') || 'room_photo';
       const uploadFile = new File([blob], `${baseName}.jpg`, { type: 'image/jpeg' });
-      const { url } = await uploadPrivateChatMedia(uploadFile, `room_${room.id}`, (pct) => {
-        const scaled = Math.min(98, Math.max(20, 20 + Math.round(pct * 0.78)));
-        setUploadingRoomImages((prev) =>
-          prev.map((m) => (m.id === tempId ? { ...m, uploadProgress: scaled } : m))
-        );
-      });
+      const { url } = await uploadPrivateChatMedia(uploadFile, `room_${room.id}`);
       sounds.playMessageSent();
-      setUploadingRoomImages((prev) =>
-        prev.map((m) => (m.id === tempId ? { ...m, mediaUrl: url, imageUrl: url, uploadProgress: undefined } : m))
-      );
+      const now = Date.now();
+      const tempId = `room_img_${now}_${Math.random().toString(36).slice(2, 7)}`;
       onSendMessage({
         id: tempId,
         tempId,
@@ -1654,22 +1552,19 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
         mediaType: 'image',
         content: '🖼️ صورة مرفقة',
         text: '🖼️ صورة مرفقة',
-        replyTo: replyPayload,
+        replyTo: replyingTo ? {
+          id: replyingTo.id,
+          senderName: replyingTo.senderName,
+          content: replyingTo.content || replyingTo.text || '',
+          type: replyingTo.type
+        } : undefined,
         createdAt: now,
         timestamp: now,
         status: navigator.onLine === false ? 'pending_offline' : 'sent',
       });
       updateReplyingTo(null);
-      setTimeout(() => {
-        roomPreviewUrlsRef.current.delete(rawPreviewUrl);
-        try { URL.revokeObjectURL(rawPreviewUrl); } catch {}
-        setUploadingRoomImages((prev) => prev.filter((m) => m.id !== tempId));
-      }, 2500);
       toast.success('تم إرسال الصورة في الغرفة بنجاح 🖼️');
     } catch (err: any) {
-      setUploadingRoomImages((prev) => prev.filter((m) => m.id !== tempId));
-      roomPreviewUrlsRef.current.delete(rawPreviewUrl);
-      try { URL.revokeObjectURL(rawPreviewUrl); } catch {}
       toast.error(err?.message || 'تعذر رفع الصورة، حاول مرة أخرى');
     } finally {
       setIsUploadingRoomImage(false);
@@ -3967,33 +3862,13 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
           onClick={() => setLightboxImageUrl(null)}
           className="fixed inset-0 z-[220] bg-slate-900/90 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in"
         >
-          <div className="absolute top-4 left-4 flex items-center gap-2 z-10">
-            <button
-              type="button"
-              onClick={async (e) => {
-                e.stopPropagation();
-                try {
-                  await downloadImageToDevice(lightboxImageUrl, `room_photo_${Date.now()}.jpg`);
-                  toast.success('تم حفظ الصورة على جهازك 📥');
-                } catch {
-                  toast.error('تعذر تحميل الصورة');
-                }
-              }}
-              aria-label="تحميل الصورة"
-              title="حفظ الصورة على الجهاز"
-              className="p-2 rounded-full bg-white/15 hover:bg-white/25 text-white transition cursor-pointer"
-            >
-              <Download className="w-5 h-5" />
-            </button>
-            <button
-              type="button"
-              onClick={() => setLightboxImageUrl(null)}
-              aria-label="إغلاق"
-              className="p-2 rounded-full bg-white/15 hover:bg-white/25 text-white transition cursor-pointer"
-            >
-              <X className="w-5 h-5" />
-            </button>
-          </div>
+          <button
+            type="button"
+            onClick={() => setLightboxImageUrl(null)}
+            className="absolute top-4 left-4 p-2 rounded-full bg-white/15 hover:bg-white/25 text-white transition cursor-pointer"
+          >
+            <X className="w-5 h-5" />
+          </button>
           <img
             src={lightboxImageUrl}
             alt="معاينة الصورة"

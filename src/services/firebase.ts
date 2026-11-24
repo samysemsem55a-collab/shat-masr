@@ -5588,15 +5588,6 @@ async function compressImageToDataUrl(file: File, maxDim = 900, quality = 0.72):
   });
 }
 
-function fileBlobToDataUrl(file: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result || ''));
-    reader.onerror = () => reject(new Error('تعذر قراءة الملف'));
-    reader.readAsDataURL(file);
-  });
-}
-
 export async function uploadPrivateChatMedia(
   file: File,
   convId: string,
@@ -5606,24 +5597,15 @@ export async function uploadPrivateChatMedia(
   const mediaType: 'image' | 'video' = isVideo ? 'video' : 'image';
   const safeName = `${Date.now()}_${file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
 
-  // Try Firebase Storage first with cache metadata & resumable progress
+  // Try Firebase Storage first
   if (storage) {
     try {
       const fileRef = storageRef(storage, `private_media/${convId}/${safeName}`);
       const url = await new Promise<string>((resolve, reject) => {
-        const task = uploadBytesResumable(fileRef, file, {
-          contentType: file.type || (isVideo ? 'video/mp4' : 'image/jpeg'),
-          cacheControl: 'public, max-age=31536000',
-        });
-        let settled = false;
+        const task = uploadBytesResumable(fileRef, file);
         const timeoutId = setTimeout(() => {
-          if (settled) return;
-          settled = true;
-          try {
-            task.cancel();
-          } catch {}
           reject(new Error('Storage upload timeout'));
-        }, isVideo ? 20000 : 8000);
+        }, 12000);
         task.on(
           'state_changed',
           (snapshot) => {
@@ -5632,14 +5614,10 @@ export async function uploadPrivateChatMedia(
             }
           },
           (err) => {
-            if (settled) return;
-            settled = true;
             clearTimeout(timeoutId);
             reject(err);
           },
           async () => {
-            if (settled) return;
-            settled = true;
             clearTimeout(timeoutId);
             try {
               const dl = await getDownloadURL(task.snapshot.ref);
@@ -5656,10 +5634,9 @@ export async function uploadPrivateChatMedia(
     }
   }
 
-  // Fast fallback for images when Storage CORS/rules block: reuse already-compressed Blob directly
+  // Fallback for images when Storage CORS/rules block
   if (!isVideo) {
-    const compressedUrl =
-      file.size <= 350 * 1024 ? await fileBlobToDataUrl(file) : await compressImageToDataUrl(file);
+    const compressedUrl = await compressImageToDataUrl(file);
     if (onProgress) onProgress(100);
     return { url: compressedUrl, mediaType: 'image' };
   }
@@ -7262,36 +7239,23 @@ export function subscribeToAppUpdateNotices(
 export async function sendFirestoreCallSignal(targetUserId: string, signal: any): Promise<void> {
   if (!targetUserId || !signal) return;
   const signalId = signal.signalId || `sig_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-  const now = Date.now();
   const payload = {
     ...signal,
     signalId,
     targetUserId,
-    createdAt: now,
-    expiresAt: now + 90_000,
+    createdAt: Date.now(),
+    expiresAt: Date.now() + 90_000,
   };
 
   if (db) {
     try {
       await setDoc(doc(db, 'users', targetUserId, 'call_signals', signalId), payload);
-    } catch (err) {
-      handleFirestoreError(err, OperationType.WRITE, `users/${targetUserId}/call_signals/${signalId}`);
-    }
+    } catch {}
   }
   if (rtdb) {
     try {
       await set(ref(rtdb, `call_signals/${targetUserId}/${signalId}`), payload);
     } catch {}
-  }
-}
-
-export async function deleteFirestoreCallSignal(userId: string, signalId: string): Promise<void> {
-  if (!userId || !signalId) return;
-  if (db) {
-    deleteDoc(doc(db, 'users', userId, 'call_signals', signalId)).catch(() => {});
-  }
-  if (rtdb) {
-    remove(ref(rtdb, `call_signals/${userId}/${signalId}`)).catch(() => {});
   }
 }
 
@@ -7307,18 +7271,10 @@ export function subscribeToFirestoreCallSignals(
     if (!raw || typeof raw !== 'object') return;
     const id = String(raw.signalId || fallbackId || '');
     if (!id || seenIds.has(id)) return;
-    const now = Date.now();
     const createdAt = typeof raw.createdAt === 'number' ? raw.createdAt : 0;
-    if (typeof raw.expiresAt === 'number' && raw.expiresAt < now) {
-      deleteFirestoreCallSignal(userId, id);
-      return;
-    }
     if (createdAt > 0 && createdAt < mountTs) return;
+    if (typeof raw.expiresAt === 'number' && raw.expiresAt < Date.now()) return;
     seenIds.add(id);
-    if (seenIds.size > 300) {
-      const oldest = seenIds.values().next().value;
-      if (oldest) seenIds.delete(oldest);
-    }
     onSignal({ ...raw, signalId: id });
   };
 
@@ -7335,9 +7291,7 @@ export function subscribeToFirestoreCallSignals(
             }
           });
         },
-        (err) => {
-          handleFirestoreError(err, OperationType.LIST, `users/${userId}/call_signals`);
-        }
+        () => {}
       );
     } catch {}
   }
