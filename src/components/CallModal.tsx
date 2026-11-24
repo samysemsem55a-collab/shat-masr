@@ -41,7 +41,10 @@ const ICE_SERVERS: RTCConfiguration = {
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
     { urls: 'stun:stun2.l.google.com:19302' },
+    { urls: 'stun:stun3.l.google.com:19302' },
+    { urls: 'stun:stun4.l.google.com:19302' },
   ],
+  iceCandidatePoolSize: 6,
 };
 
 export const CallModal: React.FC<CallModalProps> = ({
@@ -88,12 +91,31 @@ export const CallModal: React.FC<CallModalProps> = ({
     avatar: currentUser.avatar,
     countryFlag: currentUser.countryFlag,
   };
+  const hasRemoteDescRef = useRef<boolean>(false);
+  const isSpeakerOnRef = useRef<boolean>(isSpeakerOn);
+  isSpeakerOnRef.current = isSpeakerOn;
   const callIdRef = useRef<string>('');
   const callStateRef = useRef(callState);
   callStateRef.current = callState;
   const hasEndedRef = useRef<boolean>(false);
   const isUnmountedOrClosedRef = useRef<boolean>(false);
   const connectFallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const unlockAndPlayRemoteMedia = useCallback(() => {
+    if (remoteAudioRef.current) {
+      remoteAudioRef.current.muted = !isSpeakerOnRef.current;
+      remoteAudioRef.current.volume = 1;
+      if (remoteAudioRef.current.srcObject) {
+        remoteAudioRef.current.play().catch(() => {});
+      }
+    }
+    if (remoteVideoRef.current && remoteVideoRef.current.srcObject) {
+      remoteVideoRef.current.play().catch(() => {});
+    }
+    if (localVideoRef.current && localVideoRef.current.srcObject) {
+      localVideoRef.current.play().catch(() => {});
+    }
+  }, []);
 
   const cleanupMediaAndPeer = useCallback(() => {
     if (timerRef.current) {
@@ -134,6 +156,8 @@ export const CallModal: React.FC<CallModalProps> = ({
       remoteAudioRef.current.srcObject = null;
     }
     remoteStreamRef.current = null;
+    pendingIceRef.current = [];
+    hasRemoteDescRef.current = false;
     setHasRemoteStream(false);
   }, []);
 
@@ -151,24 +175,51 @@ export const CallModal: React.FC<CallModalProps> = ({
     [peerUser.id]
   );
 
-  const createPeerConnection = useCallback(
-    (stream: MediaStream | null) => {
-      const pc = new RTCPeerConnection(ICE_SERVERS);
-
-      if (stream) {
-        stream.getTracks().forEach((track) => {
-          pc.addTrack(track, stream);
+  const attachStreamTracksToPeer = useCallback((pc: RTCPeerConnection, stream: MediaStream) => {
+    const transceivers = pc.getTransceivers();
+    stream.getTracks().forEach((track) => {
+      const existingEmpty = transceivers.find(
+        (t) =>
+          t.receiver.track?.kind === track.kind &&
+          !t.sender.track &&
+          t.currentDirection !== 'stopped'
+      );
+      if (existingEmpty) {
+        existingEmpty.sender.replaceTrack(track).catch(() => {
+          try {
+            pc.addTrack(track, stream);
+          } catch {}
         });
-      }
-      if (!stream || stream.getAudioTracks().length === 0) {
         try {
-          pc.addTransceiver('audio', { direction: 'recvonly' });
+          existingEmpty.direction = 'sendrecv';
         } catch {}
+      } else {
+        pc.addTrack(track, stream);
       }
-      if (callType === 'video' && (!stream || stream.getVideoTracks().length === 0)) {
-        try {
-          pc.addTransceiver('video', { direction: 'recvonly' });
-        } catch {}
+    });
+  }, []);
+
+  const createPeerConnection = useCallback(
+    (stream: MediaStream | null, isAnswerer: boolean = false) => {
+      const pc = new RTCPeerConnection(ICE_SERVERS);
+      hasRemoteDescRef.current = false;
+
+      if (!isAnswerer) {
+        if (stream) {
+          stream.getTracks().forEach((track) => {
+            pc.addTrack(track, stream);
+          });
+        }
+        if (!stream || stream.getAudioTracks().length === 0) {
+          try {
+            pc.addTransceiver('audio', { direction: 'recvonly' });
+          } catch {}
+        }
+        if (callType === 'video' && (!stream || stream.getVideoTracks().length === 0)) {
+          try {
+            pc.addTransceiver('video', { direction: 'recvonly' });
+          } catch {}
+        }
       }
 
       pc.onicecandidate = (event) => {
@@ -176,32 +227,55 @@ export const CallModal: React.FC<CallModalProps> = ({
           emitCallSignal({
             type: 'ice_candidate',
             fromUserId: currentUser.id,
-            candidate: event.candidate.toJSON(),
+            candidate: {
+              candidate: event.candidate.candidate,
+              sdpMid: event.candidate.sdpMid ?? null,
+              sdpMLineIndex: event.candidate.sdpMLineIndex ?? null,
+            },
           });
         }
       };
 
       pc.ontrack = (event) => {
-        let remoteStream = event.streams?.[0] || remoteStreamRef.current;
-        if (!remoteStream) {
-          remoteStream = new MediaStream();
-        }
-        if (event.track && !remoteStream.getTracks().some((t) => t.id === event.track.id)) {
+        const remoteStream = remoteStreamRef.current || new MediaStream();
+        if (event.streams && event.streams[0]) {
+          event.streams[0].getTracks().forEach((t) => {
+            if (!remoteStream.getTracks().some((existing) => existing.id === t.id)) {
+              remoteStream.addTrack(t);
+            }
+          });
+        } else if (event.track && !remoteStream.getTracks().some((t) => t.id === event.track.id)) {
           remoteStream.addTrack(event.track);
         }
         remoteStreamRef.current = remoteStream;
         setHasRemoteStream(true);
 
-        if (remoteAudioRef.current) {
-          remoteAudioRef.current.srcObject = remoteStream;
-          remoteAudioRef.current.play().catch(() => {});
-        }
-        if (remoteVideoRef.current) {
-          remoteVideoRef.current.srcObject = remoteStream;
-          remoteVideoRef.current.play().catch(() => {});
-        }
-        if (!hasEndedRef.current) {
-          setCallState('connected');
+        const bindAndPlayRemote = () => {
+          if (remoteAudioRef.current) {
+            if (remoteAudioRef.current.srcObject !== remoteStream) {
+              remoteAudioRef.current.srcObject = remoteStream;
+            }
+            remoteAudioRef.current.muted = !isSpeakerOnRef.current;
+            remoteAudioRef.current.volume = 1;
+            remoteAudioRef.current.play().catch(() => {});
+          }
+          if (remoteVideoRef.current) {
+            if (remoteVideoRef.current.srcObject !== remoteStream) {
+              remoteVideoRef.current.srcObject = remoteStream;
+            }
+            remoteVideoRef.current.play().catch(() => {});
+          }
+        };
+
+        bindAndPlayRemote();
+
+        if (event.track) {
+          event.track.onunmute = () => {
+            if (isUnmountedOrClosedRef.current || hasEndedRef.current) return;
+            setHasRemoteStream(true);
+            bindAndPlayRemote();
+            setCallState((prev) => (prev === 'connecting' || prev === 'ringing' ? 'connected' : prev));
+          };
         }
       };
 
@@ -214,10 +288,13 @@ export const CallModal: React.FC<CallModalProps> = ({
             connectFallbackTimerRef.current = null;
           }
           setCallState('connected');
+          unlockAndPlayRemoteMedia();
         } else if (conn === 'disconnected' || ice === 'disconnected') {
-          try {
-            pc.restartIce?.();
-          } catch {}
+          if (!isAnswerer) {
+            try {
+              pc.restartIce?.();
+            } catch {}
+          }
         } else if (conn === 'failed' || ice === 'failed') {
           setMicWarning('تعذر استقرار اتصال الشبكة المباشر — يرجى التحقق من الإنترنت.');
         }
@@ -229,7 +306,7 @@ export const CallModal: React.FC<CallModalProps> = ({
       pcRef.current = pc;
       return pc;
     },
-    [currentUser.id, emitCallSignal]
+    [callType, currentUser.id, emitCallSignal, unlockAndPlayRemoteMedia]
   );
 
   const acquireUserMedia = useCallback(async (): Promise<MediaStream | null> => {
@@ -237,21 +314,44 @@ export const CallModal: React.FC<CallModalProps> = ({
       setMicWarning('المتصفح لا يدعم الوصول للمايكروفون مباشرة — وضع المكالمة الآمن مفعل.');
       return null;
     }
+
+    const bindLocalStream = (stream: MediaStream) => {
+      localStreamRef.current = stream;
+      if (localVideoRef.current) {
+        localVideoRef.current.srcObject = stream;
+        localVideoRef.current.play().catch(() => {});
+      }
+    };
+
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: true,
-        video: callType === 'video' ? { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } } : false,
-      });
+      let stream: MediaStream;
+      if (callType === 'video') {
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            audio: true,
+            video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
+          });
+        } catch (constraintErr: any) {
+          if (
+            constraintErr?.name === 'OverconstrainedError' ||
+            constraintErr?.name === 'ConstraintNotSatisfiedError'
+          ) {
+            stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+          } else {
+            throw constraintErr;
+          }
+        }
+      } else {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      }
+
       if (isUnmountedOrClosedRef.current || hasEndedRef.current) {
         stream.getTracks().forEach((t) => {
           try { t.stop(); } catch {}
         });
         return null;
       }
-      localStreamRef.current = stream;
-      if (localVideoRef.current) {
-        localVideoRef.current.srcObject = stream;
-      }
+      bindLocalStream(stream);
       setMicWarning(null);
       return stream;
     } catch (err: any) {
@@ -265,7 +365,7 @@ export const CallModal: React.FC<CallModalProps> = ({
             });
             return null;
           }
-          localStreamRef.current = audioOnlyStream;
+          bindLocalStream(audioOnlyStream);
           setIsVideoEnabled(false);
           setMicWarning('تم تشغيل الصوت فقط لعدم توفر صلاحية الكاميرا.');
           return audioOnlyStream;
@@ -289,15 +389,24 @@ export const CallModal: React.FC<CallModalProps> = ({
 
   // Keep <video> and <audio> elements bound to streams whenever video toggles or UI updates
   useEffect(() => {
-    if (localVideoRef.current && localStreamRef.current && localVideoRef.current.srcObject !== localStreamRef.current) {
-      localVideoRef.current.srcObject = localStreamRef.current;
+    if (localVideoRef.current && localStreamRef.current) {
+      if (localVideoRef.current.srcObject !== localStreamRef.current) {
+        localVideoRef.current.srcObject = localStreamRef.current;
+      }
+      localVideoRef.current.play().catch(() => {});
     }
-    if (remoteVideoRef.current && remoteStreamRef.current && remoteVideoRef.current.srcObject !== remoteStreamRef.current) {
-      remoteVideoRef.current.srcObject = remoteStreamRef.current;
+    if (remoteVideoRef.current && remoteStreamRef.current) {
+      if (remoteVideoRef.current.srcObject !== remoteStreamRef.current) {
+        remoteVideoRef.current.srcObject = remoteStreamRef.current;
+      }
       remoteVideoRef.current.play().catch(() => {});
     }
-    if (remoteAudioRef.current && remoteStreamRef.current && remoteAudioRef.current.srcObject !== remoteStreamRef.current) {
-      remoteAudioRef.current.srcObject = remoteStreamRef.current;
+    if (remoteAudioRef.current && remoteStreamRef.current) {
+      if (remoteAudioRef.current.srcObject !== remoteStreamRef.current) {
+        remoteAudioRef.current.srcObject = remoteStreamRef.current;
+      }
+      remoteAudioRef.current.muted = !isSpeakerOnRef.current;
+      remoteAudioRef.current.volume = 1;
       remoteAudioRef.current.play().catch(() => {});
     }
   }, [isVideoEnabled, hasRemoteStream, callState]);
@@ -331,10 +440,10 @@ export const CallModal: React.FC<CallModalProps> = ({
     setIsVideoEnabled(callType === 'video');
     setHasRemoteStream(false);
     setCallState(incomingMode ? 'incoming' : 'ringing');
-    pendingIceRef.current = [];
+    const initialIncoming = incomingSignalRef.current;
+    pendingIceRef.current = Array.isArray(initialIncoming?._earlyIce) ? [...initialIncoming._earlyIce] : [];
     const processedSignals = new Set<string>();
 
-    const initialIncoming = incomingSignalRef.current;
     callIdRef.current = incomingMode
       ? String(initialIncoming?.callId || `call_in_${Date.now()}`)
       : `call_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -388,6 +497,7 @@ export const CallModal: React.FC<CallModalProps> = ({
         try {
           if (pcRef.current.signalingState === 'have-local-offer') {
             await pcRef.current.setRemoteDescription(new RTCSessionDescription(signal.sdp));
+            hasRemoteDescRef.current = true;
             for (const candidate of pendingIceRef.current) {
               await pcRef.current.addIceCandidate(new RTCIceCandidate(candidate)).catch(() => {});
             }
@@ -396,13 +506,7 @@ export const CallModal: React.FC<CallModalProps> = ({
           sounds.stopCallRing();
           sounds.playMessageReceived();
           setCallState((prev) => (prev === 'connected' || prev === 'ended' ? prev : 'connecting'));
-          // Fallback if peer has no mic/camera tracks or ICE finishes via audio-less safe mode
-          if (connectFallbackTimerRef.current) clearTimeout(connectFallbackTimerRef.current);
-          connectFallbackTimerRef.current = setTimeout(() => {
-            if (!isUnmountedOrClosedRef.current && !hasEndedRef.current) {
-              setCallState((prev) => (prev === 'connecting' ? 'connected' : prev));
-            }
-          }, 2200);
+          unlockAndPlayRemoteMedia();
         } catch {
           // ignore duplicate answer
         }
@@ -410,7 +514,7 @@ export const CallModal: React.FC<CallModalProps> = ({
       }
 
       if (signal.type === 'ice_candidate' && signal.candidate) {
-        if (pcRef.current && pcRef.current.remoteDescription) {
+        if (pcRef.current && (hasRemoteDescRef.current || pcRef.current.remoteDescription)) {
           await pcRef.current.addIceCandidate(new RTCIceCandidate(signal.candidate)).catch(() => {});
         } else {
           pendingIceRef.current.push(signal.candidate);
@@ -427,7 +531,7 @@ export const CallModal: React.FC<CallModalProps> = ({
       (async () => {
         const stream = await acquireUserMedia();
         if (isUnmountedOrClosedRef.current || hasEndedRef.current) return;
-        const pc = createPeerConnection(stream);
+        const pc = createPeerConnection(stream, false);
         try {
           const offer = await pc.createOffer({
             offerToReceiveAudio: true,
@@ -442,6 +546,7 @@ export const CallModal: React.FC<CallModalProps> = ({
             callerAvatar: userMetaRef.current.avatar,
             callerFlag: userMetaRef.current.countryFlag,
             callType,
+            createdAtMs: Date.now(),
             sdp: { type: offer.type, sdp: offer.sdp },
           });
         } catch {
@@ -453,6 +558,7 @@ export const CallModal: React.FC<CallModalProps> = ({
             callerAvatar: userMetaRef.current.avatar,
             callerFlag: userMetaRef.current.countryFlag,
             callType,
+            createdAtMs: Date.now(),
           });
         }
 
@@ -547,16 +653,21 @@ export const CallModal: React.FC<CallModalProps> = ({
     if (hasEndedRef.current) return;
     sounds.stopCallRing();
     sounds.playMessageReceived();
+    unlockAndPlayRemoteMedia();
     setCallState('connecting');
     const stream = await acquireUserMedia();
     if (isUnmountedOrClosedRef.current || hasEndedRef.current) return;
 
-    const pc = createPeerConnection(stream);
     const offerSignal = incomingSignalRef.current;
 
     if (offerSignal?.sdp) {
+      const pc = createPeerConnection(null, true);
       try {
         await pc.setRemoteDescription(new RTCSessionDescription(offerSignal.sdp));
+        hasRemoteDescRef.current = true;
+        if (stream) {
+          attachStreamTracksToPeer(pc, stream);
+        }
         for (const candidate of pendingIceRef.current) {
           await pc.addIceCandidate(new RTCIceCandidate(candidate)).catch(() => {});
         }
@@ -574,20 +685,26 @@ export const CallModal: React.FC<CallModalProps> = ({
           type: 'call_accept',
           fromUserId: currentUser.id,
         });
+        if (connectFallbackTimerRef.current) clearTimeout(connectFallbackTimerRef.current);
+        connectFallbackTimerRef.current = setTimeout(() => {
+          if (!isUnmountedOrClosedRef.current && !hasEndedRef.current) {
+            setCallState((prev) => (prev === 'connecting' ? 'connected' : prev));
+          }
+        }, 2200);
       }
     } else {
+      createPeerConnection(stream, false);
       emitCallSignal({
         type: 'call_accept',
         fromUserId: currentUser.id,
       });
+      if (connectFallbackTimerRef.current) clearTimeout(connectFallbackTimerRef.current);
+      connectFallbackTimerRef.current = setTimeout(() => {
+        if (!isUnmountedOrClosedRef.current && !hasEndedRef.current) {
+          setCallState((prev) => (prev === 'connecting' ? 'connected' : prev));
+        }
+      }, 2200);
     }
-
-    if (connectFallbackTimerRef.current) clearTimeout(connectFallbackTimerRef.current);
-    connectFallbackTimerRef.current = setTimeout(() => {
-      if (!isUnmountedOrClosedRef.current && !hasEndedRef.current) {
-        setCallState((prev) => (prev === 'connecting' ? 'connected' : prev));
-      }
-    }, 2200);
   };
 
   const handleEndCall = () => {
@@ -611,8 +728,12 @@ export const CallModal: React.FC<CallModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-[200] flex items-center justify-center bg-slate-900/45 backdrop-blur-md animate-in fade-in select-none sm:p-4" dir="rtl">
-      <audio ref={remoteAudioRef} autoPlay playsInline className="hidden" />
+    <div
+      onClick={unlockAndPlayRemoteMedia}
+      className="fixed inset-0 z-[200] flex items-center justify-center bg-slate-900/45 backdrop-blur-md animate-in fade-in select-none sm:p-4"
+      dir="rtl"
+    >
+      <audio ref={remoteAudioRef} autoPlay playsInline className="sr-only" />
       <div className="relative w-full max-w-md h-full sm:h-[88vh] sm:rounded-3xl bg-gradient-to-b from-indigo-50/90 via-white to-emerald-50/70 border border-slate-200 flex flex-col justify-between overflow-hidden shadow-2xl p-6 text-slate-900">
         {/* Top Header */}
         <div className="flex items-center justify-between text-xs shrink-0">

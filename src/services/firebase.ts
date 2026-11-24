@@ -426,6 +426,40 @@ export function subscribeToRoomPresence(
 }
 
 // Global Presence Tracker for all online users across the platform (RTDB presence/{userId} ONLY)
+const activeSelfPresenceUsers = new Map<string, User>();
+
+export function syncSelfPresenceProfile(user: User): void {
+  if (!user || !user.id) return;
+  activeSelfPresenceUsers.set(user.id, user);
+  if (rtdb && (typeof navigator === 'undefined' || navigator.onLine !== false)) {
+    const nowTs = getServerNowMs();
+    update(ref(rtdb, `presence/${user.id}`), {
+      userId: user.id,
+      id: user.id,
+      username: user.name || user.username || user.id,
+      name: user.name || user.username || 'عضو شات مصر',
+      avatar: user.avatar || '',
+      role: user.role || 'member',
+      vipBadge: user.vipBadge || '',
+      verified: Boolean(user.verified || user.role === 'owner'),
+      badges: user.badges || [],
+      frameStyle: user.frameStyle || '',
+      profileBanner: user.profileBanner || '',
+      countryFlag: user.countryFlag || '🇪🇬',
+      gender: user.gender || 'male',
+      ...(typeof user.age === 'number' ? { age: user.age } : {}),
+      status: user.status === 'offline' ? 'offline' : (user.status || 'online'),
+      isBanned: !!user.isBanned,
+      isMuted: !!user.isMuted,
+      coins: Number(user.coins) || 0,
+      ratingPoints: Number(user.ratingPoints) || 0,
+      isOnline: user.status !== 'offline',
+      lastSeen: rtdbServerTimestamp(),
+      lastSeenMs: nowTs,
+    }).catch(() => {});
+  }
+}
+
 export function subscribeToGlobalPresence(
   user: User,
   onGlobalChange: (users: User[]) => void
@@ -433,16 +467,25 @@ export function subscribeToGlobalPresence(
   const globalKey = 'arab_chat_global_presence';
   const rtdbUsersMap = new Map<string, User>();
   let lastPresenceSignature = '';
+  if (user && user.id) {
+    activeSelfPresenceUsers.set(user.id, user);
+  }
+
+  const getLatestSelf = (): User => {
+    if (!user?.id) return user;
+    return activeSelfPresenceUsers.get(user.id) || user;
+  };
 
   const emitPresence = () => {
     const nowTs = getServerNowMs();
+    const selfUser = getLatestSelf();
     const combined = new Map<string, User>();
 
     rtdbUsersMap.forEach((u, id) => {
       if (!u || !id) return;
       if (u.status === 'offline' || u.isOnline !== true) return;
       const seen = resolveTimestampMs(u.lastSeen ?? (u as any).lastSeenMs);
-      if (id !== user?.id && (typeof seen !== 'number' || nowTs - seen > PRESENCE_OFFLINE_TIMEOUT_MS)) {
+      if (id !== selfUser?.id && (typeof seen !== 'number' || nowTs - seen > PRESENCE_OFFLINE_TIMEOUT_MS)) {
         return;
       }
       combined.set(id, {
@@ -453,14 +496,14 @@ export function subscribeToGlobalPresence(
       });
     });
 
-    if (user && user.id) {
-      if (user.status === 'offline') {
-        combined.delete(user.id);
+    if (selfUser && selfUser.id) {
+      if (selfUser.status === 'offline') {
+        combined.delete(selfUser.id);
       } else {
-        const prevSelf = combined.get(user.id);
-        combined.set(user.id, {
+        const prevSelf = combined.get(selfUser.id);
+        combined.set(selfUser.id, {
           ...prevSelf,
-          ...user,
+          ...selfUser,
           isOnline: true,
           lastSeen: nowTs
         });
@@ -471,7 +514,7 @@ export function subscribeToGlobalPresence(
     const sig = list
       .map(
         (u) =>
-          `${u.id}:${u.name || ''}:${u.avatar || ''}:${u.status || ''}:${u.role || ''}:${u.vipBadge || ''}:${u.currentRoom || ''}:${u.countryFlag || ''}:${u.coins || 0}:${u.isBanned ? 1 : 0}:${u.isMuted ? 1 : 0}`
+          `${u.id}:${u.name || ''}:${u.avatar || ''}:${u.status || ''}:${u.role || ''}:${u.vipBadge || ''}:${u.currentRoom || ''}:${u.countryFlag || ''}:${u.coins || 0}:${u.isBanned ? 1 : 0}:${u.isMuted ? 1 : 0}:${u.id === selfUser?.id ? 0 : (Number(u.lastSeen) || 0)}`
       )
       .sort()
       .join('|');
@@ -495,33 +538,36 @@ export function subscribeToGlobalPresence(
   let unsubConnected: (() => void) | null = null;
   let unsubAll: (() => void) | null = null;
 
-  const buildOnlinePayload = (nowTs: number) => ({
-    userId: user.id,
-    id: user.id,
-    username: user.name || user.username || user.id,
-    name: user.name || user.username || 'عضو شات مصر',
-    avatar: user.avatar || '',
-    role: user.role || 'member',
-    vipBadge: user.vipBadge || '',
-    verified: Boolean(user.verified || user.role === 'owner'),
-    badges: user.badges || [],
-    frameStyle: user.frameStyle || '',
-    profileBanner: user.profileBanner || '',
-    countryFlag: user.countryFlag || '🇪🇬',
-    gender: user.gender || 'male',
-    ...(typeof user.age === 'number' ? { age: user.age } : {}),
-    sessionId: user.sessionId || '',
-    isGuest: !!user.isGuest,
-    status: user.status === 'offline' ? 'online' : (user.status || 'online'),
-    currentRoom: roomPresenceSelfState.get(user.id) ?? user.currentRoom ?? null,
-    isBanned: !!user.isBanned,
-    isMuted: !!user.isMuted,
-    coins: Number(user.coins) || 0,
-    ratingPoints: Number(user.ratingPoints) || 0,
-    isOnline: true,
-    lastSeen: rtdbServerTimestamp(),
-    lastSeenMs: nowTs,
-  });
+  const buildOnlinePayload = (nowTs: number) => {
+    const u = getLatestSelf();
+    return {
+      userId: u.id,
+      id: u.id,
+      username: u.name || u.username || u.id,
+      name: u.name || u.username || 'عضو شات مصر',
+      avatar: u.avatar || '',
+      role: u.role || 'member',
+      vipBadge: u.vipBadge || '',
+      verified: Boolean(u.verified || u.role === 'owner'),
+      badges: u.badges || [],
+      frameStyle: u.frameStyle || '',
+      profileBanner: u.profileBanner || '',
+      countryFlag: u.countryFlag || '🇪🇬',
+      gender: u.gender || 'male',
+      ...(typeof u.age === 'number' ? { age: u.age } : {}),
+      sessionId: u.sessionId || '',
+      isGuest: !!u.isGuest,
+      status: u.status === 'offline' ? 'online' : (u.status || 'online'),
+      currentRoom: roomPresenceSelfState.get(u.id) ?? u.currentRoom ?? null,
+      isBanned: !!u.isBanned,
+      isMuted: !!u.isMuted,
+      coins: Number(u.coins) || 0,
+      ratingPoints: Number(u.ratingPoints) || 0,
+      isOnline: true,
+      lastSeen: rtdbServerTimestamp(),
+      lastSeenMs: nowTs,
+    };
+  };
 
   if (rtdb && user && user.id) {
     const globalStatusRef = ref(rtdb, `presence/${user.id}`);
@@ -529,9 +575,11 @@ export function subscribeToGlobalPresence(
 
     const sendPresenceHeartbeat = () => {
       if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
+      const selfUser = getLatestSelf();
+      if (selfUser.status === 'offline') return;
       const nowTs = getServerNowMs();
       const payload = buildOnlinePayload(nowTs);
-      rtdbUsersMap.set(user.id, { ...rtdbUsersMap.get(user.id), ...user, isOnline: true, lastSeen: nowTs });
+      rtdbUsersMap.set(selfUser.id, { ...rtdbUsersMap.get(selfUser.id), ...selfUser, isOnline: true, lastSeen: nowTs });
       update(globalStatusRef, payload).catch(() => {});
     };
 
@@ -540,6 +588,7 @@ export function subscribeToGlobalPresence(
         if (snap.val() === true) {
           onDisconnect(globalStatusRef).update({
             isOnline: false,
+            status: 'offline',
             currentRoom: null,
             lastSeen: rtdbServerTimestamp()
           }).catch(() => {});
@@ -549,6 +598,7 @@ export function subscribeToGlobalPresence(
 
       unsubAll = subscribeSharedRtdbPresence((val) => {
         const nowTs = getServerNowMs();
+        const selfUser = getLatestSelf();
         rtdbUsersMap.clear();
         if (val && typeof val === 'object') {
           Object.entries(val).forEach(([uid, u]: [string, any]) => {
@@ -556,7 +606,7 @@ export function subscribeToGlobalPresence(
             const resolvedId = String(u.userId || u.id || uid);
             if (u.isOnline !== true || u.status === 'offline') return;
             const seen = resolveTimestampMs(u.lastSeen ?? u.lastSeenMs) || 0;
-            if (resolvedId === user.id || (seen > 0 && nowTs - seen <= PRESENCE_OFFLINE_TIMEOUT_MS)) {
+            if (resolvedId === selfUser.id || (seen > 0 && nowTs - seen <= PRESENCE_OFFLINE_TIMEOUT_MS)) {
               rtdbUsersMap.set(resolvedId, {
                 ...u,
                 id: resolvedId,
@@ -609,6 +659,7 @@ export function subscribeToGlobalPresence(
     if (rtdb && user && user.id) {
       update(ref(rtdb, `presence/${user.id}`), {
         isOnline: false,
+        status: 'offline',
         currentRoom: null,
         lastSeen: rtdbServerTimestamp(),
         lastSeenMs: getServerNowMs()
@@ -6986,26 +7037,33 @@ export function subscribeToAppUpdateNotices(
 export async function sendFirestoreCallSignal(targetUserId: string, signal: any): Promise<void> {
   if (!targetUserId || !signal) return;
   const signalId = signal.signalId || `sig_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-  const now = Date.now();
-  const payload = {
+  const now = getServerNowMs();
+  const rawPayload = {
     ...signal,
     signalId,
     targetUserId,
     createdAt: now,
+    createdAtMs: now,
     expiresAt: now + 90_000,
   };
+  let sanitizedPayload: Record<string, any> = rawPayload;
+  try {
+    sanitizedPayload = JSON.parse(JSON.stringify(rawPayload));
+  } catch {}
 
-  if (db) {
-    try {
-      await setDoc(doc(db, 'users', targetUserId, 'call_signals', signalId), payload);
-    } catch (err) {
-      handleFirestoreError(err, OperationType.WRITE, `users/${targetUserId}/call_signals/${signalId}`);
-    }
-  }
+  const tasks: Promise<any>[] = [];
   if (rtdb) {
-    try {
-      await set(ref(rtdb, `call_signals/${targetUserId}/${signalId}`), payload);
-    } catch {}
+    tasks.push(set(ref(rtdb, `call_signals/${targetUserId}/${signalId}`), sanitizedPayload));
+  }
+  if (db) {
+    tasks.push(
+      setDoc(doc(db, 'users', targetUserId, 'call_signals', signalId), sanitizedPayload).catch((err) => {
+        handleFirestoreError(err, OperationType.WRITE, `users/${targetUserId}/call_signals/${signalId}`);
+      })
+    );
+  }
+  if (tasks.length > 0) {
+    await Promise.allSettled(tasks);
   }
 }
 
@@ -7024,15 +7082,15 @@ export function subscribeToFirestoreCallSignals(
   onSignal: (signal: any) => void
 ): () => void {
   if (!userId) return () => {};
-  const mountTs = Date.now() - 12_000;
+  const mountTs = getServerNowMs() - 25_000;
   const seenIds = new Set<string>();
 
   const deliver = (raw: any, fallbackId?: string) => {
     if (!raw || typeof raw !== 'object') return;
     const id = String(raw.signalId || fallbackId || '');
     if (!id || seenIds.has(id)) return;
-    const now = Date.now();
-    const createdAt = typeof raw.createdAt === 'number' ? raw.createdAt : 0;
+    const now = getServerNowMs();
+    const createdAt = typeof raw.createdAt === 'number' ? raw.createdAt : (typeof raw.createdAtMs === 'number' ? raw.createdAtMs : 0);
     if (typeof raw.expiresAt === 'number' && raw.expiresAt < now) {
       deleteFirestoreCallSignal(userId, id);
       return;
@@ -7045,6 +7103,20 @@ export function subscribeToFirestoreCallSignals(
     }
     onSignal({ ...raw, signalId: id });
   };
+
+  let unsubRtdb: (() => void) | null = null;
+  if (rtdb) {
+    try {
+      const rtdbRef = ref(rtdb, `call_signals/${userId}`);
+      unsubRtdb = onValue(rtdbRef, (snap) => {
+        const val = snap.val();
+        if (!val || typeof val !== 'object') return;
+        Object.entries(val).forEach(([key, data]) => {
+          deliver(data, key);
+        });
+      });
+    } catch {}
+  }
 
   let unsubFirestore: (() => void) | null = null;
   if (db) {
@@ -7066,23 +7138,9 @@ export function subscribeToFirestoreCallSignals(
     } catch {}
   }
 
-  let unsubRtdb: (() => void) | null = null;
-  if (rtdb) {
-    try {
-      const rtdbRef = ref(rtdb, `call_signals/${userId}`);
-      unsubRtdb = onValue(rtdbRef, (snap) => {
-        const val = snap.val();
-        if (!val || typeof val !== 'object') return;
-        Object.entries(val).forEach(([key, data]) => {
-          deliver(data, key);
-        });
-      });
-    } catch {}
-  }
-
   return () => {
-    if (unsubFirestore) unsubFirestore();
     if (unsubRtdb) unsubRtdb();
+    if (unsubFirestore) unsubFirestore();
   };
 }
 

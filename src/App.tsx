@@ -56,6 +56,7 @@ import {
   sendDirectMessage,
   subscribeToRoomPresence, 
   subscribeToGlobalPresence,
+  syncSelfPresenceProfile,
   subscribeToFriendRequests,
   subscribeToUserProfile,
   syncUserProfileToFirebase,
@@ -110,7 +111,7 @@ function isUserBannedNow(u?: Partial<User> | null): boolean {
   return Boolean(u?.isBanned || (typeof u?.bannedUntil === 'number' && u.bannedUntil > Date.now()));
 }
 
-function areUserListsEqual(a: User[], b: User[]): boolean {
+function areUserListsEqual(a: User[], b: User[], selfId?: string): boolean {
   if (a === b) return true;
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i++) {
@@ -127,7 +128,8 @@ function areUserListsEqual(a: User[], b: User[]): boolean {
       (u1.bannedUntil || 0) !== (u2.bannedUntil || 0) ||
       Boolean(u1.isOnline) !== Boolean(u2.isOnline) ||
       Boolean(u1.isBanned) !== Boolean(u2.isBanned) ||
-      Boolean(u1.isMuted) !== Boolean(u2.isMuted)
+      Boolean(u1.isMuted) !== Boolean(u2.isMuted) ||
+      (u1.id !== selfId && Math.abs((Number(u1.lastSeen) || 0) - (Number(u2.lastSeen) || 0)) >= 15000)
     ) {
       return false;
     }
@@ -656,8 +658,11 @@ export default function App() {
   useEffect(() => {
     if (hasCompletedMandatoryProfile(currentUser)) {
       localStorage.setItem('arab_chat_user', JSON.stringify(currentUser));
+      if (isProfileReady) {
+        syncSelfPresenceProfile(currentUser);
+      }
     }
-  }, [currentUser]);
+  }, [currentUser, isProfileReady]);
 
   // Subscribe to real-time User Profile updates from Firestore (silent equality check + instant ban enforcement)
   useEffect(() => {
@@ -806,7 +811,7 @@ export default function App() {
           }
         });
         const nextList = Array.from(map.values());
-        return areUserListsEqual(prev, nextList) ? prev : nextList;
+        return areUserListsEqual(prev, nextList, self.id) ? prev : nextList;
       });
     };
 
@@ -921,6 +926,8 @@ export default function App() {
     // Listen to incoming WebRTC calls targeting current user (WebSocket + Firestore/RTDB relay)
     const processedCallSignals = new Set<string>();
     const processedOfferCallIds = new Set<string>();
+    const endedCallIds = new Set<string>();
+    const earlyIceByCallId = new Map<string, any[]>();
     const handleIncomingCallSignal = (signal: any) => {
       const me = currentUserRef.current;
       if (!signal) return;
@@ -934,18 +941,30 @@ export default function App() {
         }
       }
 
-      if (signal.type === 'call_end' || signal.type === 'call_reject') {
-        setIncomingCall((prev) => {
-          if (!prev) return null;
-          const sameCall = !signal.callId || !prev.signal?.callId || signal.callId === prev.signal.callId;
-          const samePeer = !signal.fromUserId || prev.peer.id === signal.fromUserId;
-          if (sameCall && samePeer) {
-            if (signal.signalId) {
-              deleteFirestoreCallSignal(me.id, signal.signalId);
-            }
-            return null;
+      if (signal.type === 'ice_candidate' && signal.candidate && signal.callId) {
+        const cId = String(signal.callId);
+        if (!processedOfferCallIds.has(cId)) {
+          const buf = earlyIceByCallId.get(cId) || [];
+          if (buf.length < 40) {
+            buf.push(signal.candidate);
+            earlyIceByCallId.set(cId, buf);
           }
-          return prev;
+        }
+        return;
+      }
+
+      if (signal.type === 'call_end' || signal.type === 'call_reject') {
+        if (signal.callId) {
+          endedCallIds.add(String(signal.callId));
+          earlyIceByCallId.delete(String(signal.callId));
+        }
+        setIncomingCall((prev) => {
+          // If CallModal is already mounted for this call, let CallModal handle call_end/call_reject cleanly
+          if (prev) return prev;
+          if (signal.signalId) {
+            deleteFirestoreCallSignal(me.id, signal.signalId);
+          }
+          return null;
         });
         return;
       }
@@ -953,23 +972,27 @@ export default function App() {
       if (signal.type !== 'call_offer') return;
       if (!signal.fromUserId || signal.fromUserId === me.id) return;
 
-      // Consume the offer signal from Firestore so refreshes don't replay stale calls
+      // Consume the offer signal from Firestore/RTDB so refreshes don't replay stale calls
       if (signal.signalId) {
         deleteFirestoreCallSignal(me.id, signal.signalId);
       }
 
-      // Ignore stale call offers older than 40s
-      if (typeof signal.createdAtMs === 'number' && Date.now() - signal.createdAtMs > 40000) {
+      // Ignore stale or already-ended call offers
+      const offerTs = Number(signal.createdAt ?? signal.createdAtMs ?? 0);
+      if (offerTs > 0 && getServerNowMs() - offerTs > 45000) {
         return;
       }
-
       const incomingCallId = signal.callId ? String(signal.callId) : `${signal.fromUserId}_${signal.signalId || Date.now()}`;
+      if (endedCallIds.has(incomingCallId)) return;
       if (processedOfferCallIds.has(incomingCallId)) return;
       processedOfferCallIds.add(incomingCallId);
       if (processedOfferCallIds.size > 100) {
         const oldestOffer = processedOfferCallIds.values().next().value;
         if (oldestOffer) processedOfferCallIds.delete(oldestOffer);
       }
+
+      const bufferedEarlyIce = earlyIceByCallId.get(incomingCallId) || [];
+      earlyIceByCallId.delete(incomingCallId);
 
       setIncomingCall((prev) => {
         if (prev && prev.peer.id !== signal.fromUserId) {
@@ -1013,7 +1036,7 @@ export default function App() {
             badges: [],
           },
           callType: signal.callType === 'video' ? 'video' : 'audio',
-          signal,
+          signal: bufferedEarlyIce.length > 0 ? { ...signal, _earlyIce: bufferedEarlyIce } : signal,
         };
       });
     };
