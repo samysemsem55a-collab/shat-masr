@@ -682,6 +682,8 @@ function mergeTwoMessages(prev: Message | undefined, next: Message): Message {
   };
 }
 
+const roomOlderCursorMap = new Map<string, QueryDocumentSnapshot<DocumentData> | null>();
+
 function mapFirestoreRoomMessage(
   roomId: string,
   docSnap: QueryDocumentSnapshot<DocumentData>
@@ -734,7 +736,7 @@ function mapFirestoreRoomMessage(
 
 export function subscribeToRoomMessages(
   roomId: string,
-  onMessages: (messages: Message[], meta?: { fromFirestore: boolean; fromCache: boolean }) => void,
+  onMessages: (messages: Message[]) => void,
   initialLimit: number = 30
 ): () => void {
   const localKey = `messages_room_${roomId}`;
@@ -742,8 +744,10 @@ export function subscribeToRoomMessages(
   const localMsgsMap = new Map<string, Message>();
   const tempIdToRealId = new Map<string, string>();
   const seenFsIds = new Set<string>();
+  roomOlderCursorMap.delete(roomId);
+  let hasInitialCursor = false;
 
-  const emitMerged = (meta: { fromFirestore: boolean; fromCache: boolean } = { fromFirestore: false, fromCache: false }) => {
+  const emitMerged = () => {
     const combined = new Map<string, Message>();
     localMsgsMap.forEach((m, id) => {
       if (!m || !id) return;
@@ -765,7 +769,7 @@ export function subscribeToRoomMessages(
     try {
       localStorage.setItem(localKey, JSON.stringify(list.slice(-60)));
     } catch {}
-    onMessages(list, meta);
+    onMessages(list);
   };
 
   try {
@@ -793,6 +797,10 @@ export function subscribeToRoomMessages(
 
           // Reverse descending server docs so chronological oldest -> newest order
           const orderedDocs = [...snapshot.docs].reverse();
+          if (!hasInitialCursor && snapshot.docs.length > 0) {
+            roomOlderCursorMap.set(roomId, snapshot.docs[snapshot.docs.length - 1]);
+            hasInitialCursor = true;
+          }
 
           orderedDocs.forEach((docSnap) => {
             const msgItem = mapFirestoreRoomMessage(roomId, docSnap);
@@ -814,7 +822,7 @@ export function subscribeToRoomMessages(
             });
           }
 
-          emitMerged({ fromFirestore: true, fromCache: snapshot.metadata.fromCache });
+          emitMerged();
         },
         (err) => {
           handleFirestoreError(err, OperationType.LIST, `rooms/${roomId}/messages`);
@@ -858,6 +866,39 @@ export function subscribeToRoomMessages(
     if (firestoreUnsub) firestoreUnsub();
     liveChatBus?.removeEventListener('message', handleBroadcast);
   };
+}
+
+// Fetch older room messages using QueryDocumentSnapshot startAfter cursor
+export async function fetchOlderRoomMessages(
+  roomId: string,
+  _beforeTimestamp?: number,
+  pageSize: number = 30
+): Promise<Message[]> {
+  if (!roomId || !db) return [];
+  const cursor = roomOlderCursorMap.get(roomId);
+  if (!cursor) return [];
+
+  try {
+    const messagesRef = collection(db, 'rooms', roomId, 'messages');
+    const q = query(
+      messagesRef,
+      orderBy('createdAt', 'desc'),
+      startAfter(cursor),
+      limit(pageSize)
+    );
+    const snap = await getDocs(q);
+    if (snap.empty) {
+      roomOlderCursorMap.set(roomId, null);
+      return [];
+    }
+    roomOlderCursorMap.set(roomId, snap.docs[snap.docs.length - 1]);
+    return [...snap.docs]
+      .reverse()
+      .map((docSnap) => mapFirestoreRoomMessage(roomId, docSnap));
+  } catch (err) {
+    handleFirestoreError(err, OperationType.LIST, `rooms/${roomId}/messages`);
+    return [];
+  }
 }
 
 // Send Real Message to Firestore (`rooms/{roomId}/messages`) with serverTimestamp & tempId
