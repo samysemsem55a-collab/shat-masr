@@ -4909,10 +4909,11 @@ export async function markStoryViewed(storyId: string, viewer: User): Promise<vo
 export async function toggleStoryLike(
   storyId: string,
   user: User,
-  storyOwnerId?: string
+  storyOwnerId?: string,
+  wasLikedHint?: boolean
 ): Promise<void> {
   if (!storyId || !user?.id) return;
-  let currentlyLiked = false;
+  let currentlyLiked = Boolean(wasLikedHint);
   let resolvedOwnerId = storyOwnerId || '';
 
   try {
@@ -7747,7 +7748,7 @@ export async function markUserNotificationsRead(
   if (!firestore) return;
   await Promise.allSettled(
     notificationIds.slice(0, 30).map((nid) =>
-      updateDoc(doc(firestore, 'users', userId, 'notifications', nid), { isRead: true }).catch(() => {})
+      setDoc(doc(firestore, 'users', userId, 'notifications', nid), { isRead: true }, { merge: true }).catch(() => {})
     )
   );
 }

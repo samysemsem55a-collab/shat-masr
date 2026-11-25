@@ -290,461 +290,484 @@ export const ChatWallpapersModal: React.FC<ChatWallpapersModalProps> = ({
           </div>
         ) : modalMode === 'room' && canEditRoomBg ? (
           <>
-            {/* Interactive Live Preview Panel for Room Background */}
-            <div className="p-3 sm:p-3.5 bg-slate-50 border-b border-slate-200 shrink-0 space-y-2.5">
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-1.5 min-w-0">
-                  <Eye className="w-4 h-4 text-emerald-600 shrink-0" />
-                  <span className="text-xs font-black text-slate-800 truncate">
-                    معاينة مباشرة للغرفة: {previewedRoomTheme.name}
-                  </span>
-                </div>
-                {isPreviewedRoomActive ? (
-                  <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 border border-emerald-200 text-[10px] font-black shrink-0">
-                    المطبقة حالياً ✓
-                  </span>
-                ) : (
-                  <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 border border-amber-200 text-[10px] font-black shrink-0">
-                    قيد المعاينة
-                  </span>
-                )}
-              </div>
-
-              <div
-                style={previewedRoomStyle}
-                className="rounded-2xl border border-slate-200/90 shadow-inner overflow-hidden"
-              >
-                {/* Mini Room Header Preview */}
-                <div className={`px-3 py-1.5 flex items-center justify-between border-b ${
-                  previewedRoomTheme.isDark
-                    ? 'bg-slate-900/55 border-white/10 text-white'
-                    : 'bg-white/80 border-slate-200/80 text-slate-800'
-                } backdrop-blur-xs`}>
-                  <span className="text-[11px] font-black truncate">{roomTitle || 'الغرفة العامة'}</span>
-                  <span className="text-[10px] font-bold opacity-80">{previewedRoomTheme.previewLabel}</span>
+            <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-3 sm:p-4 space-y-3">
+              {/* Interactive Live Preview Panel for Room Background */}
+              <div className="p-3 bg-slate-50 border border-slate-200 rounded-2xl space-y-2.5">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <Eye className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <span className="text-xs font-black text-slate-800 truncate">
+                      معاينة مباشرة للغرفة: {previewedRoomTheme.name}
+                    </span>
+                  </div>
+                  {isPreviewedRoomActive ? (
+                    <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 border border-emerald-200 text-[10px] font-black shrink-0">
+                      المطبقة حالياً ✓
+                    </span>
+                  ) : (
+                    <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 border border-amber-200 text-[10px] font-black shrink-0">
+                      قيد المعاينة
+                    </span>
+                  )}
                 </div>
 
-                {/* Mini Room Chat Messages Preview */}
-                <div className="p-3 space-y-2">
-                  <div className="flex justify-start">
-                    <div className={`px-3 py-1.5 rounded-2xl rounded-tr-sm text-[11px] font-bold shadow-xs max-w-[82%] ${
-                      previewedRoomTheme.isDark
-                        ? 'bg-slate-900/80 text-white border border-white/15'
-                        : 'bg-white/95 text-slate-800 border border-slate-200/90'
-                    }`}>
-                      أهلاً بكل الحبايب في الغرفة، منورين الدنيا ✨☕
+                <div
+                  data-preserve-light={!previewedRoomTheme.isDark ? 'true' : undefined}
+                  style={previewedRoomStyle}
+                  className="rounded-2xl border border-slate-200/90 shadow-inner overflow-hidden"
+                >
+                  {/* Mini Room Header Preview */}
+                  <div className={`px-3 py-1.5 flex items-center justify-between border-b ${
+                    previewedRoomTheme.isDark
+                      ? 'bg-slate-900/65 border-white/15 text-white'
+                      : 'bg-white/85 border-slate-200/80 text-slate-800'
+                  } backdrop-blur-xs`}>
+                    <span className="text-[11px] font-black truncate">{roomTitle || 'الغرفة العامة'}</span>
+                    <span className="text-[10px] font-bold opacity-85 shrink-0">{previewedRoomTheme.previewLabel}</span>
+                  </div>
+
+                  {/* Mini Room Chat Messages Preview */}
+                  <div className="p-3 space-y-2">
+                    <div className="flex justify-start">
+                      <div className={`px-3 py-1.5 rounded-2xl rounded-tr-sm text-[11px] font-bold shadow-xs max-w-[85%] ${
+                        previewedRoomTheme.isDark
+                          ? 'bg-slate-900/85 text-white border border-white/15'
+                          : 'bg-white/95 text-slate-800 border border-slate-200/90'
+                      }`}>
+                        أهلاً بكل الحبايب في الغرفة، منورين الدنيا ✨☕
+                      </div>
+                    </div>
+                    <div className="flex justify-end">
+                      <div className="px-3 py-1.5 rounded-2xl rounded-tl-sm bg-emerald-600/95 text-white text-[11px] font-bold shadow-xs max-w-[82%]">
+                        ما شاء الله خلفية مريحة جداً وواضحة 🌟
+                      </div>
                     </div>
                   </div>
-                  <div className="flex justify-end">
-                    <div className="px-3 py-1.5 rounded-2xl rounded-tl-sm bg-emerald-600/95 text-white text-[11px] font-bold shadow-xs max-w-[78%]">
-                      ما شاء الله خلفية مريحة جداً وواضحة 🌟
-                    </div>
-                  </div>
                 </div>
               </div>
 
-              <div className="flex items-center justify-between gap-2 pt-0.5">
-                {selectedRoomThemeId !== 'default' ? (
+              {/* Room Filter Bar */}
+              <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none pb-0.5">
+                {[
+                  { id: 'all', label: `الكل (${ROOM_BACKGROUND_THEMES.length})` },
+                  { id: 'nature', label: 'مناظر طبيعية 🌿' },
+                  { id: 'gradient', label: 'تدرجات لونية ✨' },
+                  { id: 'solid', label: 'ألوان هادئة 🎨' }
+                ].map((tab) => (
                   <button
+                    key={tab.id}
                     type="button"
-                    onClick={() => setSelectedRoomThemeId('default')}
-                    className="px-2.5 py-1.5 rounded-xl bg-white hover:bg-slate-100 border border-slate-200 text-slate-600 text-[11px] font-bold flex items-center gap-1 transition cursor-pointer shrink-0"
-                  >
-                    <RotateCcw className="w-3 h-3" />
-                    <span>الافتراضية</span>
-                  </button>
-                ) : (
-                  <span className="text-[11px] text-slate-500 font-bold">
-                    اختر أي بطاقة بالأسفل لمعاينتها أولاً
-                  </span>
-                )}
-
-                <button
-                  type="button"
-                  onClick={() => handleApplyRoomBackground(selectedRoomThemeId)}
-                  className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black shadow-sm transition active:scale-95 flex items-center gap-1.5 cursor-pointer shrink-0"
-                >
-                  <Check className="w-4 h-4" />
-                  <span>{isPreviewedRoomActive ? 'حفظ وتأكيد الخلفية' : 'تطبيق وحفظ خلفية الغرفة للجميع'}</span>
-                </button>
-              </div>
-            </div>
-
-            {/* Room Filter Bar */}
-            <div className="px-3.5 py-2 bg-white border-b border-slate-200 flex items-center gap-1.5 overflow-x-auto scrollbar-none shrink-0">
-              {[
-                { id: 'all', label: `الكل (${ROOM_BACKGROUND_THEMES.length})` },
-                { id: 'nature', label: 'مناظر طبيعية 🌿' },
-                { id: 'gradient', label: 'تدرجات لونية ✨' },
-                { id: 'solid', label: 'ألوان هادئة 🎨' }
-              ].map((tab) => (
-                <button
-                  key={tab.id}
-                  type="button"
-                  onClick={() => setRoomFilter(tab.id as 'all' | 'nature' | 'gradient' | 'solid')}
-                  className={`px-3 py-1.5 rounded-xl text-[11px] font-black whitespace-nowrap shrink-0 transition-all cursor-pointer ${
-                    roomFilter === tab.id
-                      ? 'bg-emerald-600 text-white shadow-xs'
-                      : 'bg-slate-50 border border-slate-200 text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  {tab.label}
-                </button>
-              ))}
-            </div>
-
-            {/* Room Themes Cards Grid (Click = Live Preview) */}
-            <div className="p-3.5 overflow-y-auto flex-1 min-h-0 grid grid-cols-2 sm:grid-cols-3 gap-2.5">
-              {filteredRoomThemes.map((theme) => {
-                const isActiveRoom = (activeRoomBackground || 'default') === theme.id;
-                const isPreviewSelected = selectedRoomThemeId === theme.id;
-                const cardStyle: React.CSSProperties =
-                  theme.id === 'default' ? DEFAULT_ROOM_PREVIEW_STYLE : theme.style;
-
-                return (
-                  <button
-                    key={theme.id}
-                    type="button"
-                    onClick={() => setSelectedRoomThemeId(theme.id)}
-                    className={`group rounded-2xl border-2 overflow-hidden text-right transition-all flex flex-col bg-white cursor-pointer ${
-                      isPreviewSelected
-                        ? 'border-emerald-600 ring-2 ring-emerald-200 shadow-md'
-                        : isActiveRoom
-                        ? 'border-emerald-400 shadow-sm'
-                        : 'border-slate-200 hover:border-emerald-300 shadow-2xs'
+                    onClick={() => setRoomFilter(tab.id as 'all' | 'nature' | 'gradient' | 'solid')}
+                    className={`px-3 py-1.5 rounded-xl text-[11px] font-black whitespace-nowrap shrink-0 transition-all cursor-pointer ${
+                      roomFilter === tab.id
+                        ? 'bg-emerald-600 text-white shadow-xs'
+                        : 'bg-slate-50 border border-slate-200 text-slate-600 hover:text-slate-900'
                     }`}
                   >
-                    <div
-                      style={cardStyle}
-                      className="h-20 w-full relative p-2 flex flex-col justify-between"
-                    >
-                      <div className="flex items-center justify-between gap-1">
-                        <span className={`text-[9.5px] font-black px-1.5 py-0.5 rounded-md truncate ${
-                          theme.isDark
-                            ? 'bg-white/15 text-white border border-white/20'
-                            : 'bg-white/90 text-slate-700 border border-slate-200/80'
-                        }`}>
-                          {theme.previewLabel}
-                        </span>
-                        {isActiveRoom ? (
-                          <span className="w-5 h-5 rounded-full bg-emerald-600 text-white flex items-center justify-center shadow shrink-0" title="المطبقة حالياً">
-                            <Check className="w-3 h-3" />
-                          </span>
-                        ) : isPreviewSelected ? (
-                          <span className="w-5 h-5 rounded-full bg-sky-600 text-white flex items-center justify-center shadow shrink-0" title="قيد المعاينة">
-                            <Eye className="w-3 h-3" />
-                          </span>
-                        ) : null}
-                      </div>
-                      <span className={`text-[10px] font-bold truncate ${
-                        theme.isDark ? 'text-white/95' : 'text-slate-900'
-                      }`}>
-                        مرحباً بكم ✨
-                      </span>
-                    </div>
-                    <div className="px-2.5 py-2 bg-white border-t border-slate-100 w-full flex items-center justify-between gap-1">
-                      <p className="text-[11px] font-black text-slate-900 truncate">
-                        {theme.name}
-                      </p>
-                      {isPreviewSelected && (
-                        <span className="text-[9px] font-black text-emerald-700 shrink-0">معاينة</span>
-                      )}
-                    </div>
+                    {tab.label}
                   </button>
-                );
-              })}
+                ))}
+              </div>
+
+              {/* Room Themes Cards Grid (Click = Live Preview) */}
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 p-0.5 pb-1">
+                {filteredRoomThemes.map((theme) => {
+                  const isActiveRoom = (activeRoomBackground || 'default') === theme.id;
+                  const isPreviewSelected = selectedRoomThemeId === theme.id;
+                  const cardStyle: React.CSSProperties =
+                    theme.id === 'default' ? DEFAULT_ROOM_PREVIEW_STYLE : theme.style;
+
+                  return (
+                    <button
+                      key={theme.id}
+                      type="button"
+                      onClick={() => setSelectedRoomThemeId(theme.id)}
+                      className={`group rounded-2xl border-2 overflow-hidden text-right transition-all flex flex-col bg-white cursor-pointer ${
+                        isPreviewSelected
+                          ? 'border-emerald-600 ring-2 ring-emerald-200 shadow-md'
+                          : isActiveRoom
+                          ? 'border-emerald-400 shadow-sm'
+                          : 'border-slate-200 hover:border-emerald-300 shadow-2xs'
+                      }`}
+                    >
+                      <div
+                        data-preserve-light={!theme.isDark ? 'true' : undefined}
+                        style={cardStyle}
+                        className="h-24 w-full relative p-2.5 flex flex-col justify-between overflow-hidden"
+                      >
+                        <div className="flex items-center justify-between gap-1 min-w-0">
+                          <span className={`text-[9.5px] font-black px-1.5 py-0.5 rounded-md truncate max-w-[75%] ${
+                            theme.isDark
+                              ? 'bg-slate-900/75 text-white border border-white/20'
+                              : 'bg-white/92 text-slate-800 border border-slate-200/90 shadow-2xs'
+                          }`}>
+                            {theme.previewLabel}
+                          </span>
+                          {isActiveRoom ? (
+                            <span className="w-5 h-5 rounded-full bg-emerald-600 text-white flex items-center justify-center shadow shrink-0" title="المطبقة حالياً">
+                              <Check className="w-3 h-3" />
+                            </span>
+                          ) : isPreviewSelected ? (
+                            <span className="w-5 h-5 rounded-full bg-sky-600 text-white flex items-center justify-center shadow shrink-0" title="قيد المعاينة">
+                              <Eye className="w-3 h-3" />
+                            </span>
+                          ) : null}
+                        </div>
+                        <span className={`text-[10px] font-black px-2 py-0.5 rounded-lg max-w-full truncate self-start ${
+                          theme.isDark
+                            ? 'bg-slate-900/70 text-white border border-white/15'
+                            : 'bg-white/90 text-slate-900 border border-slate-200/80'
+                        }`}>
+                          مرحباً بكم ✨
+                        </span>
+                      </div>
+                      <div className="px-2.5 py-2 bg-white border-t border-slate-100 w-full flex items-center justify-between gap-1">
+                        <p className="text-[11px] font-black text-slate-900 truncate">
+                          {theme.name}
+                        </p>
+                        {isPreviewSelected && (
+                          <span className="text-[9px] font-black text-emerald-700 shrink-0">معاينة</span>
+                        )}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Pinned Bottom Apply Bar for Room Background */}
+            <div className="px-3.5 py-2.5 bg-white border-t border-slate-200 flex items-center justify-between gap-2 shrink-0">
+              {selectedRoomThemeId !== 'default' ? (
+                <button
+                  type="button"
+                  onClick={() => setSelectedRoomThemeId('default')}
+                  className="px-2.5 py-1.5 rounded-xl bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-600 text-[11px] font-bold flex items-center gap-1 transition cursor-pointer shrink-0"
+                >
+                  <RotateCcw className="w-3 h-3" />
+                  <span>الافتراضية</span>
+                </button>
+              ) : (
+                <span className="text-[11px] text-slate-500 font-bold truncate">
+                  اضغط على أي خلفية لمعاينتها ثم تطبيقها
+                </span>
+              )}
+
+              <button
+                type="button"
+                onClick={() => handleApplyRoomBackground(selectedRoomThemeId)}
+                className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black shadow-sm transition active:scale-95 flex items-center gap-1.5 cursor-pointer shrink-0"
+              >
+                <Check className="w-4 h-4" />
+                <span>{isPreviewedRoomActive ? 'حفظ وتأكيد الخلفية' : 'تطبيق وحفظ خلفية الغرفة للجميع'}</span>
+              </button>
             </div>
           </>
         ) : (
           <>
-            {/* Interactive Live Preview Panel for Personal & Private Chat Background */}
-            <div className="p-3 sm:p-3.5 bg-slate-50 border-b border-slate-200 shrink-0 space-y-2.5">
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-1.5 min-w-0">
-                  <Eye className="w-4 h-4 text-indigo-600 shrink-0" />
-                  <span className="text-xs font-black text-slate-800 truncate">
-                    معاينة مباشرة للشات: {previewedPersonalWallpaper.name}
-                  </span>
-                </div>
-                {isPreviewedPersonalActive ? (
-                  <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 border border-emerald-200 text-[10px] font-black shrink-0">
-                    النشطة حالياً ✓
-                  </span>
-                ) : (
-                  <span className="px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 border border-indigo-200 text-[10px] font-black shrink-0">
-                    قيد المعاينة
-                  </span>
-                )}
-              </div>
-
-              <div
-                style={previewedPersonalWallpaper.style}
-                className="rounded-2xl border border-slate-200/90 shadow-inner overflow-hidden"
-              >
-                {/* Mini Chat Header Preview */}
-                <div className={`px-3 py-1.5 flex items-center justify-between border-b ${
-                  isPreviewedPersonalDark
-                    ? 'bg-slate-900/60 border-white/10 text-white'
-                    : 'bg-white/85 border-slate-200/80 text-slate-800'
-                } backdrop-blur-xs`}>
+            <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-3 sm:p-4 space-y-3">
+              {/* Interactive Live Preview Panel for Personal & Private Chat Background */}
+              <div className="p-3 bg-slate-50 border border-slate-200 rounded-2xl space-y-2.5">
+                <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-1.5 min-w-0">
-                    <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
-                    <span className="text-[11px] font-black truncate">محادثة خاصة • متصل الآن</span>
+                    <Eye className="w-4 h-4 text-indigo-600 shrink-0" />
+                    <span className="text-xs font-black text-slate-800 truncate">
+                      معاينة مباشرة للشات: {previewedPersonalWallpaper.name}
+                    </span>
                   </div>
-                  <span className="text-[10px] font-bold opacity-85 shrink-0">
-                    {previewedPersonalWallpaper.thumbnail} {previewedPersonalWallpaper.tag}
-                  </span>
-                </div>
-
-                {/* Mini Chat Stream Preview */}
-                <div className="p-3 space-y-2">
-                  <div className="flex justify-start">
-                    <div className="bg-white/95 backdrop-blur-xs border border-slate-200 text-[11px] font-bold text-slate-800 px-3 py-1.5 rounded-2xl rounded-tr-sm max-w-[78%] shadow-xs">
-                      أهلاً بكم في شات مصر والعرب ☕✨
-                    </div>
-                  </div>
-                  <div className="flex justify-end">
-                    <div className="bg-indigo-600/95 backdrop-blur-xs text-[11px] font-bold text-white px-3 py-1.5 rounded-2xl rounded-tl-sm max-w-[75%] shadow-xs">
-                      خلفية واضحة وأنيقة جداً 🌟
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Apply / Purchase Bar */}
-              <div className="flex items-center justify-between gap-2 flex-wrap">
-                <div className="flex items-center gap-2 min-w-0">
-                  {previewedPersonalWallpaper.priceCoins === 0 ? (
-                    <span className="text-[11px] font-black text-emerald-600">مجاناً 🎁</span>
-                  ) : isPreviewedPersonalUnlocked ? (
-                    <span className="text-[11px] font-black text-emerald-600 flex items-center gap-1">
-                      <CheckCircle2 className="w-3.5 h-3.5" /> متاح لديك
+                  {isPreviewedPersonalActive ? (
+                    <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 border border-emerald-200 text-[10px] font-black shrink-0">
+                      النشطة حالياً ✓
                     </span>
                   ) : (
-                    <span className="text-xs font-black text-amber-600 flex items-center gap-1">
-                      🪙 {previewedPersonalWallpaper.priceCoins} كوينز
+                    <span className="px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 border border-indigo-200 text-[10px] font-black shrink-0">
+                      قيد المعاينة
                     </span>
-                  )}
-                  {selectedPersonalId !== DEFAULT_CHAT_WALLPAPER_ID && (
-                    <button
-                      type="button"
-                      onClick={() => setSelectedPersonalId(DEFAULT_CHAT_WALLPAPER_ID)}
-                      className="px-2 py-1 rounded-lg bg-white hover:bg-slate-100 border border-slate-200 text-slate-600 text-[10px] font-bold flex items-center gap-1 cursor-pointer"
-                    >
-                      <RotateCcw className="w-3 h-3" />
-                      <span>الافتراضية</span>
-                    </button>
                   )}
                 </div>
 
-                {isPreviewedPersonalUnlocked ? (
+                <div
+                  data-preserve-light={!isPreviewedPersonalDark ? 'true' : undefined}
+                  style={previewedPersonalWallpaper.style}
+                  className="rounded-2xl border border-slate-200/90 shadow-inner overflow-hidden"
+                >
+                  {/* Mini Chat Header Preview */}
+                  <div className={`px-3 py-1.5 flex items-center justify-between border-b ${
+                    isPreviewedPersonalDark
+                      ? 'bg-slate-900/65 border-white/15 text-white'
+                      : 'bg-white/90 border-slate-200/80 text-slate-800'
+                  } backdrop-blur-xs`}>
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
+                      <span className="text-[11px] font-black truncate">محادثة خاصة • متصل الآن</span>
+                    </div>
+                    <span className="text-[10px] font-bold opacity-85 shrink-0">
+                      {previewedPersonalWallpaper.thumbnail} {previewedPersonalWallpaper.tag}
+                    </span>
+                  </div>
+
+                  {/* Mini Chat Stream Preview */}
+                  <div className="p-3 space-y-2">
+                    <div className="flex justify-start">
+                      <div className="bg-white/95 backdrop-blur-xs border border-slate-200 text-[11px] font-bold text-slate-800 px-3 py-1.5 rounded-2xl rounded-tr-sm max-w-[82%] shadow-xs">
+                        أهلاً بكم في شات مصر والعرب ☕✨
+                      </div>
+                    </div>
+                    <div className="flex justify-end">
+                      <div className="bg-indigo-600/95 backdrop-blur-xs text-[11px] font-bold text-white px-3 py-1.5 rounded-2xl rounded-tl-sm max-w-[78%] shadow-xs">
+                        خلفية واضحة وأنيقة جداً 🌟
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* User Balance & Category Filter Bar */}
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                {/* Filter Segmented Control */}
+                <div className="flex items-center gap-1 text-[11px] font-bold overflow-x-auto no-scrollbar py-0.5">
                   <button
                     type="button"
-                    onClick={() => handleApplyWallpaper(previewedPersonalWallpaper)}
-                    className={`px-4 py-2 rounded-xl text-xs font-black shadow-sm transition active:scale-95 flex items-center gap-1.5 cursor-pointer ${
-                      isPreviewedPersonalActive
-                        ? 'bg-emerald-600 hover:bg-emerald-500 text-white'
-                        : 'bg-indigo-600 hover:bg-indigo-500 text-white'
+                    onClick={() => setFilter('all')}
+                    className={`px-3 py-1.5 rounded-xl transition shrink-0 cursor-pointer ${
+                      filter === 'all'
+                        ? 'bg-indigo-600 text-white shadow-sm'
+                        : 'bg-slate-50 border border-slate-200 text-slate-600 hover:text-slate-900'
                     }`}
                   >
-                    <Check className="w-4 h-4" />
-                    <span>{isPreviewedPersonalActive ? 'حفظ وتأكيد الخلفية الحالية' : 'تطبيق وحفظ الخلفية'}</span>
+                    الكل ({CHAT_WALLPAPERS.length})
                   </button>
-                ) : (
                   <button
                     type="button"
-                    onClick={() => handlePurchaseAndApply(previewedPersonalWallpaper)}
-                    disabled={purchasingId === previewedPersonalWallpaper.id}
-                    className="px-4 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-500 hover:from-amber-400 hover:to-yellow-400 text-slate-950 text-xs font-black shadow-sm transition active:scale-95 flex items-center gap-1.5 cursor-pointer disabled:opacity-60"
+                    onClick={() => setFilter('nature')}
+                    className={`px-3 py-1.5 rounded-xl transition shrink-0 cursor-pointer ${
+                      filter === 'nature'
+                        ? 'bg-emerald-600 text-white shadow-sm'
+                        : 'bg-slate-50 border border-slate-200 text-emerald-700 hover:text-emerald-800'
+                    }`}
                   >
-                    {purchasingId === previewedPersonalWallpaper.id ? (
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    ) : (
-                      <Coins className="w-3.5 h-3.5 fill-slate-950" />
-                    )}
-                    <span>
-                      {purchasingId === previewedPersonalWallpaper.id
-                        ? 'جاري الشراء...'
-                        : `شراء وتطبيق (${previewedPersonalWallpaper.priceCoins} كوينز)`}
-                    </span>
+                    مناظر طبيعية 🌿
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => setFilter('free')}
+                    className={`px-3 py-1.5 rounded-xl transition shrink-0 cursor-pointer ${
+                      filter === 'free'
+                        ? 'bg-indigo-600 text-white shadow-sm'
+                        : 'bg-slate-50 border border-slate-200 text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    المجانية 🎁
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setFilter('premium')}
+                    className={`px-3 py-1.5 rounded-xl transition shrink-0 cursor-pointer ${
+                      filter === 'premium'
+                        ? 'bg-amber-500 text-white shadow-sm'
+                        : 'bg-slate-50 border border-slate-200 text-amber-600 hover:text-amber-700'
+                    }`}
+                  >
+                    المميزة VIP 👑
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setFilter('unlocked')}
+                    className={`px-3 py-1.5 rounded-xl transition shrink-0 cursor-pointer ${
+                      filter === 'unlocked'
+                        ? 'bg-emerald-600 text-white shadow-sm'
+                        : 'bg-slate-50 border border-slate-200 text-emerald-600 hover:text-emerald-700'
+                    }`}
+                  >
+                    المتاحة لدي ✅
+                  </button>
+                </div>
+
+                {/* User Coins Badge (Hidden for Owner) */}
+                {!isOwner && (
+                  <div className="flex items-center gap-2 shrink-0">
+                    <div className="flex items-center gap-1 px-2.5 py-1 rounded-xl bg-amber-50 border border-amber-200 text-amber-700 text-xs font-black">
+                      <span>🪙</span>
+                      <span>{currentUser.coins.toLocaleString()} كوينز</span>
+                    </div>
+                    {onOpenWallet && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onClose();
+                          onOpenWallet();
+                        }}
+                        className="px-2.5 py-1 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-black shadow-sm transition active:scale-95 cursor-pointer"
+                      >
+                        شحن +
+                      </button>
+                    )}
+                  </div>
                 )}
               </div>
-            </div>
 
-            {/* User Balance & Category Filter Bar */}
-            <div className="px-3.5 py-2 bg-white border-b border-slate-200 flex items-center justify-between gap-2 flex-wrap shrink-0">
-              {/* Filter Segmented Control */}
-              <div className="flex items-center gap-1 text-[11px] font-bold overflow-x-auto no-scrollbar py-0.5">
-                <button
-                  onClick={() => setFilter('all')}
-                  className={`px-3 py-1.5 rounded-xl transition shrink-0 cursor-pointer ${
-                    filter === 'all'
-                      ? 'bg-indigo-600 text-white shadow-sm'
-                      : 'bg-slate-50 border border-slate-200 text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  الكل ({CHAT_WALLPAPERS.length})
-                </button>
-                <button
-                  onClick={() => setFilter('nature')}
-                  className={`px-3 py-1.5 rounded-xl transition shrink-0 cursor-pointer ${
-                    filter === 'nature'
-                      ? 'bg-emerald-600 text-white shadow-sm'
-                      : 'bg-slate-50 border border-slate-200 text-emerald-700 hover:text-emerald-800'
-                  }`}
-                >
-                  مناظر طبيعية 🌿
-                </button>
-                <button
-                  onClick={() => setFilter('free')}
-                  className={`px-3 py-1.5 rounded-xl transition shrink-0 cursor-pointer ${
-                    filter === 'free'
-                      ? 'bg-indigo-600 text-white shadow-sm'
-                      : 'bg-slate-50 border border-slate-200 text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  المجانية 🎁
-                </button>
-                <button
-                  onClick={() => setFilter('premium')}
-                  className={`px-3 py-1.5 rounded-xl transition shrink-0 cursor-pointer ${
-                    filter === 'premium'
-                      ? 'bg-amber-500 text-white shadow-sm'
-                      : 'bg-slate-50 border border-slate-200 text-amber-600 hover:text-amber-700'
-                  }`}
-                >
-                  المميزة VIP 👑
-                </button>
-                <button
-                  onClick={() => setFilter('unlocked')}
-                  className={`px-3 py-1.5 rounded-xl transition shrink-0 cursor-pointer ${
-                    filter === 'unlocked'
-                      ? 'bg-emerald-600 text-white shadow-sm'
-                      : 'bg-slate-50 border border-slate-200 text-emerald-600 hover:text-emerald-700'
-                  }`}
-                >
-                  المتاحة لدي ✅
-                </button>
-              </div>
-
-              {/* User Coins Badge (Hidden for Owner) */}
-              {!isOwner && (
-                <div className="flex items-center gap-2 shrink-0">
-                  <div className="flex items-center gap-1 px-2.5 py-1 rounded-xl bg-amber-50 border border-amber-200 text-amber-700 text-xs font-black">
-                    <span>🪙</span>
-                    <span>{currentUser.coins.toLocaleString()} كوينز</span>
-                  </div>
-                  {onOpenWallet && (
+              {/* Inline Notice */}
+              {notice && (
+                <div className="p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-xs font-bold flex items-center justify-between gap-2">
+                  <span>{notice}</span>
+                  {!isOwner && onOpenWallet && (
                     <button
+                      type="button"
                       onClick={() => {
+                        setNotice(null);
                         onClose();
                         onOpenWallet();
                       }}
-                      className="px-2.5 py-1 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-black shadow-sm transition active:scale-95 cursor-pointer"
+                      className="px-2.5 py-1 rounded-lg bg-amber-500 text-white text-[11px] font-black shrink-0 cursor-pointer"
                     >
-                      شحن +
+                      شحن رصيد
                     </button>
                   )}
                 </div>
               )}
+
+              {/* Wallpapers Grid View (Click card = Live Preview before applying) */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-0.5 pb-1">
+                {filteredWallpapers.map((wallpaper) => {
+                  const isUnlocked = isOwner || wallpaper.priceCoins === 0 || unlockedIds.has(wallpaper.id);
+                  const isActive = activeWallpaperId === wallpaper.id;
+                  const isPreviewSelected = selectedPersonalId === wallpaper.id;
+                  const isDarkCard = DARK_WALLPAPER_IDS.has(wallpaper.id);
+
+                  return (
+                    <div
+                      key={wallpaper.id}
+                      onClick={() => {
+                        setNotice(null);
+                        setSelectedPersonalId(wallpaper.id);
+                      }}
+                      className={`rounded-2xl border-2 transition-all overflow-hidden flex flex-col justify-between cursor-pointer bg-white ${
+                        isPreviewSelected
+                          ? 'border-indigo-600 ring-2 ring-indigo-300/60 shadow-md'
+                          : isActive
+                          ? 'border-emerald-500 shadow-sm'
+                          : 'border-slate-200 hover:border-indigo-300 shadow-2xs'
+                      }`}
+                    >
+                      {/* Visual Thumbnail Box */}
+                      <div
+                        data-preserve-light={!isDarkCard ? 'true' : undefined}
+                        style={wallpaper.style}
+                        className="h-24 w-full relative p-2.5 flex flex-col justify-between overflow-hidden"
+                      >
+                        <div className="flex items-center justify-between relative z-10 gap-1.5 min-w-0">
+                          <span className={`text-[10px] font-black px-2 py-0.5 rounded-lg backdrop-blur-md flex items-center gap-1 truncate max-w-[70%] ${
+                            isDarkCard
+                              ? 'bg-slate-900/75 text-amber-300 border border-white/20'
+                              : 'bg-slate-900/80 text-white border border-white/25 shadow-2xs'
+                          }`}>
+                            {wallpaper.thumbnail} {wallpaper.tag}
+                          </span>
+
+                          {isActive ? (
+                            <span className="text-[10px] font-black px-2 py-0.5 rounded-lg bg-emerald-500 text-white shadow flex items-center gap-1 shrink-0">
+                              <Check className="w-3 h-3" /> النشطة
+                            </span>
+                          ) : isPreviewSelected ? (
+                            <span className="text-[10px] font-black px-2 py-0.5 rounded-lg bg-indigo-600 text-white shadow flex items-center gap-1 shrink-0">
+                              <Eye className="w-3 h-3" /> معاينة
+                            </span>
+                          ) : null}
+                        </div>
+
+                        <div className="bg-white/95 backdrop-blur-xs border border-slate-200/90 text-[10px] font-bold text-slate-800 px-2.5 py-1 rounded-xl rounded-tl-none max-w-[78%] mr-auto shadow-xs pointer-events-none select-none truncate">
+                          أهلاً بكم في شات مصر ✨
+                        </div>
+                      </div>
+
+                      {/* Info & Selection Footer */}
+                      <div className="p-2.5 bg-white text-right flex items-center justify-between gap-2 border-t border-slate-100">
+                        <div className="min-w-0">
+                          <h4 className="text-xs font-black text-slate-900 truncate">
+                            {wallpaper.name}
+                          </h4>
+                          <p className="text-[10px] text-slate-500 truncate mt-0.5">
+                            {wallpaper.description}
+                          </p>
+                        </div>
+
+                        <div className="shrink-0 text-left">
+                          {wallpaper.priceCoins === 0 ? (
+                            <span className="text-[10px] font-black text-emerald-600 block">مجاناً 🎁</span>
+                          ) : isUnlocked ? (
+                            <span className="text-[10px] font-black text-emerald-600 flex items-center gap-0.5">
+                              <CheckCircle2 className="w-3 h-3" /> متاح
+                            </span>
+                          ) : (
+                            <span className="text-[10px] font-black text-amber-600 block">
+                              🪙 {wallpaper.priceCoins}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
 
-            {/* Inline Notice */}
-            {notice && (
-              <div className="mx-3 mt-2.5 p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-xs font-bold flex items-center justify-between gap-2 shrink-0">
-                <span>{notice}</span>
-                {!isOwner && onOpenWallet && (
+            {/* Pinned Apply / Purchase Footer */}
+            <div className="px-3.5 py-2.5 bg-white border-t border-slate-200 flex items-center justify-between gap-2 flex-wrap shrink-0">
+              <div className="flex items-center gap-2 min-w-0">
+                {previewedPersonalWallpaper.priceCoins === 0 ? (
+                  <span className="text-[11px] font-black text-emerald-600">مجاناً 🎁</span>
+                ) : isPreviewedPersonalUnlocked ? (
+                  <span className="text-[11px] font-black text-emerald-600 flex items-center gap-1">
+                    <CheckCircle2 className="w-3.5 h-3.5" /> متاح لديك
+                  </span>
+                ) : (
+                  <span className="text-xs font-black text-amber-600 flex items-center gap-1">
+                    🪙 {previewedPersonalWallpaper.priceCoins} كوينز
+                  </span>
+                )}
+                {selectedPersonalId !== DEFAULT_CHAT_WALLPAPER_ID && (
                   <button
-                    onClick={() => {
-                      setNotice(null);
-                      onClose();
-                      onOpenWallet();
-                    }}
-                    className="px-2.5 py-1 rounded-lg bg-amber-500 text-white text-[11px] font-black shrink-0 cursor-pointer"
+                    type="button"
+                    onClick={() => setSelectedPersonalId(DEFAULT_CHAT_WALLPAPER_ID)}
+                    className="px-2 py-1 rounded-lg bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-600 text-[10px] font-bold flex items-center gap-1 cursor-pointer"
                   >
-                    شحن رصيد
+                    <RotateCcw className="w-3 h-3" />
+                    <span>الافتراضية</span>
                   </button>
                 )}
               </div>
-            )}
 
-            {/* Wallpapers Grid View (Click card = Live Preview before applying) */}
-            <div className="p-3 sm:p-4 overflow-y-auto flex-1 min-h-0 grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {filteredWallpapers.map((wallpaper) => {
-                const isUnlocked = isOwner || wallpaper.priceCoins === 0 || unlockedIds.has(wallpaper.id);
-                const isActive = activeWallpaperId === wallpaper.id;
-                const isPreviewSelected = selectedPersonalId === wallpaper.id;
-
-                return (
-                  <div
-                    key={wallpaper.id}
-                    onClick={() => {
-                      setNotice(null);
-                      setSelectedPersonalId(wallpaper.id);
-                    }}
-                    className={`rounded-2xl border-2 transition-all overflow-hidden flex flex-col justify-between cursor-pointer ${
-                      isPreviewSelected
-                        ? 'border-indigo-600 bg-indigo-50/20 shadow-md ring-2 ring-indigo-300/40'
-                        : isActive
-                        ? 'border-emerald-500 bg-emerald-50/20 shadow-sm'
-                        : 'border-slate-200 bg-white hover:border-indigo-300 shadow-2xs'
-                    }`}
-                  >
-                    {/* Visual Thumbnail Box */}
-                    <div
-                      style={wallpaper.style}
-                      className="h-24 w-full relative p-2.5 flex flex-col justify-between overflow-hidden"
-                    >
-                      <div className="flex items-center justify-between relative z-10 gap-1">
-                        <span className="text-[10px] font-black px-2 py-0.5 rounded-lg bg-slate-900/70 backdrop-blur-md text-amber-300 border border-white/20 flex items-center gap-1 truncate">
-                          {wallpaper.thumbnail} {wallpaper.tag}
-                        </span>
-
-                        {isActive ? (
-                          <span className="text-[10px] font-black px-2 py-0.5 rounded-lg bg-emerald-500 text-white shadow flex items-center gap-1 shrink-0">
-                            <Check className="w-3 h-3" /> النشطة
-                          </span>
-                        ) : isPreviewSelected ? (
-                          <span className="text-[10px] font-black px-2 py-0.5 rounded-lg bg-indigo-600 text-white shadow flex items-center gap-1 shrink-0">
-                            <Eye className="w-3 h-3" /> معاينة
-                          </span>
-                        ) : null}
-                      </div>
-
-                      <div className="bg-white/90 backdrop-blur-xs border border-slate-200 text-[9.5px] font-bold text-slate-800 px-2.5 py-1 rounded-xl rounded-tl-none max-w-[75%] mr-auto shadow-xs pointer-events-none select-none truncate">
-                        أهلاً بكم في شات مصر ✨
-                      </div>
-                    </div>
-
-                    {/* Info & Selection Footer */}
-                    <div className="p-2.5 bg-white text-right flex items-center justify-between gap-2 border-t border-slate-100">
-                      <div className="min-w-0">
-                        <h4 className="text-xs font-black text-slate-900 truncate">
-                          {wallpaper.name}
-                        </h4>
-                        <p className="text-[10px] text-slate-500 truncate mt-0.5">
-                          {wallpaper.description}
-                        </p>
-                      </div>
-
-                      <div className="shrink-0 text-left">
-                        {wallpaper.priceCoins === 0 ? (
-                          <span className="text-[10px] font-black text-emerald-600 block">مجاناً 🎁</span>
-                        ) : isUnlocked ? (
-                          <span className="text-[10px] font-black text-emerald-600 flex items-center gap-0.5">
-                            <CheckCircle2 className="w-3 h-3" /> متاح
-                          </span>
-                        ) : (
-                          <span className="text-[10px] font-black text-amber-600 block">
-                            🪙 {wallpaper.priceCoins}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
+              {isPreviewedPersonalUnlocked ? (
+                <button
+                  type="button"
+                  onClick={() => handleApplyWallpaper(previewedPersonalWallpaper)}
+                  className={`px-4 py-2 rounded-xl text-xs font-black shadow-sm transition active:scale-95 flex items-center gap-1.5 cursor-pointer ${
+                    isPreviewedPersonalActive
+                      ? 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                      : 'bg-indigo-600 hover:bg-indigo-500 text-white'
+                  }`}
+                >
+                  <Check className="w-4 h-4" />
+                  <span>{isPreviewedPersonalActive ? 'حفظ وتأكيد الخلفية الحالية' : 'تطبيق وحفظ الخلفية'}</span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => handlePurchaseAndApply(previewedPersonalWallpaper)}
+                  disabled={purchasingId === previewedPersonalWallpaper.id}
+                  className="px-4 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-500 hover:from-amber-400 hover:to-yellow-400 text-slate-950 text-xs font-black shadow-sm transition active:scale-95 flex items-center gap-1.5 cursor-pointer disabled:opacity-60"
+                >
+                  {purchasingId === previewedPersonalWallpaper.id ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Coins className="w-3.5 h-3.5 fill-slate-950" />
+                  )}
+                  <span>
+                    {purchasingId === previewedPersonalWallpaper.id
+                      ? 'جاري الشراء...'
+                      : `شراء وتطبيق (${previewedPersonalWallpaper.priceCoins} كوينز)`}
+                  </span>
+                </button>
+              )}
             </div>
           </>
         )}

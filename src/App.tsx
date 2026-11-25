@@ -99,7 +99,7 @@ import {
   RealtimeUserNotification,
   AppUpdateNotice
 } from './services/firebase';
-import { isUserTrulyOnline, getServerNowMs } from './utils/presenceStatus';
+import { isUserTrulyOnline, getServerNowMs, resolveTimestampMs } from './utils/presenceStatus';
 
 function isNewerVersion(remote: string, local: string): boolean {
   const rParts = remote.split('.').map((n) => parseInt(n, 10) || 0);
@@ -832,30 +832,46 @@ export default function App() {
     realtimeSocket.connect(activeUser);
 
     let dbGlobalUsers: User[] = [];
+    let wsGlobalUsers: User[] = [];
 
     const syncMergedGlobalPresence = () => {
       const nowTs = getServerNowMs();
       const isBrowserOnline = typeof navigator === 'undefined' || navigator.onLine !== false;
       setGlobalOnlineUsers(prev => {
-        if (!isBrowserOnline && dbGlobalUsers.length <= 1 && prev.length > 1) {
+        if (!isBrowserOnline && dbGlobalUsers.length <= 1 && wsGlobalUsers.length <= 1 && prev.length > 1) {
           return prev;
         }
         const self = currentUserRef.current;
         const map = new Map<string, User>();
         map.set(self.id, { ...self, isOnline: self.status !== 'offline', lastSeen: nowTs });
+
+        wsGlobalUsers.forEach(u => {
+          if (!u || !u.id || u.id === self.id || u.status === 'offline' || u.isOnline === false) return;
+          const seenMs = resolveTimestampMs(u.lastSeen ?? (u as any).lastSeenMs ?? (u as any).joinedAt) || nowTs;
+          const candidate: User = { ...u, isOnline: true, lastSeen: seenMs };
+          if (isUserTrulyOnline(candidate, nowTs)) {
+            map.set(u.id, { ...map.get(u.id), ...candidate });
+          }
+        });
+
         dbGlobalUsers.forEach(u => {
           if (u && u.id && u.id !== self.id && isUserTrulyOnline(u, nowTs)) {
             map.set(u.id, { ...map.get(u.id), ...u, isOnline: true });
           }
         });
+
         const nextList = Array.from(map.values());
         return areUserListsEqual(prev, nextList, self.id) ? prev : nextList;
       });
     };
 
-    // Listen exclusively to RTDB global presence (`presence/{userId}`)
+    // Listen to both RTDB global presence and WebSocket live global presence
     const unsubFirestorePresence = subscribeToGlobalPresence(activeUser, (liveUsers) => {
       dbGlobalUsers = Array.isArray(liveUsers) ? liveUsers : [];
+      syncMergedGlobalPresence();
+    });
+    const unsubWsGlobalPresence = realtimeSocket.subscribeToGlobalPresence((wsUsers) => {
+      wsGlobalUsers = Array.isArray(wsUsers) ? wsUsers : [];
       syncMergedGlobalPresence();
     });
 
@@ -1138,6 +1154,7 @@ export default function App() {
 
     return () => {
       unsubFirestorePresence();
+      unsubWsGlobalPresence();
       unsubRegisteredUsers();
       unsubRoomOnlineCounts();
       unsubReconnect();
@@ -1777,15 +1794,26 @@ export default function App() {
     // Join room on real-time server
     realtimeSocket.joinRoom(activeRoom.id, currentUser, Boolean(activeRoom.isPrivate));
 
-    // Subscribe to RTDB room presence (`presence/{userId}`)
-    const unsubRoomFirestorePresence = subscribeToRoomPresence(activeRoom.id, currentUser, (_fsCount, fsOccupants) => {
+    let fsRoomOccupants: User[] = [];
+    let wsRoomOccupants: User[] = [];
+
+    const syncRoomPresence = () => {
       const me = currentUserRef.current;
+      const nowTs = getServerNowMs();
       const mergedMap = new Map<string, User>();
       if (me?.id) {
-        mergedMap.set(me.id, { ...me, isOnline: true });
+        mergedMap.set(me.id, { ...me, currentRoom: activeRoom.id, isOnline: true, lastSeen: nowTs });
       }
-      (Array.isArray(fsOccupants) ? fsOccupants : []).forEach((u) => {
-        if (u && u.id) mergedMap.set(u.id, { ...mergedMap.get(u.id), ...u, isOnline: true });
+      wsRoomOccupants.forEach((u) => {
+        if (u && u.id && u.isOnline !== false) {
+          const seenMs = resolveTimestampMs(u.lastSeen ?? (u as any).joinedAt) || nowTs;
+          mergedMap.set(u.id, { ...mergedMap.get(u.id), ...u, isOnline: true, lastSeen: seenMs });
+        }
+      });
+      fsRoomOccupants.forEach((u) => {
+        if (u && u.id) {
+          mergedMap.set(u.id, { ...mergedMap.get(u.id), ...u, isOnline: true });
+        }
       });
       const merged = Array.from(mergedMap.values());
       const count = Math.max(1, merged.length);
@@ -1802,6 +1830,16 @@ export default function App() {
         });
         return changed ? next : prev;
       });
+    };
+
+    // Subscribe to both RTDB room presence and WebSocket room presence
+    const unsubRoomFirestorePresence = subscribeToRoomPresence(activeRoom.id, currentUser, (_fsCount, fsOccupants) => {
+      fsRoomOccupants = Array.isArray(fsOccupants) ? fsOccupants : [];
+      syncRoomPresence();
+    });
+    const unsubRoomWsPresence = realtimeSocket.subscribeToPresence(activeRoom.id, (_wsCount, wsUsers) => {
+      wsRoomOccupants = Array.isArray(wsUsers) ? (wsUsers as unknown as User[]) : [];
+      syncRoomPresence();
     });
 
     // Subscribe to server-side messages & history
@@ -1871,6 +1909,7 @@ export default function App() {
     return () => {
       realtimeSocket.leaveRoom(activeRoom.id, currentUser.id);
       unsubRoomFirestorePresence();
+      unsubRoomWsPresence();
       unsubMessages();
       unsubReactions();
       unsubRead();

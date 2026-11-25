@@ -81,10 +81,12 @@ interface RoomOccupant {
   avatar: string;
   role: string;
   vipBadge: string;
+  countryFlag?: string;
   isOnline: boolean;
   isBanned?: boolean;
   isMuted?: boolean;
   joinedAt: number;
+  lastSeen?: number;
   sessionId?: string;
   isGuest?: boolean;
 }
@@ -458,16 +460,19 @@ function getGlobalOnlineUsers(): RoomOccupant[] {
   connectedUsers.forEach(({ user, lastSeen }, id) => {
     const isSocketOpen = Boolean(connectedUsers.get(id)?.ws && connectedUsers.get(id)?.ws.readyState === WebSocket.OPEN);
     if (!isSocketOpen && now - lastSeen > 45000) return;
+    const effectiveLastSeen = isSocketOpen ? Math.max(lastSeen || 0, now - 5000) : lastSeen;
     allUsersMap.set(id, {
       id: user.id,
       name: user.name,
       avatar: user.avatar,
       role: user.role,
       vipBadge: user.vipBadge,
+      countryFlag: (user as any).countryFlag || '🇪🇬',
       isOnline: true,
       isBanned: user.isBanned || false,
       isMuted: user.isMuted || false,
-      joinedAt: lastSeen,
+      joinedAt: effectiveLastSeen,
+      lastSeen: effectiveLastSeen,
       sessionId: user.sessionId,
       isGuest: user.isGuest
     });
@@ -478,8 +483,16 @@ function getGlobalOnlineUsers(): RoomOccupant[] {
     occupants.forEach((user, id) => {
       const conn = connectedUsers.get(id);
       const hasOpenSocket = Boolean(conn?.ws && conn.ws.readyState === WebSocket.OPEN);
-      if (hasOpenSocket || now - (user.joinedAt || 0) <= 45000) {
-        allUsersMap.set(id, { ...user, isOnline: true });
+      if (hasOpenSocket || now - (user.lastSeen || user.joinedAt || 0) <= 45000) {
+        const effectiveLastSeen = hasOpenSocket
+          ? Math.max(user.lastSeen || user.joinedAt || 0, now - 5000)
+          : (user.lastSeen || user.joinedAt || now);
+        allUsersMap.set(id, {
+          ...allUsersMap.get(id),
+          ...user,
+          isOnline: true,
+          lastSeen: effectiveLastSeen
+        });
       }
     });
   });
@@ -551,15 +564,19 @@ wss.on('connection', (ws: WebSocket) => {
 
         case 'HEARTBEAT': {
           const uid = payload?.userId || msgInfo?.userId;
+          const now = Date.now();
           if (uid) {
             const entry = connectedUsers.get(uid);
-            if (entry) entry.lastSeen = Date.now();
+            if (entry) entry.lastSeen = now;
             if (msgInfo?.roomId) {
               const occ = roomOccupants.get(msgInfo.roomId)?.get(uid);
-              if (occ) occ.joinedAt = Date.now();
+              if (occ) {
+                occ.joinedAt = now;
+                occ.lastSeen = now;
+              }
             }
           }
-          ws.send(JSON.stringify({ type: 'HEARTBEAT_ACK', timestamp: Date.now() }));
+          ws.send(JSON.stringify({ type: 'HEARTBEAT_ACK', timestamp: now }));
           break;
         }
 
@@ -668,10 +685,12 @@ wss.on('connection', (ws: WebSocket) => {
             avatar: user.avatar,
             role: user.role,
             vipBadge: user.vipBadge,
+            countryFlag: user.countryFlag || '🇪🇬',
             isOnline: true,
             isBanned: user.isBanned || false,
             isMuted: user.isMuted || false,
             joinedAt: joinTs,
+            lastSeen: joinTs,
             sessionId: user.sessionId,
             isGuest: user.isGuest
           };

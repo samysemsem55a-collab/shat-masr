@@ -112,11 +112,10 @@ export const CHAT_WALLPAPERS: ChatWallpaper[] = [
     description: 'دفء شمس الأصيل على ضفاف النيل مع لمسات دافئة تمنح المحادثات هيبة وألفة.',
     thumbnail: '🌅',
     style: {
-      backgroundImage: "linear-gradient(to bottom, rgba(15, 23, 42, 0.46), rgba(8, 12, 21, 0.72)), url('/assets/wallpapers/egypt_chat_bg.jpg')",
+      backgroundImage: "linear-gradient(to bottom, rgba(124, 45, 18, 0.36), rgba(8, 12, 21, 0.68)), url('/assets/wallpapers/egypt_chat_bg.jpg')",
       backgroundSize: 'cover',
       backgroundPosition: 'center',
-      backgroundRepeat: 'no-repeat',
-      filter: 'hue-rotate(-8deg) saturate(1.15)'
+      backgroundRepeat: 'no-repeat'
     },
     priceCoins: 0,
     isPremium: false,

@@ -356,6 +356,7 @@ export const StoriesBar: React.FC<StoriesBarProps> = ({
     if (!activeStory) return;
     const targetId = activeStory.id;
     const targetOwnerId = activeStory.userId;
+    const wasLiked = Boolean(activeStory.likedBy?.includes(currentUser.id));
     setStories((prev) =>
       prev.map((s) => {
         if (s.id !== targetId) return s;
@@ -370,7 +371,7 @@ export const StoriesBar: React.FC<StoriesBarProps> = ({
       })
     );
     try {
-      await toggleStoryLike(targetId, currentUser, targetOwnerId);
+      await toggleStoryLike(targetId, currentUser, targetOwnerId, wasLiked);
     } catch {}
   };
 

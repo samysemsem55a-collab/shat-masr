@@ -290,7 +290,7 @@ export const NotificationBgSelector: React.FC<NotificationBgSelectorProps> = ({
           </span>
         </div>
 
-        <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2.5 p-1">
           {NOTIFICATION_BG_PRESETS.slice(0, 10).map((preset) => {
             const isPreviewed = preset.id === previewPreset.id;
             const isApplied = preset.id === appliedPresetId;
@@ -306,31 +306,39 @@ export const NotificationBgSelector: React.FC<NotificationBgSelectorProps> = ({
                   borderColor: isPreviewed ? '#4f46e5' : preset.borderColor,
                   color: preset.textColor,
                 }}
-                className={`relative p-2.5 rounded-2xl border-2 text-right transition-all cursor-pointer flex flex-col justify-between gap-1.5 min-h-[68px] ${
+                className={`relative p-2.5 rounded-2xl border-2 text-right transition-all cursor-pointer flex flex-col justify-between gap-2 min-h-[76px] ${
                   isPreviewed
-                    ? 'ring-2 ring-indigo-300 shadow-md scale-[1.02]'
-                    : 'hover:scale-[1.01] shadow-2xs'
+                    ? 'ring-2 ring-indigo-300 shadow-md'
+                    : 'hover:shadow-sm shadow-2xs'
                 }`}
               >
-                <div className="flex items-center justify-between gap-1">
+                <div className="flex items-center justify-between gap-1 min-w-0">
                   <span
-                    className="w-2.5 h-2.5 rounded-full shrink-0 border border-black/10"
+                    className="w-2.5 h-2.5 rounded-full shrink-0 border border-black/15"
                     style={{ background: preset.previewSwatch }}
                   />
                   {isApplied ? (
-                    <span className="px-1.5 py-0.5 rounded-full bg-emerald-600 text-white text-[9px] font-black leading-none">
+                    <span className="px-1.5 py-0.5 rounded-full bg-emerald-600 text-white text-[9px] font-black leading-none shrink-0">
                       {hasCustomSaved ? 'مفعّل' : 'تلقائي'}
                     </span>
                   ) : isPreviewed ? (
-                    <span className="px-1.5 py-0.5 rounded-full bg-indigo-600 text-white text-[9px] font-black leading-none">
+                    <span className="px-1.5 py-0.5 rounded-full bg-indigo-600 text-white text-[9px] font-black leading-none shrink-0">
                       معاينة
                     </span>
                   ) : (
-                    <span className="text-[9px] font-bold opacity-75">{preset.badge}</span>
+                    <span
+                      className={`px-1.5 py-0.5 rounded-full text-[9px] font-black leading-none shrink-0 ${
+                        preset.isDark
+                          ? 'bg-white/15 text-white/95'
+                          : 'bg-black/5 text-current opacity-85'
+                      }`}
+                    >
+                      {preset.badge}
+                    </span>
                   )}
                 </div>
 
-                <span className="text-[11px] font-black leading-tight truncate">
+                <span className="text-[11px] font-black leading-snug line-clamp-1">
                   {preset.name}
                 </span>
               </button>
