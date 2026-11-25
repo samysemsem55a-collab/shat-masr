@@ -2318,8 +2318,21 @@ export default function App() {
     closeAllModals();
     setCurrentTab('profile');
   }, [closeAllModals]);
-  const openNotifications = useCallback(() => {
-    setIsNotificationsOpen(true);
+  const markNotificationRead = useCallback((notificationId: string) => {
+    if (!notificationId) return;
+    if (notificationId.startsWith('app_update_')) {
+      setIsAppUpdateNotifRead(true);
+      return;
+    }
+    if (currentUserRef.current?.id) {
+      markUserNotificationsRead(currentUserRef.current.id, [notificationId]).catch(() => {});
+    }
+    setRealtimeNotifications((prev) =>
+      prev.map((n) => (n.id === notificationId ? { ...n, isRead: true } : n))
+    );
+  }, []);
+
+  const markAllNotificationsRead = useCallback(() => {
     setIsAppUpdateNotifRead(true);
     const unreadIds = realtimeNotificationsRef.current.filter((n) => !n.isRead).map((n) => n.id);
     if (unreadIds.length > 0 && currentUserRef.current?.id) {
@@ -2327,6 +2340,15 @@ export default function App() {
       setRealtimeNotifications((prev) => prev.map((n) => (n.isRead ? n : { ...n, isRead: true })));
     }
   }, []);
+
+  const openNotifications = useCallback(() => {
+    setIsNotificationsOpen(true);
+  }, []);
+
+  const closeNotifications = useCallback(() => {
+    setIsNotificationsOpen(false);
+    markAllNotificationsRead();
+  }, [markAllNotificationsRead]);
   const openOnlineUsers = useCallback(() => setIsOnlineUsersOpen(true), []);
   const openFriendRequests = useCallback(() => setIsFriendRequestsOpen(true), []);
   const openAdmin = useCallback(() => setIsAdminOpen(true), []);
@@ -3209,9 +3231,11 @@ export default function App() {
 
       <NotificationsModal
         isOpen={isNotificationsOpen}
-        onClose={() => setIsNotificationsOpen(false)}
+        onClose={closeNotifications}
         onOpenWallet={openWallet}
         realtimeNotifications={bellNotifications}
+        onMarkAsRead={markNotificationRead}
+        onMarkAllAsRead={markAllNotificationsRead}
       />
 
       {/* Online Users List Side Drawer with real presence occupants */}

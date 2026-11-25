@@ -9,7 +9,6 @@ import {
   AlertCircle,
   ArrowUpDown
 } from 'lucide-react';
-import confetti from 'canvas-confetti';
 import { GiftItem, User, SpeakerSeat } from '../types/chat';
 import { LUXURY_GIFTS, isUserAdminOrOwner } from '../data/seedData';
 import { sounds } from '../utils/soundEffects';
@@ -131,13 +130,6 @@ export const LuxuryGiftModal: React.FC<LuxuryGiftModalProps> = ({
 
   const handleConfirmSend = () => {
     sounds.playGiftFanfare();
-
-    // Trigger explosive celebratory confetti
-    confetti({
-      particleCount: 100,
-      spread: 70,
-      origin: { y: 0.6 }
-    });
 
     const targetRecipientId =
       (preselectedRecipient?.name === selectedRecipient ? preselectedRecipient.id : undefined) ||

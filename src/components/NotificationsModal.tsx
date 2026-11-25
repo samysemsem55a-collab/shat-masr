@@ -18,6 +18,8 @@ interface NotificationsModalProps {
   onClose: () => void;
   onOpenWallet: () => void;
   realtimeNotifications?: RealtimeUserNotification[];
+  onMarkAsRead?: (notificationId: string) => void;
+  onMarkAllAsRead?: () => void;
 }
 
 function formatNotifTime(ts: number): string {
@@ -34,6 +36,8 @@ export const NotificationsModal: React.FC<NotificationsModalProps> = ({
   isOpen,
   onClose,
   realtimeNotifications = [],
+  onMarkAsRead,
+  onMarkAllAsRead,
 }) => {
   const allowedKinds = new Set(['forum_like', 'forum_comment', 'story_like', 'story_comment', 'app_update', 'info']);
   const notifications = realtimeNotifications
@@ -60,6 +64,7 @@ export const NotificationsModal: React.FC<NotificationsModalProps> = ({
       time: formatNotifTime(n.createdAt || Date.now()),
       isNew: !n.isRead,
     }));
+  const hasUnread = notifications.some((n) => n.isNew);
 
   return (
     <AnimatePresence>
@@ -82,16 +87,27 @@ export const NotificationsModal: React.FC<NotificationsModalProps> = ({
           >
         
         {/* Header */}
-        <div className="p-4 bg-gradient-to-r from-indigo-50 via-white to-purple-50 border-b border-slate-200 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-xl bg-indigo-100 text-indigo-600 flex items-center justify-center border border-indigo-200">
+        <div className="p-4 bg-gradient-to-r from-indigo-50 via-white to-purple-50 border-b border-slate-200 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 min-w-0">
+            <div className="w-8 h-8 rounded-xl bg-indigo-100 text-indigo-600 flex items-center justify-center border border-indigo-200 shrink-0">
               <Bell className="w-4 h-4" />
             </div>
-            <h3 className="text-sm font-black text-slate-900">مركز الإشعارات الفورية</h3>
+            <h3 className="text-sm font-black text-slate-900 truncate">مركز الإشعارات الفورية</h3>
           </div>
-          <button onClick={onClose} className="p-1.5 rounded-full text-slate-500 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 transition">
-            <X className="w-4 h-4" />
-          </button>
+          <div className="flex items-center gap-1.5 shrink-0">
+            {hasUnread && onMarkAllAsRead && (
+              <button
+                type="button"
+                onClick={onMarkAllAsRead}
+                className="px-2.5 py-1 rounded-full bg-indigo-100 hover:bg-indigo-200 text-indigo-700 text-[11px] font-bold transition cursor-pointer"
+              >
+                قراءة الكل
+              </button>
+            )}
+            <button onClick={onClose} className="p-1.5 rounded-full text-slate-500 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 transition cursor-pointer">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
         </div>
 
         {/* List */}
@@ -104,17 +120,25 @@ export const NotificationsModal: React.FC<NotificationsModalProps> = ({
             notifications.map((n) => (
               <div
                 key={n.id}
+                onClick={() => {
+                  if (n.isNew && onMarkAsRead) onMarkAsRead(n.id);
+                }}
                 className={`p-3 rounded-2xl border flex items-start gap-3 transition-colors shadow-sm ${
                   n.isNew
-                    ? 'bg-indigo-50/80 border-indigo-200'
+                    ? 'bg-indigo-50/80 border-indigo-200 cursor-pointer hover:bg-indigo-100/70'
                     : 'bg-white border-slate-200'
                 }`}
               >
                 <div className="text-2xl shrink-0 mt-0.5">{n.icon}</div>
                 <div className="flex-1 space-y-1">
-                  <div className="flex items-center justify-between">
-                    <h4 className="text-xs font-black text-slate-900">{n.title}</h4>
-                    <span className="text-[10px] text-slate-500">{n.time}</span>
+                  <div className="flex items-center justify-between gap-2">
+                    <h4 className="text-xs font-black text-slate-900 flex items-center gap-1.5">
+                      <span>{n.title}</span>
+                      {n.isNew && (
+                        <span className="w-2 h-2 rounded-full bg-indigo-600 shrink-0" />
+                      )}
+                    </h4>
+                    <span className="text-[10px] text-slate-500 shrink-0">{n.time}</span>
                   </div>
                   <p className="text-xs text-slate-600 leading-relaxed">{n.desc}</p>
                 </div>

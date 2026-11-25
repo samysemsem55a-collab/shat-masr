@@ -7635,6 +7635,27 @@ const ALLOWED_BELL_NOTIFICATION_KINDS = new Set<string>([
   'info',
 ]);
 
+const LOCAL_NOTIFS_PREFIX = 'shat_masr_user_notifications_';
+
+function readLocalUserNotifications(userId: string): RealtimeUserNotification[] {
+  if (!userId || typeof window === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(`${LOCAL_NOTIFS_PREFIX}${userId}`);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeLocalUserNotifications(userId: string, list: RealtimeUserNotification[]): void {
+  if (!userId || typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(`${LOCAL_NOTIFS_PREFIX}${userId}`, JSON.stringify(list.slice(0, 30)));
+  } catch {}
+}
+
 export async function sendUserRealtimeNotification(params: {
   targetUserId: string;
   actorId: string;
@@ -7662,7 +7683,12 @@ export async function sendUserRealtimeNotification(params: {
     createdAt: nowMs
   };
 
+  const existingLocal = readLocalUserNotifications(targetUserId).filter((n) => n.id !== id);
+  writeLocalUserNotifications(targetUserId, [item, ...existingLocal]);
   liveChatBus?.postMessage({ type: 'USER_REALTIME_NOTIFICATION', notification: item });
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('shatmasr:user_notification', { detail: item }));
+  }
 
   if (db) {
     try {
@@ -7681,8 +7707,16 @@ export async function markUserNotificationsRead(
   userId: string,
   notificationIds: string[]
 ): Promise<void> {
+  if (!userId || !notificationIds || notificationIds.length === 0) return;
+  const idSet = new Set(notificationIds);
+  const localList = readLocalUserNotifications(userId);
+  if (localList.length > 0) {
+    const updated = localList.map((n) => (idSet.has(n.id) ? { ...n, isRead: true } : n));
+    writeLocalUserNotifications(userId, updated);
+  }
+
   const firestore = db;
-  if (!firestore || !userId || !notificationIds || notificationIds.length === 0) return;
+  if (!firestore) return;
   await Promise.allSettled(
     notificationIds.slice(0, 30).map((nid) =>
       updateDoc(doc(firestore, 'users', userId, 'notifications', nid), { isRead: true }).catch(() => {})
@@ -7697,13 +7731,25 @@ export function subscribeToUserNotifications(
   if (!userId) return () => {};
   const listById = new Map<string, RealtimeUserNotification>();
 
-  const emitSorted = () => {
+  const emitSorted = (persistLocal = false) => {
     const sorted = Array.from(listById.values())
       .filter((n) => ALLOWED_BELL_NOTIFICATION_KINDS.has(n.kind))
       .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
       .slice(0, 20);
+    if (persistLocal) {
+      writeLocalUserNotifications(userId, sorted);
+    }
     onUpdate(sorted);
   };
+
+  readLocalUserNotifications(userId).forEach((n) => {
+    if (n?.id && ALLOWED_BELL_NOTIFICATION_KINDS.has(n.kind)) {
+      listById.set(n.id, n);
+    }
+  });
+  if (listById.size > 0) {
+    emitSorted(false);
+  }
 
   let unsubFirestore: (() => void) | null = null;
   if (db) {
@@ -7716,14 +7762,15 @@ export function subscribeToUserNotifications(
       unsubFirestore = onSnapshot(
         q,
         (snap) => {
-          listById.clear();
           snap.docs.forEach((d) => {
             const data = d.data() as any;
             const kind = String(data.kind || 'info');
             if (!ALLOWED_BELL_NOTIFICATION_KINDS.has(kind)) return;
+            const id = data.id || d.id;
             const resolvedTs = resolveTimestampMs(data.createdAt) || Number(data.createdAtMs) || Date.now();
-            listById.set(data.id || d.id, {
-              id: data.id || d.id,
+            const existing = listById.get(id);
+            listById.set(id, {
+              id,
               targetUserId: data.targetUserId || userId,
               actorId: data.actorId || '',
               actorName: data.actorName || 'عضو شات مصر',
@@ -7731,11 +7778,11 @@ export function subscribeToUserNotifications(
               kind: kind as RealtimeUserNotification['kind'],
               message: data.message || '',
               refId: data.refId || '',
-              isRead: Boolean(data.isRead),
+              isRead: Boolean(data.isRead || existing?.isRead),
               createdAt: resolvedTs
             });
           });
-          emitSorted();
+          emitSorted(true);
         },
         (err) => {
           handleFirestoreError(err, OperationType.LIST, `users/${userId}/notifications`);
@@ -7744,23 +7791,41 @@ export function subscribeToUserNotifications(
     } catch {}
   }
 
-  const handleBus = (e: MessageEvent) => {
-    const notif = e.data?.notification as RealtimeUserNotification | undefined;
+  const ingestNotification = (notif: RealtimeUserNotification | undefined) => {
     if (
-      e.data?.type === 'USER_REALTIME_NOTIFICATION' &&
       notif &&
+      notif.id &&
       notif.targetUserId === userId &&
       ALLOWED_BELL_NOTIFICATION_KINDS.has(notif.kind)
     ) {
-      listById.set(notif.id, notif);
-      emitSorted();
+      const existing = listById.get(notif.id);
+      listById.set(notif.id, {
+        ...notif,
+        isRead: Boolean(notif.isRead || existing?.isRead),
+      });
+      emitSorted(true);
     }
   };
+
+  const handleBus = (e: MessageEvent) => {
+    if (e.data?.type === 'USER_REALTIME_NOTIFICATION') {
+      ingestNotification(e.data?.notification as RealtimeUserNotification | undefined);
+    }
+  };
+  const handleWindowEvent = (e: Event) => {
+    ingestNotification((e as CustomEvent<RealtimeUserNotification>).detail);
+  };
   liveChatBus?.addEventListener('message', handleBus);
+  if (typeof window !== 'undefined') {
+    window.addEventListener('shatmasr:user_notification', handleWindowEvent);
+  }
 
   return () => {
     if (unsubFirestore) unsubFirestore();
     liveChatBus?.removeEventListener('message', handleBus);
+    if (typeof window !== 'undefined') {
+      window.removeEventListener('shatmasr:user_notification', handleWindowEvent);
+    }
   };
 }
 

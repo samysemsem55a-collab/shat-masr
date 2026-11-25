@@ -1025,10 +1025,19 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
   const [bannedUserIds, setBannedUserIds] = useState<string[]>(room.bannedUserIds || []);
   const [dismissedSystemMsgIds, setDismissedSystemMsgIds] = useState<string[]>([]);
   const scheduledSystemDismissRef = useRef<Set<string>>(new Set());
+  const systemDismissTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+
+  // Clean up all system_welcome dismiss timers on room change or unmount
+  useEffect(() => {
+    scheduledSystemDismissRef.current.clear();
+    return () => {
+      systemDismissTimersRef.current.forEach((timer) => clearTimeout(timer));
+      systemDismissTimersRef.current.clear();
+    };
+  }, [room.id]);
 
   // Automatically dismiss system_welcome / bot banners (2000ms for entering user welcome, 5000ms for others)
   useEffect(() => {
-    const timers: ReturnType<typeof setTimeout>[] = [];
     messages.forEach((m) => {
       if (m.type === 'system_welcome' && m.id && !scheduledSystemDismissRef.current.has(m.id)) {
         scheduledSystemDismissRef.current.add(m.id);
@@ -1039,15 +1048,13 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
         } else {
           const delay = Math.max(200, ttlMs - Math.max(0, ageMs));
           const t = setTimeout(() => {
+            systemDismissTimersRef.current.delete(m.id);
             setDismissedSystemMsgIds((prev) => (prev.includes(m.id) ? prev : [...prev, m.id]));
           }, delay);
-          timers.push(t);
+          systemDismissTimersRef.current.set(m.id, t);
         }
       }
     });
-    return () => {
-      timers.forEach((t) => clearTimeout(t));
-    };
   }, [messages, currentUser.id]);
 
   // Subscribe to real-time pinned message, lock status & custom background updates for ALL occupants in this room
@@ -2898,6 +2905,7 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
 
           // Luxury Virtual Gift Message (Compact Soft-Corner Pearl/Gold Card)
           if (msg.type === 'gift' && msg.gift) {
+            const recipientDisplay = msg.gift.recipientName?.trim() || room.title || 'الجميع';
             const matchedCatalogGift = LUXURY_GIFTS.find((g) => g.id === msg.gift?.giftId || g.name === msg.gift?.name);
             const giftPayload: GiftItem = matchedCatalogGift || {
               id: msg.gift.giftId || `gift_${msg.id}`,
@@ -2905,7 +2913,7 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
               icon: msg.gift.icon || '🎁',
               cost: msg.gift.cost || 0,
               animation: 'crown',
-              bannerText: `أهدى ${msg.senderName} ${msg.gift.name} إلى ${msg.gift.recipientName}`,
+              bannerText: `أهدى ${msg.senderName} ${msg.gift.name} إلى ${recipientDisplay}`,
             };
 
             return (
@@ -2945,7 +2953,7 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
                         <span> </span>
                         <span className="text-rose-600 font-black">{msg.gift.name}</span>
                         <span> إلى </span>
-                        <span className="text-amber-700 font-black">{msg.gift.recipientName}</span>
+                        <span className="text-amber-700 font-black">{recipientDisplay}</span>
                       </p>
 
                       {/* Footer: Action Button & Timestamp cleanly separated */}
@@ -2958,7 +2966,7 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
                               onTriggerGiftCelebration(
                                 giftPayload,
                                 msg.senderName,
-                                msg.gift?.recipientName || room.title
+                                recipientDisplay
                               );
                             } else {
                               confetti({ particleCount: 55, spread: 70, origin: { y: 0.6 } });
