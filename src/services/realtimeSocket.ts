@@ -43,6 +43,7 @@ class RealtimeSocketManager {
   private profileListeners: Map<string, Set<ProfileCallback>> = new Map();
   private adminEventListeners: Set<AdminEventCallback> = new Set();
   private friendReqListeners: Set<FriendReqCallback> = new Set();
+  private userNotificationListeners: Set<(notification: any) => void> = new Set();
   private directMessageListeners: Map<string, Set<DirectMessageCallback>> = new Map();
   private globalDirectMessageListeners: Set<DirectMessageCallback> = new Set();
   private privateTypingListeners: Map<string, Set<PrivateTypingCallback>> = new Map();
@@ -375,6 +376,7 @@ class RealtimeSocketManager {
         'LEAVE_ROOM',
         'SEND_MESSAGE',
         'DIRECT_MESSAGE',
+        'USER_NOTIFICATION',
         'FRIEND_REQUEST',
         'DIRECT_MESSAGE_READ',
         'ROOM_MESSAGES_READ',
@@ -505,6 +507,14 @@ class RealtimeSocketManager {
       case 'NEW_FRIEND_REQUEST': {
         const { request } = action;
         this.friendReqListeners.forEach(cb => cb(request));
+        break;
+      }
+
+      case 'NEW_USER_NOTIFICATION': {
+        const { notification } = action;
+        if (notification) {
+          this.userNotificationListeners.forEach(cb => cb(notification));
+        }
         break;
       }
 
@@ -827,6 +837,11 @@ class RealtimeSocketManager {
 
   sendDirectMessage(convId: string, recipientId: string, message: Partial<Message>, recipientSessionId?: string) {
     this.send('DIRECT_MESSAGE', { convId, recipientId, recipientSessionId, message });
+  }
+
+  sendUserNotification(notification: any) {
+    if (!notification?.targetUserId) return;
+    this.send('USER_NOTIFICATION', { notification });
   }
 
   sendMessageReaction(
@@ -1292,6 +1307,13 @@ class RealtimeSocketManager {
     this.directReadListeners.get(convId)!.add(callback);
     return () => {
       this.directReadListeners.get(convId)?.delete(callback);
+    };
+  }
+
+  subscribeToUserNotifications(callback: (notification: any) => void): () => void {
+    this.userNotificationListeners.add(callback);
+    return () => {
+      this.userNotificationListeners.delete(callback);
     };
   }
 

@@ -60,7 +60,7 @@ import { CoinsTransferModal } from './CoinsTransferModal';
 import { ChatWallpapersModal } from './ChatWallpapersModal';
 import { STICKERS_CATALOG, CURATED_EMOJIS } from '../data/stickers';
 import { toast } from '../utils/appToast';
-import { getWallpaperStyleById } from '../data/wallpapers';
+import { getWallpaperStyleById, DEFAULT_CHAT_WALLPAPER_ID } from '../data/wallpapers';
 import { AvatarWithFrame } from './AvatarWithFrame';
 import { MessageStatusIcon } from './MessageStatusIcon';
 import { BlurredChatImage } from './BlurredChatImage';
@@ -1541,7 +1541,7 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
       ) : (
         /* If Contact Selected: Full-bleed edge-to-edge 1-on-1 Chat on Mobile + Natural/Custom Wallpaper Support */
         <div 
-          style={getWallpaperStyleById(currentUser.chatWallpaper || 'wp_white_gold_doodle')}
+          style={getWallpaperStyleById(currentUser.chatWallpaper || DEFAULT_CHAT_WALLPAPER_ID)}
           className={isDrawer
             ? "h-full w-full max-w-full flex flex-col bg-[#F3F9FE] overflow-x-hidden overflow-y-hidden overscroll-none"
             : "fixed inset-x-0 top-0 z-[60] w-screen max-w-full h-[var(--app-height,100dvh)] sm:relative sm:inset-auto sm:z-auto sm:w-full sm:h-full flex flex-col bg-[#F3F9FE] border-0 sm:border border-sky-200/80 rounded-none sm:rounded-3xl overflow-x-hidden overflow-y-hidden overscroll-none shadow-2xl"

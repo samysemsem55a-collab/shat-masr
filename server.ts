@@ -1180,6 +1180,17 @@ wss.on('connection', (ws: WebSocket) => {
           break;
         }
 
+        case 'USER_NOTIFICATION': {
+          const notification = payload?.notification;
+          if (notification && notification.targetUserId) {
+            sendToUser(notification.targetUserId, {
+              type: 'NEW_USER_NOTIFICATION',
+              notification
+            });
+          }
+          break;
+        }
+
         case 'DIRECT_MESSAGE': {
           const { convId, message, recipientId, recipientSessionId } = payload;
           if (message) {

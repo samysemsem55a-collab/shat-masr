@@ -38,7 +38,10 @@ import {
 
 import { User, Room, Message, GiftItem, VipTier, SpeakerSeat, FriendRequest, DailyMission, UnreadSenderSummary, ForumPost } from './types/chat';
 import { INITIAL_ROOMS, getOrCreateUser, isUserAdminOrOwner, hasCompletedMandatoryProfile } from './data/seedData';
-import { readSavedNotificationBgPresetId } from './data/wallpapers';
+import {
+  readSavedNotificationBgPresetId,
+  saveNotificationBgPresetId,
+} from './data/wallpapers';
 import { sounds } from './utils/soundEffects';
 import { preloadAppAssets } from './utils/assetCache';
 import { applySmoothAppUpdate } from './utils/appUpdater';
@@ -746,16 +749,36 @@ export default function App() {
   useEffect(() => {
     if (!isProfileReady || !currentUser.id) return;
     loadUserThemeSettings(currentUser.id).then((savedTheme) => {
-      if (!savedTheme) return;
-      if (typeof savedTheme.isDarkMode === 'boolean') {
+      const localWallpaper = (() => {
+        try {
+          return localStorage.getItem('arab_chat_active_wallpaper') || '';
+        } catch {
+          return '';
+        }
+      })();
+      if (savedTheme && typeof savedTheme.isDarkMode === 'boolean') {
         setIsDarkMode(savedTheme.isDarkMode);
       }
-      if (savedTheme.chatWallpaper) {
-        setCurrentUser((prev) =>
-          prev.chatWallpaper === savedTheme.chatWallpaper
-            ? prev
-            : { ...prev, chatWallpaper: savedTheme.chatWallpaper }
-        );
+      if (savedTheme?.notificationBgPreset) {
+        saveNotificationBgPresetId(currentUser.id, savedTheme.notificationBgPreset);
+      }
+      const nextWallpaper = savedTheme?.chatWallpaper || localWallpaper;
+      if (nextWallpaper || savedTheme?.notificationBgPreset) {
+        setCurrentUser((prev) => {
+          const nextPreset = savedTheme?.notificationBgPreset ?? prev.notificationBgPreset;
+          const resolvedWallpaper = nextWallpaper || prev.chatWallpaper;
+          if (
+            prev.chatWallpaper === resolvedWallpaper &&
+            prev.notificationBgPreset === nextPreset
+          ) {
+            return prev;
+          }
+          return {
+            ...prev,
+            ...(resolvedWallpaper ? { chatWallpaper: resolvedWallpaper } : {}),
+            ...(nextPreset ? { notificationBgPreset: nextPreset } : {}),
+          };
+        });
       }
     }).catch(() => {});
 
@@ -1562,6 +1585,15 @@ export default function App() {
             id: `rt_notif_${item.id}`,
             duration: 4500,
           });
+          if (typeof document !== 'undefined' && document.hidden) {
+            triggerExternalBrowserNotification(
+              item.kind === 'story_like' || item.kind === 'story_comment'
+                ? 'إشعار جديد على قصتك'
+                : 'إشعار جديد في المنتدى',
+              item.message,
+              { openForum: item.kind === 'forum_like' || item.kind === 'forum_comment' }
+            );
+          }
         }
       }
     });

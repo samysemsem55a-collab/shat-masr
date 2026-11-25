@@ -5940,6 +5940,13 @@ export async function toggleForumPostLike(
 
   if (db) {
     try {
+      if (!resolvedAuthorId) {
+        const postSnap = await getDoc(doc(db, 'forum_posts', postId)).catch(() => null);
+        if (postSnap?.exists()) {
+          const pData = postSnap.data() as any;
+          if (pData?.authorId) resolvedAuthorId = String(pData.authorId);
+        }
+      }
       const updatePayload: Record<string, any> = {
         likedBy: currentlyLiked ? arrayRemove(userId) : arrayUnion(userId),
         likesCount: increment(currentlyLiked ? -1 : 1)
@@ -6042,6 +6049,13 @@ export async function addForumComment(
 
   if (db) {
     try {
+      if (!resolvedAuthorId) {
+        const postSnap = await getDoc(doc(db, 'forum_posts', postId)).catch(() => null);
+        if (postSnap?.exists()) {
+          const pData = postSnap.data() as any;
+          if (pData?.authorId) resolvedAuthorId = String(pData.authorId);
+        }
+      }
       await setDoc(doc(db, 'forum_posts', postId, 'comments', id), comment);
       await updateDoc(doc(db, 'forum_posts', postId), {
         commentsCount: increment(1)
@@ -7686,6 +7700,7 @@ export async function sendUserRealtimeNotification(params: {
 
   const existingLocal = readLocalUserNotifications(targetUserId).filter((n) => n.id !== id);
   writeLocalUserNotifications(targetUserId, [item, ...existingLocal]);
+  realtimeSocket.sendUserNotification(item);
   liveChatBus?.postMessage({ type: 'USER_REALTIME_NOTIFICATION', notification: item });
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new CustomEvent('shatmasr:user_notification', { detail: item }));
@@ -7715,6 +7730,18 @@ export async function markUserNotificationsRead(
     const updated = localList.map((n) => (idSet.has(n.id) ? { ...n, isRead: true } : n));
     writeLocalUserNotifications(userId, updated);
   }
+  liveChatBus?.postMessage({
+    type: 'USER_NOTIFICATIONS_MARKED_READ',
+    userId,
+    ids: notificationIds,
+  });
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(
+      new CustomEvent('shatmasr:user_notifications_marked_read', {
+        detail: { userId, ids: notificationIds },
+      })
+    );
+  }
 
   const firestore = db;
   if (!firestore) return;
@@ -7731,6 +7758,7 @@ export function subscribeToUserNotifications(
 ): () => void {
   if (!userId) return () => {};
   const listById = new Map<string, RealtimeUserNotification>();
+  const locallyReadIds = new Set<string>();
 
   const emitSorted = (persistLocal = false) => {
     const sorted = Array.from(listById.values())
@@ -7745,6 +7773,7 @@ export function subscribeToUserNotifications(
 
   readLocalUserNotifications(userId).forEach((n) => {
     if (n?.id && ALLOWED_BELL_NOTIFICATION_KINDS.has(n.kind)) {
+      if (n.isRead) locallyReadIds.add(n.id);
       listById.set(n.id, n);
     }
   });
@@ -7770,6 +7799,8 @@ export function subscribeToUserNotifications(
             const id = data.id || d.id;
             const resolvedTs = resolveTimestampMs(data.createdAt) ?? (Number(data.createdAtMs) || Date.now());
             const existing = listById.get(id);
+            const isRead = Boolean(data.isRead || existing?.isRead || locallyReadIds.has(id));
+            if (isRead) locallyReadIds.add(id);
             listById.set(id, {
               id,
               targetUserId: data.targetUserId || userId,
@@ -7779,7 +7810,7 @@ export function subscribeToUserNotifications(
               kind: kind as RealtimeUserNotification['kind'],
               message: data.message || '',
               refId: data.refId || '',
-              isRead: Boolean(data.isRead || existing?.isRead),
+              isRead,
               createdAt: resolvedTs
             });
           });
@@ -7800,32 +7831,64 @@ export function subscribeToUserNotifications(
       ALLOWED_BELL_NOTIFICATION_KINDS.has(notif.kind)
     ) {
       const existing = listById.get(notif.id);
+      const isRead = Boolean(notif.isRead || existing?.isRead || locallyReadIds.has(notif.id));
+      if (isRead) locallyReadIds.add(notif.id);
       listById.set(notif.id, {
         ...notif,
-        isRead: Boolean(notif.isRead || existing?.isRead),
+        isRead,
       });
       emitSorted(true);
     }
   };
 
+  const applyMarkedRead = (targetId: string | undefined, ids: unknown) => {
+    if (targetId !== userId || !Array.isArray(ids) || ids.length === 0) return;
+    let changed = false;
+    ids.forEach((id) => {
+      if (typeof id !== 'string' || !id) return;
+      locallyReadIds.add(id);
+      const existing = listById.get(id);
+      if (existing && !existing.isRead) {
+        listById.set(id, { ...existing, isRead: true });
+        changed = true;
+      }
+    });
+    if (changed) {
+      emitSorted(true);
+    }
+  };
+
+  const unsubSocket = realtimeSocket.subscribeToUserNotifications((notif) => {
+    ingestNotification(notif as RealtimeUserNotification | undefined);
+  });
+
   const handleBus = (e: MessageEvent) => {
     if (e.data?.type === 'USER_REALTIME_NOTIFICATION') {
       ingestNotification(e.data?.notification as RealtimeUserNotification | undefined);
+    } else if (e.data?.type === 'USER_NOTIFICATIONS_MARKED_READ') {
+      applyMarkedRead(e.data?.userId, e.data?.ids);
     }
   };
   const handleWindowEvent = (e: Event) => {
     ingestNotification((e as CustomEvent<RealtimeUserNotification>).detail);
   };
+  const handleWindowMarkedRead = (e: Event) => {
+    const detail = (e as CustomEvent<{ userId?: string; ids?: string[] }>).detail;
+    applyMarkedRead(detail?.userId, detail?.ids);
+  };
   liveChatBus?.addEventListener('message', handleBus);
   if (typeof window !== 'undefined') {
     window.addEventListener('shatmasr:user_notification', handleWindowEvent);
+    window.addEventListener('shatmasr:user_notifications_marked_read', handleWindowMarkedRead);
   }
 
   return () => {
     if (unsubFirestore) unsubFirestore();
+    unsubSocket();
     liveChatBus?.removeEventListener('message', handleBus);
     if (typeof window !== 'undefined') {
       window.removeEventListener('shatmasr:user_notification', handleWindowEvent);
+      window.removeEventListener('shatmasr:user_notifications_marked_read', handleWindowMarkedRead);
     }
   };
 }

@@ -216,6 +216,8 @@ export const CHAT_WALLPAPERS: ChatWallpaper[] = [
   }
 ];
 
+export const DEFAULT_CHAT_WALLPAPER_ID = 'wp_white_gold_doodle';
+
 export function getWallpaperStyleById(wallpaperId?: string): React.CSSProperties {
   if (!wallpaperId) return CHAT_WALLPAPERS[0].style;
   const found = CHAT_WALLPAPERS.find(w => w.id === wallpaperId);
@@ -461,14 +463,24 @@ export interface NotificationBgPreset {
   isDark?: boolean;
 }
 
-export const DEFAULT_NOTIFICATION_BG_PRESET_ID = 'notif_sky_pearl';
+export const DEFAULT_NOTIFICATION_BG_PRESET_ID = 'notif_amber_cream';
+export const NIGHT_DEFAULT_NOTIFICATION_BG_PRESET_ID = 'notif_midnight_sapphire';
+
+export function getDefaultNotificationBgPresetIdForTime(date: Date = new Date()): string {
+  const hour = date.getHours();
+  // Daytime (06:00 - 17:59): warm sunny light preset ("ذهبي كريمي")
+  // Nighttime (18:00 - 05:59): dark night preset from the bottom two presets ("ياقوت ليلي" / ليلي)
+  return hour >= 6 && hour < 18
+    ? DEFAULT_NOTIFICATION_BG_PRESET_ID
+    : NIGHT_DEFAULT_NOTIFICATION_BG_PRESET_ID;
+}
 
 // Exactly 10 curated high-contrast notification background presets
 export const NOTIFICATION_BG_PRESETS: NotificationBgPreset[] = [
   {
     id: 'notif_sky_pearl',
     name: 'سماوي لؤلؤي',
-    badge: 'افتراضي',
+    badge: 'لؤلؤي',
     background: 'linear-gradient(135deg, #f0f9ff 0%, #eef2ff 52%, #ecfeff 100%)',
     borderColor: '#7dd3fc',
     textColor: '#0c4a6e',
@@ -592,7 +604,32 @@ export function getNotificationBgPresetById(presetId?: string): NotificationBgPr
     const found = NOTIFICATION_BG_PRESETS.find((p) => p.id === presetId);
     if (found) return found;
   }
-  return NOTIFICATION_BG_PRESETS[0];
+  return (
+    NOTIFICATION_BG_PRESETS.find((p) => p.id === getDefaultNotificationBgPresetIdForTime()) ||
+    NOTIFICATION_BG_PRESETS[1]
+  );
+}
+
+export function hasSavedCustomNotificationBgPreset(
+  user?: { id?: string; notificationBgPreset?: string } | null
+): boolean {
+  if (
+    user?.notificationBgPreset &&
+    NOTIFICATION_BG_PRESETS.some((p) => p.id === user.notificationBgPreset)
+  ) {
+    return true;
+  }
+  if (typeof window !== 'undefined') {
+    try {
+      const userScoped = user?.id ? localStorage.getItem(`shat_masr_notif_bg_preset_${user.id}`) : null;
+      const globalVal = localStorage.getItem('shat_masr_notif_bg_preset');
+      const candidate = userScoped || globalVal || '';
+      if (candidate && NOTIFICATION_BG_PRESETS.some((p) => p.id === candidate)) {
+        return true;
+      }
+    } catch {}
+  }
+  return false;
 }
 
 export function readSavedNotificationBgPresetId(
@@ -611,7 +648,7 @@ export function readSavedNotificationBgPresetId(
       }
     } catch {}
   }
-  return DEFAULT_NOTIFICATION_BG_PRESET_ID;
+  return getDefaultNotificationBgPresetIdForTime();
 }
 
 export function saveNotificationBgPresetId(userId: string | undefined, presetId: string): void {
@@ -623,6 +660,19 @@ export function saveNotificationBgPresetId(userId: string | undefined, presetId:
         localStorage.setItem(`shat_masr_notif_bg_preset_${userId}`, validId);
       }
       window.dispatchEvent(new CustomEvent('shatmasr:notif_bg_updated', { detail: { presetId: validId } }));
+    } catch {}
+  }
+}
+
+export function clearSavedNotificationBgPreset(userId?: string): void {
+  if (typeof window !== 'undefined') {
+    try {
+      localStorage.removeItem('shat_masr_notif_bg_preset');
+      if (userId) {
+        localStorage.removeItem(`shat_masr_notif_bg_preset_${userId}`);
+      }
+      const fallbackId = getDefaultNotificationBgPresetIdForTime();
+      window.dispatchEvent(new CustomEvent('shatmasr:notif_bg_updated', { detail: { presetId: fallbackId } }));
     } catch {}
   }
 }

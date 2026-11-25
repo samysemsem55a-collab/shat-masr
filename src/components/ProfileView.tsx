@@ -43,7 +43,10 @@ import {
 import { AvatarWithFrame } from './AvatarWithFrame';
 import { PWAInstallButton } from './PWAInstallButton';
 import { NotificationBgSelector } from './NotificationBgSelector';
-import { readSavedNotificationBgPresetId } from '../data/wallpapers';
+import {
+  readSavedNotificationBgPresetId,
+  hasSavedCustomNotificationBgPreset,
+} from '../data/wallpapers';
 import {
   saveUserThemeSettings,
   updateNotificationPreferences,
@@ -495,7 +498,9 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
       fontPreference,
       muteJoinNotices,
       dataSaverMode,
-      notificationBgPreset: readSavedNotificationBgPresetId(currentUser),
+      ...(hasSavedCustomNotificationBgPreset(currentUser)
+        ? { notificationBgPreset: readSavedNotificationBgPresetId(currentUser) }
+        : {}),
     }).catch(() => {});
 
     const allowCustomBannerSave =

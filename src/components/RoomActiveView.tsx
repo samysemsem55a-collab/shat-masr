@@ -64,6 +64,7 @@ import {
   getRoomBackgroundThemeById,
   getNotificationBgPresetById,
   readSavedNotificationBgPresetId,
+  hasSavedCustomNotificationBgPreset,
 } from '../data/wallpapers';
 import { 
   subscribeToRoomJoinRequests, 
@@ -751,6 +752,13 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
 
   useEffect(() => {
     setNotifBgPresetId(readSavedNotificationBgPresetId(currentUser));
+    if (hasSavedCustomNotificationBgPreset(currentUser)) return;
+    const timer = setInterval(() => {
+      if (!hasSavedCustomNotificationBgPreset(currentUser)) {
+        setNotifBgPresetId(readSavedNotificationBgPresetId(currentUser));
+      }
+    }, 60000);
+    return () => clearInterval(timer);
   }, [currentUser.id, currentUser.notificationBgPreset]);
 
   useEffect(() => {

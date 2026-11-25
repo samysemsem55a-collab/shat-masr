@@ -1,11 +1,14 @@
 import React, { useState, useEffect } from 'react';
-import { Check, Sparkles, Eye, Bell } from 'lucide-react';
+import { Check, Sparkles, Eye, Bell, RotateCcw } from 'lucide-react';
 import { User } from '../types/chat';
 import {
   NOTIFICATION_BG_PRESETS,
   getNotificationBgPresetById,
   readSavedNotificationBgPresetId,
   saveNotificationBgPresetId,
+  hasSavedCustomNotificationBgPreset,
+  clearSavedNotificationBgPreset,
+  getDefaultNotificationBgPresetIdForTime,
 } from '../data/wallpapers';
 import { syncUserProfileToFirebase, saveUserThemeSettings } from '../services/firebase';
 import { sounds } from '../utils/soundEffects';
@@ -24,6 +27,9 @@ export const NotificationBgSelector: React.FC<NotificationBgSelectorProps> = ({
   onApplied,
   compact = false,
 }) => {
+  const [hasCustomSaved, setHasCustomSaved] = useState<boolean>(() =>
+    hasSavedCustomNotificationBgPreset(currentUser)
+  );
   const [appliedPresetId, setAppliedPresetId] = useState<string>(() =>
     readSavedNotificationBgPresetId(currentUser)
   );
@@ -33,7 +39,9 @@ export const NotificationBgSelector: React.FC<NotificationBgSelectorProps> = ({
   const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
+    const custom = hasSavedCustomNotificationBgPreset(currentUser);
     const saved = readSavedNotificationBgPresetId(currentUser);
+    setHasCustomSaved(custom);
     setAppliedPresetId(saved);
     setPreviewPresetId((prev) => prev || saved);
   }, [currentUser.id, currentUser.notificationBgPreset]);
@@ -42,16 +50,19 @@ export const NotificationBgSelector: React.FC<NotificationBgSelectorProps> = ({
     if (typeof window === 'undefined') return;
     const onUpdated = (e: Event) => {
       const nextId = (e as CustomEvent<{ presetId?: string }>).detail?.presetId;
+      setHasCustomSaved(hasSavedCustomNotificationBgPreset(currentUser));
       if (nextId) {
         setAppliedPresetId(nextId);
+      } else {
+        setAppliedPresetId(readSavedNotificationBgPresetId(currentUser));
       }
     };
     window.addEventListener('shatmasr:notif_bg_updated', onUpdated);
     return () => window.removeEventListener('shatmasr:notif_bg_updated', onUpdated);
-  }, []);
+  }, [currentUser]);
 
   const previewPreset = getNotificationBgPresetById(previewPresetId);
-  const hasPendingChange = previewPreset.id !== appliedPresetId;
+  const hasPendingChange = previewPreset.id !== appliedPresetId || !hasCustomSaved;
 
   const handleApplyPreset = async () => {
     if (isSaving) return;
@@ -60,6 +71,7 @@ export const NotificationBgSelector: React.FC<NotificationBgSelectorProps> = ({
       const targetId = previewPreset.id;
       sounds.playMessageSent();
       saveNotificationBgPresetId(currentUser.id, targetId);
+      setHasCustomSaved(true);
       setAppliedPresetId(targetId);
 
       const updatedUser: User = {
@@ -85,6 +97,38 @@ export const NotificationBgSelector: React.FC<NotificationBgSelectorProps> = ({
     }
   };
 
+  const handleResetToAutoDayNight = async () => {
+    if (isSaving) return;
+    setIsSaving(true);
+    try {
+      clearSavedNotificationBgPreset(currentUser.id);
+      const autoId = getDefaultNotificationBgPresetIdForTime();
+      setHasCustomSaved(false);
+      setAppliedPresetId(autoId);
+      setPreviewPresetId(autoId);
+
+      const updatedUser: User = {
+        ...currentUser,
+        notificationBgPreset: '',
+      };
+      onUpdateUser?.(updatedUser);
+      await syncUserProfileToFirebase(updatedUser).catch(() => {});
+      await saveUserThemeSettings(currentUser.id, {
+        isDarkMode:
+          typeof document !== 'undefined' && document.documentElement.classList.contains('dark'),
+        chatWallpaper: currentUser.chatWallpaper,
+        fontPreference: currentUser.fontPreference,
+        muteJoinNotices: currentUser.muteJoinNotices,
+        dataSaverMode: currentUser.dataSaverMode,
+        notificationBgPreset: '',
+      }).catch(() => {});
+
+      toast.info('تم التفعيل التلقائي لخلفيات الإشعارات حسب وقت النهار والليل ☀️🌙');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   return (
     <div dir="rtl" className="space-y-3 text-right">
       {/* Interactive Live Preview Box (with shimmer & high contrast BEFORE applying) */}
@@ -98,12 +142,18 @@ export const NotificationBgSelector: React.FC<NotificationBgSelectorProps> = ({
           </div>
           <span
             className={`px-2 py-0.5 rounded-full text-[10px] font-black border ${
-              hasPendingChange
+              !hasCustomSaved && previewPreset.id === appliedPresetId
+                ? 'bg-sky-50 text-sky-800 border-sky-200'
+                : previewPreset.id !== appliedPresetId
                 ? 'bg-amber-50 text-amber-800 border-amber-200'
                 : 'bg-emerald-50 text-emerald-700 border-emerald-200'
             }`}
           >
-            {hasPendingChange ? 'معاينة غير محفوظة' : 'مفعّل حالياً ✓'}
+            {!hasCustomSaved && previewPreset.id === appliedPresetId
+              ? 'تلقائي (نهاري/ليلي)'
+              : previewPreset.id !== appliedPresetId
+              ? 'معاينة غير محفوظة'
+              : 'مفعّل حالياً ✓'}
           </span>
         </div>
 
@@ -188,11 +238,24 @@ export const NotificationBgSelector: React.FC<NotificationBgSelectorProps> = ({
           </div>
         </div>
 
-        {/* Apply & Save Button */}
-        <div className="flex items-center justify-between gap-2 pt-0.5">
-          <span className="text-[10.5px] text-slate-500 font-bold">
-            اختر أي خلفية للمعاينة ثم اضغط تطبيق للحفظ
-          </span>
+        {/* Apply & Save Button + Optional Reset to Auto Day/Night */}
+        <div className="flex items-center justify-between gap-2 pt-0.5 flex-wrap">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-[10.5px] text-slate-500 font-bold">
+              الافتراضي يتبدل تلقائياً بين النهار (ذهبي كريمي) والليل (ليلي)
+            </span>
+            {hasCustomSaved && (
+              <button
+                type="button"
+                onClick={handleResetToAutoDayNight}
+                disabled={isSaving}
+                className="px-2 py-1 rounded-lg bg-slate-200/80 hover:bg-slate-200 text-slate-700 text-[10px] font-black flex items-center gap-1 cursor-pointer transition"
+              >
+                <RotateCcw className="w-3 h-3" />
+                <span>العودة للتلقائي</span>
+              </button>
+            )}
+          </div>
           <button
             type="button"
             onClick={handleApplyPreset}
@@ -256,7 +319,7 @@ export const NotificationBgSelector: React.FC<NotificationBgSelectorProps> = ({
                   />
                   {isApplied ? (
                     <span className="px-1.5 py-0.5 rounded-full bg-emerald-600 text-white text-[9px] font-black leading-none">
-                      مفعّل
+                      {hasCustomSaved ? 'مفعّل' : 'تلقائي'}
                     </span>
                   ) : isPreviewed ? (
                     <span className="px-1.5 py-0.5 rounded-full bg-indigo-600 text-white text-[9px] font-black leading-none">
