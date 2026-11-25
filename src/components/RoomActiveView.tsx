@@ -61,7 +61,9 @@ import { compressImageFileToBlob } from '../utils/imageCompression';
 import { 
   getWallpaperStyleById, 
   ROOM_BACKGROUND_THEMES, 
-  getRoomBackgroundThemeById 
+  getRoomBackgroundThemeById,
+  getNotificationBgPresetById,
+  readSavedNotificationBgPresetId,
 } from '../data/wallpapers';
 import { 
   subscribeToRoomJoinRequests, 
@@ -737,11 +739,35 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
 }) => {
   // Chat Wallpapers Modal State (Select & Purchase) + Image Upload & Lightbox
   const [isWallpapersModalOpen, setIsWallpapersModalOpen] = useState(false);
+  const [wallpapersModalMode, setWallpapersModalMode] = useState<'personal' | 'room' | 'notifications'>('personal');
+  const [notifBgPresetId, setNotifBgPresetId] = useState<string>(() =>
+    readSavedNotificationBgPresetId(currentUser)
+  );
   const [isHeaderToolsOpen, setIsHeaderToolsOpen] = useState(false);
   const headerToolsRef = useRef<HTMLDivElement>(null);
   const roomImageInputRef = useRef<HTMLInputElement>(null);
   const [isUploadingRoomImage, setIsUploadingRoomImage] = useState(false);
   const [lightboxImageUrl, setLightboxImageUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    setNotifBgPresetId(readSavedNotificationBgPresetId(currentUser));
+  }, [currentUser.id, currentUser.notificationBgPreset]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const handleNotifBgUpdated = (e: Event) => {
+      const nextId = (e as CustomEvent<{ presetId?: string }>).detail?.presetId;
+      if (nextId) {
+        setNotifBgPresetId(nextId);
+      } else {
+        setNotifBgPresetId(readSavedNotificationBgPresetId(currentUser));
+      }
+    };
+    window.addEventListener('shatmasr:notif_bg_updated', handleNotifBgUpdated);
+    return () => window.removeEventListener('shatmasr:notif_bg_updated', handleNotifBgUpdated);
+  }, [currentUser]);
+
+  const notifBgPreset = getNotificationBgPresetById(notifBgPresetId);
 
   useEffect(() => {
     if (!isHeaderToolsOpen) return;
@@ -794,15 +820,15 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
     };
   }, []);
 
-  // Room local welcome banner (0ms -> 2000ms warning -> 4000ms clear)
+  // Room local welcome banner (0ms -> 3000ms warning -> 6000ms clear)
   useEffect(() => {
     setWelcomeBannerStage('welcome');
     const switchToNoticeTimer = setTimeout(() => {
       setWelcomeBannerStage('notice');
-    }, 2000);
+    }, 3000);
     const hideBannerTimer = setTimeout(() => {
       setWelcomeBannerStage(null);
-    }, 4000);
+    }, 6000);
     return () => {
       clearTimeout(switchToNoticeTimer);
       clearTimeout(hideBannerTimer);
@@ -1027,12 +1053,20 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
   const scheduledSystemDismissRef = useRef<Set<string>>(new Set());
   const systemDismissTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
-  // Clean up all system_welcome dismiss timers on room change or unmount
+  const [dismissedJoinMsgIds, setDismissedJoinMsgIds] = useState<string[]>([]);
+  const scheduledJoinDismissRef = useRef<Set<string>>(new Set());
+  const joinDismissTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+
+  // Clean up all system_welcome and join dismiss timers on room change or unmount
   useEffect(() => {
     scheduledSystemDismissRef.current.clear();
+    scheduledJoinDismissRef.current.clear();
+    setDismissedJoinMsgIds([]);
     return () => {
       systemDismissTimersRef.current.forEach((timer) => clearTimeout(timer));
       systemDismissTimersRef.current.clear();
+      joinDismissTimersRef.current.forEach((timer) => clearTimeout(timer));
+      joinDismissTimersRef.current.clear();
     };
   }, [room.id]);
 
@@ -1056,6 +1090,31 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
       }
     });
   }, [messages, currentUser.id]);
+
+  // Hide join bubbles from UI state after 4000ms from arrival (without deleting from DB)
+  useEffect(() => {
+    messages.forEach((m) => {
+      if (m.type === 'join' && m.id && !scheduledJoinDismissRef.current.has(m.id)) {
+        scheduledJoinDismissRef.current.add(m.id);
+        const msgTs =
+          typeof m.timestamp === 'number'
+            ? m.timestamp
+            : typeof m.createdAt === 'number'
+            ? m.createdAt
+            : Date.now();
+        const ageMs = Date.now() - msgTs;
+        if (ageMs >= 8000) {
+          setDismissedJoinMsgIds((prev) => (prev.includes(m.id) ? prev : [...prev, m.id]));
+        } else {
+          const t = setTimeout(() => {
+            joinDismissTimersRef.current.delete(m.id);
+            setDismissedJoinMsgIds((prev) => (prev.includes(m.id) ? prev : [...prev, m.id]));
+          }, 4000);
+          joinDismissTimersRef.current.set(m.id, t);
+        }
+      }
+    });
+  }, [messages]);
 
   // Subscribe to real-time pinned message, lock status & custom background updates for ALL occupants in this room
   useEffect(() => {
@@ -1351,7 +1410,7 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
             ? prev.filter((u) => u.id !== latestMsg.senderId)
             : prev
         );
-        if (latestMsg.type !== 'system_welcome' && latestMsg.senderId !== 'system_bot') {
+        if (latestMsg.type !== 'system_welcome' && latestMsg.type !== 'join' && latestMsg.senderId !== 'system_bot') {
           sounds.playMessageReceived();
         }
         const isIncomingPrivate = latestMsg.type === 'private' || Boolean(latestMsg.isPrivate);
@@ -2156,7 +2215,10 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
 
             <button
               type="button"
-              onClick={() => setIsWallpapersModalOpen(true)}
+              onClick={() => {
+                setWallpapersModalMode('personal');
+                setIsWallpapersModalOpen(true);
+              }}
               className="h-8 px-2 rounded-xl text-amber-700 hover:bg-sky-100/70 text-[10.5px] font-black flex items-center justify-center gap-1 active:scale-95 shrink-0 cursor-pointer"
               title="الخلفيات والألوان"
             >
@@ -2297,6 +2359,7 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
                     type="button"
                     onClick={() => {
                       setIsHeaderToolsOpen(false);
+                      setWallpapersModalMode('personal');
                       setIsWallpapersModalOpen(true);
                     }}
                     className="w-full px-2.5 py-2 rounded-xl hover:bg-amber-50 text-slate-800 text-xs font-bold flex items-center justify-between gap-2 cursor-pointer"
@@ -2304,6 +2367,21 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
                     <span className="flex items-center gap-2">
                       <Palette className="w-4 h-4 text-amber-600" />
                       <span>الخلفيات والألوان</span>
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsHeaderToolsOpen(false);
+                      setWallpapersModalMode('notifications');
+                      setIsWallpapersModalOpen(true);
+                    }}
+                    className="w-full px-2.5 py-2 rounded-xl hover:bg-sky-50 text-slate-800 text-xs font-bold flex items-center justify-between gap-2 cursor-pointer"
+                  >
+                    <span className="flex items-center gap-2">
+                      <Sparkles className="w-4 h-4 text-sky-600" />
+                      <span>خلفيات الإشعارات (10)</span>
                     </span>
                   </button>
 
@@ -2796,27 +2874,45 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
 
       {/* 6. Chat Wallpaper & Feed Scroll Area (Locked Inner Scrolling) */}
       <div className="relative flex-1 min-h-0 overflow-hidden flex flex-col">
-        {/* Temporary Local 2-Stage Welcome -> Conduct Notice Banner (Non-Blocking) */}
+        {/* Temporary Local 2-Stage Welcome -> Conduct Notice Pill (Centered Pastel/Tinted Bubble with Shimmer) */}
         {welcomeBannerStage !== null && (
-          <div className="pointer-events-none bg-amber-50/95 border-b border-amber-200/90 px-3 py-1.5 flex items-center justify-between gap-2 text-amber-950 shrink-0 z-10 animate-in fade-in">
-            <div className="flex items-center gap-2 min-w-0">
-              <span className="w-6 h-6 rounded-full bg-white border border-amber-300 text-amber-600 flex items-center justify-center shrink-0">
-                <ShieldAlert className="w-3.5 h-3.5" />
-              </span>
-              <p className="text-[11px] sm:text-xs font-bold text-amber-950 leading-snug line-clamp-2">
-                {welcomeBannerStage === 'welcome'
-                  ? `أهلاً بك في ${room.title}`
-                  : 'يرجى احترام قوانين الغرفة وعدم الإساءة للآخرين'}
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={() => setWelcomeBannerStage(null)}
-              className="pointer-events-auto p-1 rounded-full text-amber-700 hover:text-amber-950 hover:bg-amber-200/60 transition-colors shrink-0 cursor-pointer"
-              title="إخفاء التنبيه"
+          <div className="pointer-events-none px-3 pt-2 pb-1 flex justify-center shrink-0 z-10 animate-in fade-in">
+            <div
+              data-preserve-light={!notifBgPreset.isDark ? 'true' : undefined}
+              style={
+                {
+                  background: notifBgPreset.background,
+                  borderColor: notifBgPreset.borderColor,
+                  color: notifBgPreset.textColor,
+                  '--notif-shimmer-color': notifBgPreset.shimmerColor,
+                } as React.CSSProperties
+              }
+              className="pointer-events-auto notif-bubble-shimmer inline-flex items-center justify-between gap-2 max-w-[94%] sm:max-w-lg px-3.5 py-1.5 rounded-full border shadow-sm"
             >
-              <X className="w-3.5 h-3.5" />
-            </button>
+              <span aria-hidden="true" className="notif-bubble-shimmer-glaze" />
+              <div className="relative z-10 flex items-center gap-2 min-w-0">
+                <span
+                  className="w-5 h-5 rounded-full bg-white/75 border border-black/10 flex items-center justify-center shrink-0"
+                  style={{ color: notifBgPreset.dotColor }}
+                >
+                  <ShieldAlert className="w-3 h-3" />
+                </span>
+                <p className="text-[11px] sm:text-xs font-black leading-snug truncate">
+                  {welcomeBannerStage === 'welcome'
+                    ? `أهلاً بك في ${room.title}`
+                    : 'يرجى احترام قوانين الغرفة وعدم الإساءة للآخرين'}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setWelcomeBannerStage(null)}
+                style={{ color: notifBgPreset.textColor }}
+                className="relative z-10 p-0.5 rounded-full opacity-75 hover:opacity-100 hover:bg-black/10 transition shrink-0 cursor-pointer"
+                title="إخفاء التنبيه"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
           </div>
         )}
 
@@ -2898,6 +2994,42 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
               >
                 <div className="max-w-[90%] px-3 py-1 rounded-full bg-slate-200/85 border border-slate-300/80 text-slate-700 text-[10px] sm:text-[11px] font-bold flex items-center gap-1.5 shadow-xs backdrop-blur-sm truncate">
                   <span className="truncate">{filterInappropriateText(msg.content)}</span>
+                </div>
+              </motion.div>
+            );
+          }
+
+          // Dedicated Public Room Join Bubble (Centered horizontally, prominent shimmer bubble, hides from UI after 4000ms)
+          if (msg.type === 'join') {
+            if (dismissedJoinMsgIds.includes(msg.id)) return null;
+            return (
+              <motion.div
+                key={uniqueKey}
+                initial={{ opacity: 0, y: 10, scale: 0.94 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: -6, scale: 0.94, transition: { duration: 0.2 } }}
+                transition={{ duration: 0.25, ease: 'easeOut' }}
+                className="flex justify-center my-2 px-2"
+              >
+                <div
+                  dir="rtl"
+                  data-preserve-light={!notifBgPreset.isDark ? 'true' : undefined}
+                  style={
+                    {
+                      background: notifBgPreset.background,
+                      borderColor: notifBgPreset.borderColor,
+                      color: notifBgPreset.textColor,
+                      '--notif-shimmer-color': notifBgPreset.shimmerColor,
+                    } as React.CSSProperties
+                  }
+                  className="notif-bubble-shimmer max-w-[92%] sm:max-w-md px-4 sm:px-5 py-2 rounded-full border text-xs sm:text-[13px] font-black flex items-center justify-center gap-2 shadow-sm backdrop-blur-xs"
+                >
+                  <span aria-hidden="true" className="notif-bubble-shimmer-glaze" />
+                  <span
+                    className="relative z-10 w-2 h-2 rounded-full shrink-0"
+                    style={{ backgroundColor: notifBgPreset.dotColor }}
+                  />
+                  <span className="relative z-10 truncate">{msg.content}</span>
                 </div>
               </motion.div>
             );
@@ -3897,7 +4029,7 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
         </div>
       )}
 
-      {/* Unified Chat Wallpaper & Room Background Modal */}
+      {/* Unified Chat Wallpaper, Notifications Background & Room Background Modal */}
       <ChatWallpapersModal
         isOpen={isWallpapersModalOpen}
         onClose={() => setIsWallpapersModalOpen(false)}
@@ -3908,6 +4040,7 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
         roomTitle={room.title}
         activeRoomBackground={effectiveRoomBackground}
         onSelectRoomBackground={handleSelectRoomBackground}
+        initialMode={wallpapersModalMode}
       />
 
     </div>

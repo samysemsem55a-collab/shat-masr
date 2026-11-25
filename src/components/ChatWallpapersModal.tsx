@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   X, 
   Image as ImageIcon, 
@@ -15,6 +15,7 @@ import { CHAT_WALLPAPERS, ROOM_BACKGROUND_THEMES } from '../data/wallpapers';
 import { sounds } from '../utils/soundEffects';
 import { syncUserProfileToFirebase, saveUserThemeSettings } from '../services/firebase';
 import { isUserAdminOrOwner } from '../data/seedData';
+import { NotificationBgSelector } from './NotificationBgSelector';
 
 interface ChatWallpapersModalProps {
   isOpen: boolean;
@@ -26,6 +27,7 @@ interface ChatWallpapersModalProps {
   roomTitle?: string;
   activeRoomBackground?: string;
   onSelectRoomBackground?: (themeId: string) => void;
+  initialMode?: 'personal' | 'room' | 'notifications';
 }
 
 export const ChatWallpapersModal: React.FC<ChatWallpapersModalProps> = ({
@@ -37,19 +39,27 @@ export const ChatWallpapersModal: React.FC<ChatWallpapersModalProps> = ({
   isModerator = false,
   roomTitle,
   activeRoomBackground = 'default',
-  onSelectRoomBackground
+  onSelectRoomBackground,
+  initialMode = 'personal',
 }) => {
-  const [modalMode, setModalMode] = useState<'personal' | 'room'>('personal');
+  const canEditRoomBg = Boolean(isModerator && onSelectRoomBackground);
+  const [modalMode, setModalMode] = useState<'personal' | 'room' | 'notifications'>(
+    initialMode === 'room' && !canEditRoomBg ? 'personal' : initialMode
+  );
   const [filter, setFilter] = useState<'all' | 'nature' | 'free' | 'premium' | 'unlocked'>('all');
   const [roomFilter, setRoomFilter] = useState<'all' | 'nature' | 'gradient' | 'solid'>('all');
   const [previewWallpaper, setPreviewWallpaper] = useState<ChatWallpaper | null>(null);
   const [purchasingId, setPurchasingId] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
+  useEffect(() => {
+    if (!isOpen) return;
+    setModalMode(initialMode === 'room' && !canEditRoomBg ? 'personal' : initialMode);
+  }, [isOpen, initialMode, canEditRoomBg]);
+
   if (!isOpen) return null;
 
   const isOwner = isUserAdminOrOwner(currentUser);
-  const canEditRoomBg = Boolean(isModerator && onSelectRoomBackground);
   const activeWallpaperId = currentUser.chatWallpaper || 'wp_egypt_gold';
   const unlockedIds = new Set<string>([
     'wp_egypt_gold',
@@ -149,6 +159,8 @@ export const ChatWallpapersModal: React.FC<ChatWallpapersModalProps> = ({
               <p className="text-[11px] sm:text-xs text-slate-500 truncate">
                 {modalMode === 'room' && roomTitle
                   ? `اختر خلفية طبيعية أو لونية تظهر لجميع المتواجدين في ${roomTitle}`
+                  : modalMode === 'notifications'
+                  ? 'عاين واختر من بين 10 خلفيات لامعة لإشعارات الانضمام والتنبيهات'
                   : 'اختر خلفيات طبيعية وجمالية واضحة ومريحة للعين'}
               </p>
             </div>
@@ -159,24 +171,35 @@ export const ChatWallpapersModal: React.FC<ChatWallpapersModalProps> = ({
           </button>
         </div>
 
-        {/* Unified Mode Switch when opened inside a Room by a Moderator */}
-        {canEditRoomBg && (
-          <div className="px-3.5 py-2 bg-white border-b border-slate-200 flex items-center gap-2 shrink-0">
-            <button
-              type="button"
-              onClick={() => setModalMode('personal')}
-              className={`flex-1 py-1.5 px-3 rounded-xl text-xs font-black transition cursor-pointer ${
-                modalMode === 'personal'
-                  ? 'bg-indigo-600 text-white shadow-xs'
-                  : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-              }`}
-            >
-              خلفيتك الخاصة 🎨
-            </button>
+        {/* Unified Mode Switch */}
+        <div className="px-3.5 py-2 bg-white border-b border-slate-200 flex items-center gap-1.5 shrink-0 overflow-x-auto scrollbar-none">
+          <button
+            type="button"
+            onClick={() => setModalMode('personal')}
+            className={`flex-1 min-w-fit py-1.5 px-3 rounded-xl text-xs font-black transition cursor-pointer whitespace-nowrap ${
+              modalMode === 'personal'
+                ? 'bg-indigo-600 text-white shadow-xs'
+                : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+            }`}
+          >
+            خلفيتك الخاصة 🎨
+          </button>
+          <button
+            type="button"
+            onClick={() => setModalMode('notifications')}
+            className={`flex-1 min-w-fit py-1.5 px-3 rounded-xl text-xs font-black transition cursor-pointer whitespace-nowrap ${
+              modalMode === 'notifications'
+                ? 'bg-sky-600 text-white shadow-xs'
+                : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+            }`}
+          >
+            خلفيات الإشعارات ✨
+          </button>
+          {canEditRoomBg && (
             <button
               type="button"
               onClick={() => setModalMode('room')}
-              className={`flex-1 py-1.5 px-3 rounded-xl text-xs font-black transition cursor-pointer ${
+              className={`flex-1 min-w-fit py-1.5 px-3 rounded-xl text-xs font-black transition cursor-pointer whitespace-nowrap ${
                 modalMode === 'room'
                   ? 'bg-emerald-600 text-white shadow-xs'
                   : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
@@ -184,10 +207,18 @@ export const ChatWallpapersModal: React.FC<ChatWallpapersModalProps> = ({
             >
               خلفية الغرفة للجميع 🌟
             </button>
-          </div>
-        )}
+          )}
+        </div>
 
-        {modalMode === 'room' && canEditRoomBg ? (
+        {modalMode === 'notifications' ? (
+          <div className="p-3.5 sm:p-4 overflow-y-auto flex-1 min-h-0">
+            <NotificationBgSelector
+              currentUser={currentUser}
+              onUpdateUser={onUpdateUser}
+              onApplied={() => onClose()}
+            />
+          </div>
+        ) : modalMode === 'room' && canEditRoomBg ? (
           <>
             <div className="px-3.5 py-2.5 bg-slate-50 border-b border-slate-200 flex items-center gap-1.5 overflow-x-auto scrollbar-none shrink-0">
               {[

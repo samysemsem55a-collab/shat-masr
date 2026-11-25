@@ -447,3 +447,182 @@ export function getRoomBackgroundThemeById(themeId?: string): RoomBackgroundThem
   if (!themeId || themeId === 'default') return undefined;
   return ROOM_BACKGROUND_THEMES.find(t => t.id === themeId);
 }
+
+export interface NotificationBgPreset {
+  id: string;
+  name: string;
+  badge: string;
+  background: string;
+  borderColor: string;
+  textColor: string;
+  dotColor: string;
+  shimmerColor: string;
+  previewSwatch: string;
+  isDark?: boolean;
+}
+
+export const DEFAULT_NOTIFICATION_BG_PRESET_ID = 'notif_sky_pearl';
+
+// Exactly 10 curated high-contrast notification background presets
+export const NOTIFICATION_BG_PRESETS: NotificationBgPreset[] = [
+  {
+    id: 'notif_sky_pearl',
+    name: 'سماوي لؤلؤي',
+    badge: 'افتراضي',
+    background: 'linear-gradient(135deg, #f0f9ff 0%, #eef2ff 52%, #ecfeff 100%)',
+    borderColor: '#7dd3fc',
+    textColor: '#0c4a6e',
+    dotColor: '#10b981',
+    shimmerColor: 'rgba(255, 255, 255, 0.72)',
+    previewSwatch: 'linear-gradient(135deg, #bae6fd 0%, #c7d2fe 100%)',
+    isDark: false,
+  },
+  {
+    id: 'notif_amber_cream',
+    name: 'ذهبي كريمي',
+    badge: 'دافئ',
+    background: 'linear-gradient(135deg, #fffbeb 0%, #fef3c7 55%, #ffedd5 100%)',
+    borderColor: '#fcd34d',
+    textColor: '#78350f',
+    dotColor: '#d97706',
+    shimmerColor: 'rgba(255, 255, 255, 0.75)',
+    previewSwatch: 'linear-gradient(135deg, #fde68a 0%, #fed7aa 100%)',
+    isDark: false,
+  },
+  {
+    id: 'notif_emerald_mint',
+    name: 'نعناع زمردي',
+    badge: 'منعش',
+    background: 'linear-gradient(135deg, #ecfdf5 0%, #d1fae5 55%, #ccfbf1 100%)',
+    borderColor: '#6ee7b7',
+    textColor: '#064e3b',
+    dotColor: '#059669',
+    shimmerColor: 'rgba(255, 255, 255, 0.74)',
+    previewSwatch: 'linear-gradient(135deg, #a7f3d0 0%, #99f6e4 100%)',
+    isDark: false,
+  },
+  {
+    id: 'notif_rose_blossom',
+    name: 'وردي باستيل',
+    badge: 'ناعم',
+    background: 'linear-gradient(135deg, #fff1f2 0%, #ffe4e6 55%, #fce7f3 100%)',
+    borderColor: '#fda4af',
+    textColor: '#881337',
+    dotColor: '#e11d48',
+    shimmerColor: 'rgba(255, 255, 255, 0.72)',
+    previewSwatch: 'linear-gradient(135deg, #fecdd3 0%, #fbcfe8 100%)',
+    isDark: false,
+  },
+  {
+    id: 'notif_lavender_silk',
+    name: 'لافندر حريري',
+    badge: 'هادئ',
+    background: 'linear-gradient(135deg, #f5f3ff 0%, #ede9fe 55%, #fae8ff 100%)',
+    borderColor: '#c4b5fd',
+    textColor: '#4c1d95',
+    dotColor: '#7c3aed',
+    shimmerColor: 'rgba(255, 255, 255, 0.72)',
+    previewSwatch: 'linear-gradient(135deg, #ddd6fe 0%, #f5d0fe 100%)',
+    isDark: false,
+  },
+  {
+    id: 'notif_sunset_coral',
+    name: 'شفق مرجاني',
+    badge: 'مشرق',
+    background: 'linear-gradient(135deg, #fff7ed 0%, #ffedd5 52%, #ffe4e6 100%)',
+    borderColor: '#fdba74',
+    textColor: '#7c2d12',
+    dotColor: '#ea580c',
+    shimmerColor: 'rgba(255, 255, 255, 0.74)',
+    previewSwatch: 'linear-gradient(135deg, #fed7aa 0%, #fecdd3 100%)',
+    isDark: false,
+  },
+  {
+    id: 'notif_aqua_breeze',
+    name: 'نسيم فيروزي',
+    badge: 'صافي',
+    background: 'linear-gradient(135deg, #ecfeff 0%, #cffafe 55%, #e0f2fe 100%)',
+    borderColor: '#67e8f9',
+    textColor: '#164e63',
+    dotColor: '#0891b2',
+    shimmerColor: 'rgba(255, 255, 255, 0.74)',
+    previewSwatch: 'linear-gradient(135deg, #a5f3fc 0%, #bae6fd 100%)',
+    isDark: false,
+  },
+  {
+    id: 'notif_champagne_gold',
+    name: 'شامبانيا ملكي',
+    badge: 'فخم',
+    background: 'linear-gradient(135deg, #fefce8 0%, #fef9c3 52%, #fde68a 100%)',
+    borderColor: '#eab308',
+    textColor: '#713f12',
+    dotColor: '#ca8a04',
+    shimmerColor: 'rgba(255, 255, 255, 0.78)',
+    previewSwatch: 'linear-gradient(135deg, #fef08a 0%, #fcd34d 100%)',
+    isDark: false,
+  },
+  {
+    id: 'notif_midnight_sapphire',
+    name: 'ياقوت ليلي',
+    badge: 'ليلي',
+    background: 'linear-gradient(135deg, #1e1b4b 0%, #312e81 55%, #1d4ed8 100%)',
+    borderColor: '#818cf8',
+    textColor: '#f8fafc',
+    dotColor: '#38bdf8',
+    shimmerColor: 'rgba(255, 255, 255, 0.28)',
+    previewSwatch: 'linear-gradient(135deg, #1e1b4b 0%, #1d4ed8 100%)',
+    isDark: true,
+  },
+  {
+    id: 'notif_obsidian_emerald',
+    name: 'زمرد ليلي',
+    badge: 'أنيق',
+    background: 'linear-gradient(135deg, #064e3b 0%, #0f766e 55%, #0f172a 100%)',
+    borderColor: '#34d399',
+    textColor: '#ecfdf5',
+    dotColor: '#34d399',
+    shimmerColor: 'rgba(255, 255, 255, 0.26)',
+    previewSwatch: 'linear-gradient(135deg, #064e3b 0%, #0f172a 100%)',
+    isDark: true,
+  },
+];
+
+export function getNotificationBgPresetById(presetId?: string): NotificationBgPreset {
+  if (presetId) {
+    const found = NOTIFICATION_BG_PRESETS.find((p) => p.id === presetId);
+    if (found) return found;
+  }
+  return NOTIFICATION_BG_PRESETS[0];
+}
+
+export function readSavedNotificationBgPresetId(
+  user?: { id?: string; notificationBgPreset?: string } | null
+): string {
+  if (user?.notificationBgPreset && NOTIFICATION_BG_PRESETS.some((p) => p.id === user.notificationBgPreset)) {
+    return user.notificationBgPreset;
+  }
+  if (typeof window !== 'undefined') {
+    try {
+      const userScoped = user?.id ? localStorage.getItem(`shat_masr_notif_bg_preset_${user.id}`) : null;
+      const globalVal = localStorage.getItem('shat_masr_notif_bg_preset');
+      const candidate = userScoped || globalVal || '';
+      if (candidate && NOTIFICATION_BG_PRESETS.some((p) => p.id === candidate)) {
+        return candidate;
+      }
+    } catch {}
+  }
+  return DEFAULT_NOTIFICATION_BG_PRESET_ID;
+}
+
+export function saveNotificationBgPresetId(userId: string | undefined, presetId: string): void {
+  const validId = getNotificationBgPresetById(presetId).id;
+  if (typeof window !== 'undefined') {
+    try {
+      localStorage.setItem('shat_masr_notif_bg_preset', validId);
+      if (userId) {
+        localStorage.setItem(`shat_masr_notif_bg_preset_${userId}`, validId);
+      }
+      window.dispatchEvent(new CustomEvent('shatmasr:notif_bg_updated', { detail: { presetId: validId } }));
+    } catch {}
+  }
+}

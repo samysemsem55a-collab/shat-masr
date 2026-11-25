@@ -42,6 +42,8 @@ import {
 } from '../utils/userRanks';
 import { AvatarWithFrame } from './AvatarWithFrame';
 import { PWAInstallButton } from './PWAInstallButton';
+import { NotificationBgSelector } from './NotificationBgSelector';
+import { readSavedNotificationBgPresetId } from '../data/wallpapers';
 import {
   saveUserThemeSettings,
   updateNotificationPreferences,
@@ -493,6 +495,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
       fontPreference,
       muteJoinNotices,
       dataSaverMode,
+      notificationBgPreset: readSavedNotificationBgPresetId(currentUser),
     }).catch(() => {});
 
     const allowCustomBannerSave =
@@ -1348,6 +1351,19 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                   </button>
                 </div>
               </div>
+            </div>
+
+            {/* Notification Bubble Background Presets (10 Curated Presets with Live Preview) */}
+            <div className="p-4 rounded-2xl bg-white border border-slate-200 space-y-3">
+              <div className="flex items-center gap-2 border-b border-slate-100 pb-2">
+                <Palette className="w-4 h-4 text-indigo-600" />
+                <h4 className="text-xs font-black text-slate-900">خلفية فقاعات الانضمام والإشعارات ✨</h4>
+              </div>
+              <NotificationBgSelector
+                currentUser={currentUser}
+                onUpdateUser={onUpdateUser}
+                compact
+              />
             </div>
 
             {/* Support & Contact Card */}

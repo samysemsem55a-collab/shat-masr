@@ -328,6 +328,39 @@ html.dark {
   animation: luxuryRecipientGlowPulse 1.7s ease-in-out infinite;
 }
 
+@keyframes notifGlossSweep {
+  0%, 100% {
+    transform: translateX(-125%) skewX(-18deg);
+    opacity: 0.25;
+  }
+  50% {
+    transform: translateX(155%) skewX(-18deg);
+    opacity: 0.78;
+  }
+}
+
+.notif-bubble-shimmer {
+  position: relative;
+  overflow: hidden;
+}
+
+.notif-bubble-shimmer-glaze {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 58%;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--notif-shimmer-color, rgba(255, 255, 255, 0.58)) 50%,
+    transparent 100%
+  );
+  pointer-events: none;
+  animation: notifGlossSweep 3.4s ease-in-out infinite;
+  will-change: transform, opacity;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .animate-subtle-new-user-pulse,
   .animate-subtle-gift-pulse,
@@ -340,6 +373,7 @@ html.dark {
   .animate-luxury-banner-sweep,
   .animate-luxury-sender-glow,
   .animate-luxury-recipient-glow,
+  .notif-bubble-shimmer-glaze,
   .animate-fade-in,
   .animate-in {
     animation: none !important;

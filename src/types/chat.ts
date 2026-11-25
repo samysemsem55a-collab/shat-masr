@@ -59,6 +59,7 @@ export interface User {
   profileVisitsCount?: number;
   dataSaverMode?: boolean;
   muteJoinNotices?: boolean;
+  notificationBgPreset?: string;
   xp?: number;
   notificationPrefs?: {
     directMessages: boolean;
@@ -224,7 +225,7 @@ export interface Message {
   senderVerified?: boolean;
   senderFont?: string;
   badges?: string[];
-  type: 'text' | 'voice' | 'image' | 'video' | 'sticker' | 'gift' | 'system_welcome' | 'quick_phrase' | 'private' | 'coins_transfer';
+  type: 'text' | 'voice' | 'image' | 'video' | 'sticker' | 'gift' | 'system_welcome' | 'quick_phrase' | 'private' | 'coins_transfer' | 'join';
   isPrivate?: boolean;
   content: string;
   text?: string;

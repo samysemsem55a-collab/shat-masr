@@ -1015,7 +1015,7 @@ export async function sendFirestoreMessage(
       throw err;
     }
 
-    if (newMsg.type !== 'system_welcome' && !isPrivateMsg) {
+    if (newMsg.type !== 'system_welcome' && newMsg.type !== 'join' && !isPrivateMsg) {
       const previewContent =
         newMsg.type === 'gift' && newMsg.gift?.name
           ? `🎁 أرسل ${newMsg.gift.name}`
@@ -4646,6 +4646,7 @@ export interface UserThemeSettings {
   fontPreference?: 'cairo' | 'tajawal' | 'amiri';
   muteJoinNotices?: boolean;
   dataSaverMode?: boolean;
+  notificationBgPreset?: string;
 }
 
 export async function saveUserThemeSettings(uid: string, settings: UserThemeSettings): Promise<void> {
@@ -5962,7 +5963,7 @@ export async function toggleForumPostLike(
       actorName,
       actorAvatar: likerUser?.avatar || '',
       kind: 'forum_like',
-      message: `أعجب ${actorName} بمنشورك`,
+      message: `أعجب ${actorName} بمنشورك في المنتدى`,
       refId: postId
     }).catch(() => {});
   }
@@ -6057,7 +6058,7 @@ export async function addForumComment(
       actorName: user.name || 'عضو شات مصر',
       actorAvatar: user.avatar || '',
       kind: 'forum_comment',
-      message: `علق ${user.name || 'عضو شات مصر'} على منشورك`,
+      message: `علق ${user.name || 'عضو شات مصر'} على منشورك في المنتدى`,
       refId: postId
     }).catch(() => {});
   }
@@ -7767,7 +7768,7 @@ export function subscribeToUserNotifications(
             const kind = String(data.kind || 'info');
             if (!ALLOWED_BELL_NOTIFICATION_KINDS.has(kind)) return;
             const id = data.id || d.id;
-            const resolvedTs = resolveTimestampMs(data.createdAt) || Number(data.createdAtMs) || Date.now();
+            const resolvedTs = resolveTimestampMs(data.createdAt) ?? (Number(data.createdAtMs) || Date.now());
             const existing = listById.get(id);
             listById.set(id, {
               id,

@@ -72,6 +72,9 @@ interface RoomsViewProps {
   cumulativeVisitorsCount?: number;
   onOpenOnlineUsers?: () => void;
   onOpenUserProfile?: (user: User) => void;
+  unreadForumNotifsCount?: number;
+  unreadStoryNotifsCount?: number;
+  onOpenNotifications?: () => void;
 }
 
 function formatRelativeArabicTime(ts: number): string {
@@ -669,6 +672,9 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
   cumulativeVisitorsCount = 15480,
   onOpenOnlineUsers,
   onOpenUserProfile,
+  unreadForumNotifsCount = 0,
+  unreadStoryNotifsCount = 0,
+  onOpenNotifications,
 }) => {
   const [forumPosts, setForumPosts] = useState<ForumPost[]>([]);
   const [forumLimit, setForumLimit] = useState<number>(20);
@@ -1190,7 +1196,12 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
       </div>
 
       {/* 1.5 Interactive 24h Stories Carousel */}
-      <StoriesBar currentUser={currentUser} onOpenUserProfile={onOpenUserProfile} />
+      <StoriesBar
+        currentUser={currentUser}
+        onOpenUserProfile={onOpenUserProfile}
+        unreadStoryNotifsCount={unreadStoryNotifsCount}
+        onOpenNotifications={onOpenNotifications}
+      />
 
       {/* 2. Top Compact Horizontal Strip: غرف شات مصر العامة + Live Audio Rooms */}
       <div id="home-rooms-section" className="bg-white/95 border border-slate-200 rounded-2xl mt-1 sm:mt-2 p-2 sm:p-2.5 shadow-sm">
@@ -1532,9 +1543,22 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
                     شارك خاطرة تعارف، صورة لطيفة، أو ابدأ محادثة خاصة فورية 🌸
                   </p>
                 </div>
-                <span className="px-2.5 py-0.5 rounded-full bg-black/25 border border-white/25 text-white text-[10px] font-black">
-                  {filteredPosts.length} مشاركة
-                </span>
+                <div className="flex items-center gap-1.5">
+                  {unreadForumNotifsCount > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => onOpenNotifications?.()}
+                      className="px-2 py-0.5 rounded-full bg-rose-600 hover:bg-rose-500 text-white text-[10px] font-black flex items-center gap-1 shadow-xs tabular-nums cursor-pointer transition"
+                      title="عرض إشعارات المنتدى غير المقروءة"
+                    >
+                      <span>🔔</span>
+                      <span>{unreadForumNotifsCount > 99 ? '99+' : unreadForumNotifsCount}</span>
+                    </button>
+                  )}
+                  <span className="px-2.5 py-0.5 rounded-full bg-black/25 border border-white/25 text-white text-[10px] font-black">
+                    {filteredPosts.length} مشاركة
+                  </span>
+                </div>
               </div>
             </div>
 

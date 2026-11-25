@@ -32,6 +32,8 @@ import { toast } from '../utils/appToast';
 interface StoriesBarProps {
   currentUser: User;
   onOpenUserProfile?: (user: User) => void;
+  unreadStoryNotifsCount?: number;
+  onOpenNotifications?: () => void;
 }
 
 const STORY_GRADIENTS = [
@@ -73,6 +75,8 @@ interface UserStoryGroup {
 export const StoriesBar: React.FC<StoriesBarProps> = ({
   currentUser,
   onOpenUserProfile,
+  unreadStoryNotifsCount = 0,
+  onOpenNotifications,
 }) => {
   const [stories, setStories] = useState<StoryItem[]>([]);
   // Isolated single-user story viewer state (NEVER advances across different users)
@@ -443,6 +447,17 @@ export const StoriesBar: React.FC<StoriesBarProps> = ({
           <div className="flex items-center gap-1 min-w-0">
             <Sparkles className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-amber-500 shrink-0" />
             <span className="text-[11px] sm:text-xs font-black text-slate-900 truncate">قصص الأعضاء (24 ساعة)</span>
+            {unreadStoryNotifsCount > 0 && (
+              <button
+                type="button"
+                onClick={() => onOpenNotifications?.()}
+                className="px-1.5 py-0.5 rounded-full bg-rose-600 hover:bg-rose-500 text-white text-[9.5px] font-black flex items-center gap-0.5 shadow-2xs tabular-nums cursor-pointer transition shrink-0"
+                title="عرض إشعارات القصص غير المقروءة"
+              >
+                <span>🔔</span>
+                <span>{unreadStoryNotifsCount > 99 ? '99+' : unreadStoryNotifsCount}</span>
+              </button>
+            )}
             {typeof navigator !== 'undefined' && navigator.onLine === false && socketState !== 'connected' && (
               <span className="px-1.5 py-0.5 rounded-full bg-amber-50 border border-amber-200 text-amber-700 text-[9.5px] font-bold shrink-0 animate-pulse">
                 جاري التحديث...

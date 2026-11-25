@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 
 import { RealtimeUserNotification } from '../services/firebase';
+import { getNotificationBgPresetById } from '../data/wallpapers';
 
 interface NotificationsModalProps {
   isOpen: boolean;
@@ -20,6 +21,9 @@ interface NotificationsModalProps {
   realtimeNotifications?: RealtimeUserNotification[];
   onMarkAsRead?: (notificationId: string) => void;
   onMarkAllAsRead?: () => void;
+  unreadCount?: number;
+  highlightedUnreadIds?: string[];
+  notificationBgPresetId?: string;
 }
 
 function formatNotifTime(ts: number): string {
@@ -38,8 +42,14 @@ export const NotificationsModal: React.FC<NotificationsModalProps> = ({
   realtimeNotifications = [],
   onMarkAsRead,
   onMarkAllAsRead,
+  unreadCount = 0,
+  highlightedUnreadIds = [],
+  notificationBgPresetId,
 }) => {
   const allowedKinds = new Set(['forum_like', 'forum_comment', 'story_like', 'story_comment', 'app_update', 'info']);
+  const highlightedSet = new Set(highlightedUnreadIds);
+  const activePreset = getNotificationBgPresetById(notificationBgPresetId);
+
   const notifications = realtimeNotifications
     .filter((n) => allowedKinds.has(n.kind))
     .map((n) => ({
@@ -62,9 +72,14 @@ export const NotificationsModal: React.FC<NotificationsModalProps> = ({
           : n.actorName || 'إشعار',
       desc: n.message,
       time: formatNotifTime(n.createdAt || Date.now()),
-      isNew: !n.isRead,
+      isNew: !n.isRead || highlightedSet.has(n.id),
+      isDbUnread: !n.isRead,
     }));
-  const hasUnread = notifications.some((n) => n.isNew);
+  const hasUnread = notifications.some((n) => n.isDbUnread);
+  const badgeCount = Math.max(
+    unreadCount,
+    notifications.filter((n) => n.isNew).length
+  );
 
   return (
     <AnimatePresence>
@@ -93,6 +108,11 @@ export const NotificationsModal: React.FC<NotificationsModalProps> = ({
               <Bell className="w-4 h-4" />
             </div>
             <h3 className="text-sm font-black text-slate-900 truncate">مركز الإشعارات الفورية</h3>
+            {badgeCount > 0 && (
+              <span className="px-2 py-0.5 rounded-full bg-rose-600 text-white text-[10px] font-black tabular-nums shrink-0">
+                {badgeCount > 99 ? '99+' : badgeCount}
+              </span>
+            )}
           </div>
           <div className="flex items-center gap-1.5 shrink-0">
             {hasUnread && onMarkAllAsRead && (
@@ -121,26 +141,59 @@ export const NotificationsModal: React.FC<NotificationsModalProps> = ({
               <div
                 key={n.id}
                 onClick={() => {
-                  if (n.isNew && onMarkAsRead) onMarkAsRead(n.id);
+                  if (n.isDbUnread && onMarkAsRead) onMarkAsRead(n.id);
                 }}
+                data-preserve-light={n.isNew && !activePreset.isDark ? 'true' : undefined}
+                style={
+                  n.isNew
+                    ? ({
+                        background: activePreset.background,
+                        borderColor: activePreset.borderColor,
+                        color: activePreset.textColor,
+                        '--notif-shimmer-color': activePreset.shimmerColor,
+                      } as React.CSSProperties)
+                    : undefined
+                }
                 className={`p-3 rounded-2xl border flex items-start gap-3 transition-colors shadow-sm ${
                   n.isNew
-                    ? 'bg-indigo-50/80 border-indigo-200 cursor-pointer hover:bg-indigo-100/70'
+                    ? 'notif-bubble-shimmer cursor-pointer'
                     : 'bg-white border-slate-200'
                 }`}
               >
-                <div className="text-2xl shrink-0 mt-0.5">{n.icon}</div>
-                <div className="flex-1 space-y-1">
+                {n.isNew && (
+                  <span aria-hidden="true" className="notif-bubble-shimmer-glaze" />
+                )}
+                <div className="relative z-10 text-2xl shrink-0 mt-0.5">{n.icon}</div>
+                <div className="relative z-10 flex-1 space-y-1">
                   <div className="flex items-center justify-between gap-2">
-                    <h4 className="text-xs font-black text-slate-900 flex items-center gap-1.5">
+                    <h4
+                      className={`text-xs font-black flex items-center gap-1.5 ${
+                        n.isNew ? '' : 'text-slate-900'
+                      }`}
+                    >
                       <span>{n.title}</span>
                       {n.isNew && (
-                        <span className="w-2 h-2 rounded-full bg-indigo-600 shrink-0" />
+                        <span
+                          className="w-2 h-2 rounded-full shrink-0"
+                          style={{ backgroundColor: activePreset.dotColor }}
+                        />
                       )}
                     </h4>
-                    <span className="text-[10px] text-slate-500 shrink-0">{n.time}</span>
+                    <span
+                      className={`text-[10px] shrink-0 ${
+                        n.isNew ? 'opacity-80 font-bold' : 'text-slate-500'
+                      }`}
+                    >
+                      {n.time}
+                    </span>
                   </div>
-                  <p className="text-xs text-slate-600 leading-relaxed">{n.desc}</p>
+                  <p
+                    className={`text-xs leading-relaxed ${
+                      n.isNew ? 'font-bold opacity-95' : 'text-slate-600'
+                    }`}
+                  >
+                    {n.desc}
+                  </p>
                 </div>
               </div>
             ))

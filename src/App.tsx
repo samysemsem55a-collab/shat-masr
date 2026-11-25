@@ -38,6 +38,7 @@ import {
 
 import { User, Room, Message, GiftItem, VipTier, SpeakerSeat, FriendRequest, DailyMission, UnreadSenderSummary, ForumPost } from './types/chat';
 import { INITIAL_ROOMS, getOrCreateUser, isUserAdminOrOwner, hasCompletedMandatoryProfile } from './data/seedData';
+import { readSavedNotificationBgPresetId } from './data/wallpapers';
 import { sounds } from './utils/soundEffects';
 import { preloadAppAssets } from './utils/assetCache';
 import { applySmoothAppUpdate } from './utils/appUpdater';
@@ -478,6 +479,7 @@ export default function App() {
   const [isCreateRoomOpen, setIsCreateRoomOpen] = useState(false);
   const [createRoomType, setCreateRoomType] = useState<'voice' | 'text_only'>('voice');
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
+  const [recentlyViewedUnreadIds, setRecentlyViewedUnreadIds] = useState<string[]>([]);
   const [isOnlineUsersOpen, setIsOnlineUsersOpen] = useState(false);
   const [isPrivateChatDrawerOpen, setIsPrivateChatDrawerOpen] = useState(false);
   const [isRadioModalOpen, setIsRadioModalOpen] = useState(false);
@@ -1588,6 +1590,16 @@ export default function App() {
     [bellNotifications]
   );
 
+  const unreadForumNotificationsCount = React.useMemo(
+    () => bellNotifications.filter((n) => !n.isRead && (n.kind === 'forum_like' || n.kind === 'forum_comment')).length,
+    [bellNotifications]
+  );
+
+  const unreadStoryNotificationsCount = React.useMemo(
+    () => bellNotifications.filter((n) => !n.isRead && (n.kind === 'story_like' || n.kind === 'story_comment')).length,
+    [bellNotifications]
+  );
+
   // Load older room messages upward (30 per page via pure onSnapshot limit expansion)
   const handleLoadOlderRoomMessages = useCallback(async (): Promise<number> => {
     if (!activeRoom?.id || isLoadingOlderRoomMsgs || noMoreOlderRoomMsgsRef.current) return 0;
@@ -1701,6 +1713,28 @@ export default function App() {
       unsubFirebase();
     };
   }, [activeRoom?.id, roomMsgLimit]);
+
+  // Send one public join notification through the real-time message flow when entering a room
+  const lastAnnouncedJoinedRoomRef = useRef<string | null>(null);
+  useEffect(() => {
+    const roomId = activeRoom?.id;
+    if (!roomId) {
+      lastAnnouncedJoinedRoomRef.current = null;
+      return;
+    }
+    if (!isProfileReady || !currentUserRef.current?.id) return;
+    if (lastAnnouncedJoinedRoomRef.current === roomId) return;
+    lastAnnouncedJoinedRoomRef.current = roomId;
+
+    const joinName = (currentUserRef.current.name || 'عضو').trim();
+    if (!joinName) return;
+
+    void handleSendMessage({
+      type: 'join',
+      content: `انضم ${joinName} إلى الشات`,
+      text: `انضم ${joinName} إلى الشات`,
+    });
+  }, [activeRoom?.id, isProfileReady]);
 
   // Real-Time Room WebSocket & RTDB presence synchronization for active room
   useEffect(() => {
@@ -1883,7 +1917,7 @@ export default function App() {
       return;
     }
 
-    if (currentUser.isMuted) {
+    if (msgData.type !== 'join' && currentUser.isMuted) {
       showAppNotice('عفواً، تم كتمك بواسطة الإدارة ولا يمكنك المشاركة بالكتابة حالياً 🔇', 'warn');
       return;
     }
@@ -1892,7 +1926,9 @@ export default function App() {
     if (!content && !msgData.audioUrl && !msgData.gift && !msgData.mediaUrl && !msgData.imageUrl && msgData.type !== 'sticker') return;
 
     try {
-      sounds.playMessageSent();
+      if (msgData.type !== 'join') {
+        sounds.playMessageSent();
+      }
       const generatedId = msgData.id || `msg_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
       const tempId = msgData.tempId || msgData.clientId || generatedId;
       const newMsg: Message = {
@@ -1940,7 +1976,7 @@ export default function App() {
       });
 
       // Optimistically update room card lastMessage preview on Home screen
-      if (newMsg.type !== 'system_welcome' && !newMsg.isPrivate) {
+      if (newMsg.type !== 'system_welcome' && newMsg.type !== 'join' && !newMsg.isPrivate) {
         const previewSummary =
           newMsg.type === 'gift' && newMsg.gift?.name
             ? `🎁 أرسل ${newMsg.gift.name}`
@@ -1982,17 +2018,19 @@ export default function App() {
         });
 
       // 3. Track Daily Mission, Shared Room Daily Mission, and XP progress
-      updateMissionProgress('send_5_messages', 1);
-      contributeToSharedRoomMission('messages', currentUser.id, 1).catch(() => {});
-      grantUserXp(currentUser.id, 5).catch(() => {});
+      if (newMsg.type !== 'join') {
+        updateMissionProgress('send_5_messages', 1);
+        contributeToSharedRoomMission('messages', currentUser.id, 1).catch(() => {});
+        grantUserXp(currentUser.id, 5).catch(() => {});
 
-      // Award "عضو نشط" badge if not yet granted
-      if (!currentUser.badges?.includes('عضو نشط')) {
-        const updated = await awardBadgeToUser(currentUser.id, 'عضو نشط');
-        const updatedUser = { ...currentUser, badges: updated };
-        setCurrentUser(updatedUser);
-        realtimeSocket.updateProfile(updatedUser);
-        syncUserProfileToFirebase(updatedUser);
+        // Award "عضو نشط" badge if not yet granted
+        if (!currentUser.badges?.includes('عضو نشط')) {
+          const updated = await awardBadgeToUser(currentUser.id, 'عضو نشط');
+          const updatedUser = { ...currentUser, badges: updated };
+          setCurrentUser(updatedUser);
+          realtimeSocket.updateProfile(updatedUser);
+          syncUserProfileToFirebase(updatedUser);
+        }
       }
     } catch (e) {
       console.warn("Send message error:", e);
@@ -2342,11 +2380,19 @@ export default function App() {
   }, []);
 
   const openNotifications = useCallback(() => {
+    const currentUnreadIds = bellNotifications
+      .filter((n) => !n.isRead)
+      .map((n) => n.id);
+    setRecentlyViewedUnreadIds(currentUnreadIds);
     setIsNotificationsOpen(true);
-  }, []);
+    if (currentUnreadIds.length > 0) {
+      markAllNotificationsRead();
+    }
+  }, [bellNotifications, markAllNotificationsRead]);
 
   const closeNotifications = useCallback(() => {
     setIsNotificationsOpen(false);
+    setRecentlyViewedUnreadIds([]);
     markAllNotificationsRead();
   }, [markAllNotificationsRead]);
   const openOnlineUsers = useCallback(() => setIsOnlineUsersOpen(true), []);
@@ -2457,7 +2503,7 @@ export default function App() {
       if (isVipOpen) { setIsVipOpen(false); return; }
       if (isGiftModalOpen) { setIsGiftModalOpen(false); return; }
       if (isCreateRoomOpen) { setIsCreateRoomOpen(false); return; }
-      if (isNotificationsOpen) { setIsNotificationsOpen(false); return; }
+      if (isNotificationsOpen) { closeNotifications(); return; }
       if (isOnlineUsersOpen) { setIsOnlineUsersOpen(false); return; }
       if (isPrivateChatDrawerOpen) {
         if (isInsidePrivateChat) {
@@ -3059,6 +3105,9 @@ export default function App() {
             onOpenOnlineUsers={openOnlineUsers}
             onClaimSharedRewardCoins={handleClaimSharedRewardCoins}
             onShareForumPost={handleShareForumPostToPrivateChat}
+            unreadForumNotifsCount={unreadForumNotificationsCount}
+            unreadStoryNotifsCount={unreadStoryNotificationsCount}
+            onOpenNotifications={openNotifications}
           />
         </div>
 
@@ -3236,6 +3285,9 @@ export default function App() {
         realtimeNotifications={bellNotifications}
         onMarkAsRead={markNotificationRead}
         onMarkAllAsRead={markAllNotificationsRead}
+        unreadCount={unreadNotificationsCount}
+        highlightedUnreadIds={recentlyViewedUnreadIds}
+        notificationBgPresetId={readSavedNotificationBgPresetId(currentUser)}
       />
 
       {/* Online Users List Side Drawer with real presence occupants */}
