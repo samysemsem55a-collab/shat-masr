@@ -12,13 +12,16 @@ import {
   Heart,
   Share2,
   Trash2,
+  MessageCircle,
 } from 'lucide-react';
-import { StoryItem, User } from '../types/chat';
+import { StoryItem, StoryComment, User } from '../types/chat';
 import {
   subscribeToActiveStories,
   createStory,
   markStoryViewed,
   toggleStoryLike,
+  subscribeToStoryComments,
+  addStoryComment,
   deleteStory,
 } from '../services/firebase';
 import { compressImageFile } from '../utils/imageCompression';
@@ -78,6 +81,11 @@ export const StoriesBar: React.FC<StoriesBarProps> = ({
   const [progress, setProgress] = useState(0);
   const [isPaused, setIsPaused] = useState(false);
   const [showViewersModal, setShowViewersModal] = useState(false);
+  const [showCommentsSheet, setShowCommentsSheet] = useState(false);
+  const [storyComments, setStoryComments] = useState<StoryComment[]>([]);
+  const [commentText, setCommentText] = useState('');
+  const [isSendingComment, setIsSendingComment] = useState(false);
+  const [isCommentInputFocused, setIsCommentInputFocused] = useState(false);
   const [confirmDeleteStoryId, setConfirmDeleteStoryId] = useState<string | null>(null);
 
   // Story creator modal
@@ -181,9 +189,27 @@ export const StoriesBar: React.FC<StoriesBarProps> = ({
     }
   }, [activeStory?.id, activeStory?.userId, currentUser]);
 
+  // Subscribe to real-time comments for the currently open story
+  useEffect(() => {
+    if (!activeStory?.id) {
+      setStoryComments([]);
+      return;
+    }
+    setStoryComments([]);
+    return subscribeToStoryComments(activeStory.id, setStoryComments);
+  }, [activeStory?.id]);
+
   // 6-second auto-advance timer STRICTLY inside the same user's stories; closes when done
   useEffect(() => {
-    if (!selectedUserId || !activeStory || isPaused || showViewersModal || confirmDeleteStoryId) {
+    if (
+      !selectedUserId ||
+      !activeStory ||
+      isPaused ||
+      showViewersModal ||
+      showCommentsSheet ||
+      isCommentInputFocused ||
+      confirmDeleteStoryId
+    ) {
       return;
     }
     setProgress(0);
@@ -202,6 +228,7 @@ export const StoriesBar: React.FC<StoriesBarProps> = ({
           // End of this user's stories: close viewer & return to Home (never spill into another user)
           setSelectedUserId(null);
           setShowViewersModal(false);
+          setShowCommentsSheet(false);
           return 0;
         });
       }
@@ -212,6 +239,8 @@ export const StoriesBar: React.FC<StoriesBarProps> = ({
     activeStory?.id,
     isPaused,
     showViewersModal,
+    showCommentsSheet,
+    isCommentInputFocused,
     confirmDeleteStoryId,
     selectedUserStories.length,
   ]);
@@ -220,6 +249,8 @@ export const StoriesBar: React.FC<StoriesBarProps> = ({
     setSelectedUserId(null);
     setActiveItemIndex(0);
     setShowViewersModal(false);
+    setShowCommentsSheet(false);
+    setCommentText('');
     setConfirmDeleteStoryId(null);
   };
 
@@ -227,6 +258,7 @@ export const StoriesBar: React.FC<StoriesBarProps> = ({
     if (activeItemIndex + 1 < selectedUserStories.length) {
       setActiveItemIndex((prev) => prev + 1);
       setShowViewersModal(false);
+      setShowCommentsSheet(false);
     } else {
       closeViewer();
     }
@@ -236,6 +268,7 @@ export const StoriesBar: React.FC<StoriesBarProps> = ({
     if (activeItemIndex > 0) {
       setActiveItemIndex((prev) => prev - 1);
       setShowViewersModal(false);
+      setShowCommentsSheet(false);
     } else {
       setProgress(0);
     }
@@ -317,9 +350,47 @@ export const StoriesBar: React.FC<StoriesBarProps> = ({
 
   const handleLikeActiveStory = async () => {
     if (!activeStory) return;
+    const targetId = activeStory.id;
+    const targetOwnerId = activeStory.userId;
+    setStories((prev) =>
+      prev.map((s) => {
+        if (s.id !== targetId) return s;
+        const likedSet = new Set(s.likedBy || []);
+        if (likedSet.has(currentUser.id)) {
+          likedSet.delete(currentUser.id);
+        } else {
+          likedSet.add(currentUser.id);
+        }
+        const likedBy = Array.from(likedSet);
+        return { ...s, likedBy, likesCount: likedBy.length };
+      })
+    );
     try {
-      await toggleStoryLike(activeStory.id, currentUser, activeStory.userId);
+      await toggleStoryLike(targetId, currentUser, targetOwnerId);
     } catch {}
+  };
+
+  const handleSendStoryComment = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!activeStory || !commentText.trim() || isSendingComment) return;
+    const trimmed = commentText.trim();
+    setIsSendingComment(true);
+    try {
+      const saved = await addStoryComment(activeStory.id, currentUser, trimmed, activeStory.userId);
+      setCommentText('');
+      if (saved) {
+        setStoryComments((prev) => (prev.some((c) => c.id === saved.id) ? prev : [...prev, saved]));
+        setStories((prev) =>
+          prev.map((s) =>
+            s.id === activeStory.id
+              ? { ...s, commentsCount: Math.max((s.commentsCount || 0) + 1, storyComments.length + 1) }
+              : s
+          )
+        );
+      }
+    } finally {
+      setIsSendingComment(false);
+    }
   };
 
   const handleShareActiveStory = async () => {
@@ -360,6 +431,9 @@ export const StoriesBar: React.FC<StoriesBarProps> = ({
   const isStoryLikedByMe = Boolean(activeStory?.likedBy?.includes(currentUser.id));
   const realLikesCount = activeStory
     ? Math.max(activeStory.likesCount || 0, activeStory.likedBy?.length || 0)
+    : 0;
+  const realCommentsCount = activeStory
+    ? Math.max(activeStory.commentsCount || 0, storyComments.length)
     : 0;
 
   return (
@@ -839,12 +913,12 @@ export const StoriesBar: React.FC<StoriesBarProps> = ({
                   </div>
                 )}
 
-                {/* Right/End Group: Working Like (Heart) & Share Buttons */}
-                <div className="flex items-center gap-2">
+                {/* Right/End Group: Working Like (Heart), Comment & Share Buttons */}
+                <div className="flex items-center gap-1.5">
                   <button
                     type="button"
                     onClick={handleLikeActiveStory}
-                    className={`px-3.5 py-2 rounded-full border text-xs font-black flex items-center gap-1.5 backdrop-blur-md cursor-pointer transition active:scale-95 ${
+                    className={`px-3 py-2 rounded-full border text-xs font-black flex items-center gap-1.5 backdrop-blur-md cursor-pointer transition active:scale-95 ${
                       isStoryLikedByMe
                         ? 'bg-rose-500/90 border-rose-300 text-white shadow'
                         : 'bg-white/15 hover:bg-white/25 border-white/25 text-white'
@@ -857,16 +931,151 @@ export const StoriesBar: React.FC<StoriesBarProps> = ({
 
                   <button
                     type="button"
+                    onClick={() => {
+                      setShowViewersModal(false);
+                      setShowCommentsSheet((p) => !p);
+                    }}
+                    className={`px-3 py-2 rounded-full border text-xs font-black flex items-center gap-1.5 backdrop-blur-md cursor-pointer transition active:scale-95 ${
+                      showCommentsSheet
+                        ? 'bg-indigo-600/90 border-indigo-300 text-white shadow'
+                        : 'bg-white/15 hover:bg-white/25 border-white/25 text-white'
+                    }`}
+                    title="التعليقات على القصة"
+                  >
+                    <MessageCircle className="w-4 h-4" />
+                    <span className="tabular-nums">{realCommentsCount > 0 ? realCommentsCount : 'تعليق'}</span>
+                  </button>
+
+                  <button
+                    type="button"
                     onClick={handleShareActiveStory}
-                    className="px-3.5 py-2 rounded-full bg-white/15 hover:bg-white/25 border border-white/25 text-white text-xs font-black flex items-center gap-1.5 backdrop-blur-md cursor-pointer transition active:scale-95"
+                    className="px-3 py-2 rounded-full bg-white/15 hover:bg-white/25 border border-white/25 text-white text-xs font-black flex items-center gap-1.5 backdrop-blur-md cursor-pointer transition active:scale-95"
                     title="مشاركة القصة"
                   >
                     <Share2 className="w-4 h-4" />
-                    <span>مشاركة</span>
+                    <span className="hidden sm:inline">مشاركة</span>
                   </button>
                 </div>
               </div>
             </div>
+
+            {/* Story Comments Sheet */}
+            {showCommentsSheet && (
+              <div
+                className="absolute inset-x-0 bottom-0 z-30 bg-white text-slate-900 rounded-t-3xl p-4 max-h-[65%] flex flex-col shadow-2xl"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="flex items-center justify-between border-b border-slate-200 pb-2 mb-2.5 shrink-0">
+                  <h4 className="text-xs font-black flex items-center gap-1.5">
+                    <MessageCircle className="w-4 h-4 text-indigo-600" />
+                    <span>التعليقات ({realCommentsCount})</span>
+                  </h4>
+                  <button
+                    type="button"
+                    onClick={() => setShowCommentsSheet(false)}
+                    className="p-1.5 rounded-full bg-slate-100 text-slate-600 hover:text-slate-900 cursor-pointer"
+                    aria-label="إغلاق التعليقات"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+
+                <div className="flex-1 overflow-y-auto space-y-2 mb-3">
+                  {storyComments.length === 0 ? (
+                    <p className="text-center text-xs text-slate-500 py-6">
+                      لا توجد تعليقات حتى الآن. كن أول من يعلّق!
+                    </p>
+                  ) : (
+                    storyComments.map((c) => (
+                      <div
+                        key={c.id}
+                        className="flex items-start gap-2 p-2.5 rounded-2xl bg-slate-50 border border-slate-200 text-xs"
+                      >
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (onOpenUserProfile) {
+                              closeViewer();
+                              onOpenUserProfile({
+                                id: c.authorId,
+                                name: c.authorName,
+                                username: c.authorName,
+                                avatar: c.authorAvatar || '',
+                                bio: '',
+                                country: 'مصر',
+                                countryFlag: '🇪🇬',
+                                role: 'member',
+                                coins: 0,
+                                earningsEgp: 0,
+                                earningsUsd: 0,
+                                vipBadge: '',
+                                frameStyle: 'default',
+                                profileWallpaper: 'default',
+                                fontPreference: 'cairo',
+                                isOnline: true,
+                                status: 'online',
+                                joinedAt: '',
+                                gender: 'male',
+                                level: 1,
+                                likesReceived: 0,
+                                giftsReceivedCount: 0,
+                                verified: c.authorVerified,
+                              });
+                            }
+                          }}
+                          className="shrink-0 cursor-pointer"
+                        >
+                          {c.authorAvatar ? (
+                            <img
+                              src={c.authorAvatar}
+                              alt={c.authorName}
+                              className="w-8 h-8 rounded-full object-cover border border-slate-200"
+                            />
+                          ) : (
+                            <span className="w-8 h-8 rounded-full bg-indigo-100 text-indigo-700 font-black flex items-center justify-center">
+                              {c.authorName.slice(0, 1)}
+                            </span>
+                          )}
+                        </button>
+                        <div className="flex-1 min-w-0 text-right">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="font-black text-slate-900 truncate inline-flex items-center gap-1">
+                              <span>{c.authorName}</span>
+                              {c.authorVerified && <VerifiedBadge verified size="xs" />}
+                            </span>
+                            <span className="text-[10px] text-slate-400 shrink-0">
+                              {formatRelativeArabicTime(c.createdAt)}
+                            </span>
+                          </div>
+                          <p className="text-slate-700 leading-relaxed mt-0.5 break-words">{c.text}</p>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                <form onSubmit={handleSendStoryComment} className="flex items-center gap-2 shrink-0 pt-2 border-t border-slate-100">
+                  <input
+                    type="text"
+                    value={commentText}
+                    onChange={(e) => setCommentText(e.target.value)}
+                    onFocus={() => setIsCommentInputFocused(true)}
+                    onBlur={() => setIsCommentInputFocused(false)}
+                    maxLength={200}
+                    placeholder="اكتب تعليقاً جميلاً..."
+                    className="flex-1 bg-slate-100 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-indigo-500"
+                  />
+                  <button
+                    type="submit"
+                    disabled={!commentText.trim() || isSendingComment}
+                    className="px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-black flex items-center gap-1 cursor-pointer transition"
+                  >
+                    <Send className="w-3.5 h-3.5" />
+                    <span>إرسال</span>
+                  </button>
+                </form>
+              </div>
+            )}
 
             {/* Owner-Only Viewers List Sheet */}
             {showViewersModal && isStoryOwner && (

@@ -511,7 +511,17 @@ export default function App() {
     gift: GiftItem;
     senderName: string;
     recipientName: string;
+    replayKey: number;
   } | null>(null);
+
+  const triggerGiftCelebration = useCallback((gift: GiftItem, senderName: string, recipientName: string) => {
+    setActiveFullscreenGift({
+      gift,
+      senderName,
+      recipientName,
+      replayKey: Date.now() + Math.random(),
+    });
+  }, []);
 
   // Currency & Language
   const [currency, setCurrency] = useState<'EGP' | 'USD' | 'SAR' | 'AED'>('EGP');
@@ -1527,6 +1537,8 @@ export default function App() {
 
   // Real-time social notifications (Forum post & Story likes/comments & App updates)
   const [realtimeNotifications, setRealtimeNotifications] = useState<RealtimeUserNotification[]>([]);
+  const realtimeNotificationsRef = useRef<RealtimeUserNotification[]>([]);
+  realtimeNotificationsRef.current = realtimeNotifications;
   const [isAppUpdateNotifRead, setIsAppUpdateNotifRead] = useState(false);
   const seenNotifIdsRef = useRef<Set<string>>(new Set());
 
@@ -1821,6 +1833,7 @@ export default function App() {
         gift: giftData.gift,
         senderName: giftData.senderName || 'عضو',
         recipientName: giftData.recipientName || activeRoom.title,
+        replayKey: Date.now() + Math.random(),
       });
       sounds.playGiftFanfare();
     });
@@ -1834,7 +1847,7 @@ export default function App() {
       const { type, payload } = event.data || {};
       if (type === 'LUXURY_GIFT') {
         const { gift, senderName, recipientName } = payload;
-        setActiveFullscreenGift({ gift, senderName, recipientName });
+        setActiveFullscreenGift({ gift, senderName, recipientName, replayKey: Date.now() + Math.random() });
         sounds.playGiftFanfare();
         let giftNotifsEnabled = currentUser.notificationPrefs?.gifts !== false;
         try {
@@ -2027,6 +2040,7 @@ export default function App() {
       gift,
       senderName: currentUser.name,
       recipientName,
+      replayKey: Date.now() + Math.random(),
     });
     sounds.playGiftFanfare();
     toast.gift(`تم إرسال هدية ${gift.name} إلى ${recipientName} بنجاح! ${gift.icon}`, {
@@ -2307,13 +2321,11 @@ export default function App() {
   const openNotifications = useCallback(() => {
     setIsNotificationsOpen(true);
     setIsAppUpdateNotifRead(true);
-    setRealtimeNotifications((prev) => {
-      const unreadIds = prev.filter((n) => !n.isRead).map((n) => n.id);
-      if (unreadIds.length > 0 && currentUserRef.current?.id) {
-        markUserNotificationsRead(currentUserRef.current.id, unreadIds).catch(() => {});
-      }
-      return prev.map((n) => (n.isRead ? n : { ...n, isRead: true }));
-    });
+    const unreadIds = realtimeNotificationsRef.current.filter((n) => !n.isRead).map((n) => n.id);
+    if (unreadIds.length > 0 && currentUserRef.current?.id) {
+      markUserNotificationsRead(currentUserRef.current.id, unreadIds).catch(() => {});
+      setRealtimeNotifications((prev) => prev.map((n) => (n.isRead ? n : { ...n, isRead: true })));
+    }
   }, []);
   const openOnlineUsers = useCallback(() => setIsOnlineUsersOpen(true), []);
   const openFriendRequests = useCallback(() => setIsFriendRequestsOpen(true), []);
@@ -3061,6 +3073,7 @@ export default function App() {
                 setIsGiftModalOpen(false);
                 openWallet();
               }}
+              onTriggerGiftCelebration={triggerGiftCelebration}
               onLoadOlderMessages={handleLoadOlderRoomMessages}
               hasMoreOlderMessages={hasMoreRoomMessages}
               isLoadingOlderMessages={isLoadingOlderRoomMsgs}
@@ -3092,6 +3105,7 @@ export default function App() {
                   onClearAllUnreadMessages={clearAllUnreadMessages}
                   prefilledDraft={privateChatDraft}
                   onClearPrefilledDraft={() => setPrivateChatDraft(null)}
+                  onTriggerGiftCelebration={triggerGiftCelebration}
                 />
               )}
 
@@ -3143,6 +3157,7 @@ export default function App() {
         gift={activeFullscreenGift?.gift || null}
         senderName={activeFullscreenGift?.senderName || ''}
         recipientName={activeFullscreenGift?.recipientName || ''}
+        replayKey={activeFullscreenGift?.replayKey || 0}
         onDismiss={() => setActiveFullscreenGift(null)}
       />
 
@@ -3268,6 +3283,7 @@ export default function App() {
                 onClearAllUnreadMessages={clearAllUnreadMessages}
                 prefilledDraft={privateChatDraft}
                 onClearPrefilledDraft={() => setPrivateChatDraft(null)}
+                onTriggerGiftCelebration={triggerGiftCelebration}
               />
             </motion.div>
           </motion.div>

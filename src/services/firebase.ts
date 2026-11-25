@@ -65,7 +65,7 @@ import {
   signInWithPopup,
   signOut
 } from 'firebase/auth';
-import { Message, User, FriendRequest, Friend, ForumPost, ForumComment, ForumLikeUserSummary, SharedRoomMission, UserReport, StoryItem, BackupSnapshot } from '../types/chat';
+import { Message, User, FriendRequest, Friend, ForumPost, ForumComment, ForumLikeUserSummary, SharedRoomMission, UserReport, StoryItem, StoryComment, BackupSnapshot } from '../types/chat';
 import { PRIMARY_OWNER_EMAIL } from '../data/seedData';
 import {
   PRESENCE_HEARTBEAT_MS,
@@ -4823,6 +4823,7 @@ export async function createStory(
     expiresAt: now + 24 * 60 * 60 * 1000,
     likedBy: [],
     likesCount: 0,
+    commentsCount: 0,
     viewsCount: 0,
     viewers: {}
   };
@@ -4971,22 +4972,74 @@ export async function toggleStoryLike(
   }
 }
 
+export function subscribeToStoryComments(
+  storyId: string,
+  onUpdate: (comments: StoryComment[]) => void
+): () => void {
+  if (!storyId) return () => {};
+  const localKey = `shat_masr_story_comments_${storyId}`;
+  const readLocal = (): StoryComment[] => {
+    try {
+      const raw = localStorage.getItem(localKey);
+      return raw ? JSON.parse(raw) : [];
+    } catch {
+      return [];
+    }
+  };
+  const initial = readLocal();
+  if (initial.length > 0) onUpdate(initial);
+
+  let unsubFs: (() => void) | null = null;
+  if (db) {
+    try {
+      const q = query(collection(db, 'stories', storyId, 'comments'), orderBy('createdAt', 'asc'), limit(60));
+      unsubFs = onSnapshot(
+        q,
+        (snap) => {
+          const list: StoryComment[] = snap.docs.map((d) => ({
+            id: d.id,
+            ...(d.data() as any)
+          }));
+          try {
+            localStorage.setItem(localKey, JSON.stringify(list));
+          } catch {}
+          onUpdate(list);
+        },
+        () => {}
+      );
+    } catch {}
+  }
+
+  const handleBus = (e: MessageEvent) => {
+    if (e.data?.type === 'STORY_COMMENTS_CHANGED' && e.data?.storyId === storyId) {
+      onUpdate(readLocal());
+    }
+  };
+  liveChatBus?.addEventListener('message', handleBus);
+
+  return () => {
+    if (unsubFs) unsubFs();
+    liveChatBus?.removeEventListener('message', handleBus);
+  };
+}
+
 export async function addStoryComment(
   storyId: string,
   user: User,
   text: string,
   storyOwnerId?: string
-): Promise<void> {
+): Promise<StoryComment | null> {
   const cleanText = (text || '').trim();
-  if (!storyId || !user?.id || !cleanText) return;
+  if (!storyId || !user?.id || !cleanText) return null;
   let resolvedOwnerId = storyOwnerId || '';
   const id = `scmt_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
-  const comment = {
+  const comment: StoryComment = {
     id,
     storyId,
     authorId: user.id,
     authorName: user.name || 'عضو شات مصر',
     authorAvatar: user.avatar || '',
+    authorVerified: Boolean(user.verified || user.role === 'owner'),
     text: cleanText,
     createdAt: Date.now()
   };
@@ -4995,13 +5048,34 @@ export async function addStoryComment(
     const raw = localStorage.getItem(LOCAL_STORIES_KEY);
     if (raw) {
       const list: StoryItem[] = JSON.parse(raw);
-      const found = list.find((s) => s.id === storyId);
-      if (found?.userId && !resolvedOwnerId) resolvedOwnerId = found.userId;
+      const updated = list.map((s) => {
+        if (s.id !== storyId) return s;
+        if (s.userId && !resolvedOwnerId) resolvedOwnerId = s.userId;
+        return { ...s, commentsCount: (s.commentsCount || 0) + 1 };
+      });
+      localStorage.setItem(LOCAL_STORIES_KEY, JSON.stringify(updated));
+      liveChatBus?.postMessage({ type: 'STORIES_CHANGED' });
     }
+  } catch {}
+
+  const localKey = `shat_masr_story_comments_${storyId}`;
+  try {
+    const rawComments = localStorage.getItem(localKey);
+    const list: StoryComment[] = rawComments ? JSON.parse(rawComments) : [];
+    list.push(comment);
+    localStorage.setItem(localKey, JSON.stringify(list));
+    liveChatBus?.postMessage({ type: 'STORY_COMMENTS_CHANGED', storyId });
   } catch {}
 
   if (db) {
     try {
+      if (!resolvedOwnerId) {
+        const storySnap = await getDoc(doc(db, 'stories', storyId)).catch(() => null);
+        if (storySnap?.exists()) {
+          const data = storySnap.data() as any;
+          if (data?.userId) resolvedOwnerId = String(data.userId);
+        }
+      }
       await setDoc(doc(db, 'stories', storyId, 'comments', id), comment);
       await updateDoc(doc(db, 'stories', storyId), {
         commentsCount: increment(1)
@@ -5020,6 +5094,8 @@ export async function addStoryComment(
       refId: storyId
     }).catch(() => {});
   }
+
+  return comment;
 }
 
 export async function deleteStory(storyId: string): Promise<void> {

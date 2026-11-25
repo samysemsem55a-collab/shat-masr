@@ -725,10 +725,9 @@ wss.on('connection', (ws: WebSocket) => {
             users: occupantsList
           });
 
-          // Broadcast public room entry notification ONLY to other occupants currently in the room
+          // Broadcast room entry notification immediately to other occupants currently in the room
           const cleanJoinName = typeof user.name === 'string' ? user.name.trim() : '';
-          const isPrivateRoom = Boolean(payload.isPrivate) || String(roomId).startsWith('priv_');
-          if (!isPrivateRoom && !wasAlreadyInRoom && cleanJoinName) {
+          if (!wasAlreadyInRoom && cleanJoinName) {
             broadcastToRoom(roomId, {
               type: 'ROOM_USER_JOINED',
               eventId: `rjoin_${joinTs}_${roomId}_${user.id}`,

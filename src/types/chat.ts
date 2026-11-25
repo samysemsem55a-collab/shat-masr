@@ -330,8 +330,20 @@ export interface StoryItem {
   expiresAt: number;
   likedBy?: string[];
   likesCount?: number;
+  commentsCount?: number;
   viewsCount?: number;
   viewers?: Record<string, { id: string; userId?: string; name: string; avatar?: string; viewedAt: number }>;
+}
+
+export interface StoryComment {
+  id: string;
+  storyId: string;
+  authorId: string;
+  authorName: string;
+  authorAvatar: string;
+  authorVerified?: boolean;
+  text: string;
+  createdAt: number;
 }
 
 export interface BackupSnapshot {

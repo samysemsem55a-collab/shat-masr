@@ -36,6 +36,7 @@ import {
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { User, Message, Friend, GiftItem, UnreadSenderSummary } from '../types/chat';
+import { LUXURY_GIFTS } from '../data/seedData';
 import { sounds } from '../utils/soundEffects';
 import { 
   subscribeToDirectMessages, 
@@ -93,6 +94,7 @@ interface PrivateChatViewProps {
   prefilledDraft?: string | null;
   onClearPrefilledDraft?: () => void;
   reconcileEpoch?: number;
+  onTriggerGiftCelebration?: (gift: GiftItem, senderName: string, recipientName: string) => void;
 }
 
 interface ChatContact {
@@ -126,7 +128,8 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
   onCloseDrawer,
   prefilledDraft = null,
   onClearPrefilledDraft,
-  reconcileEpoch = 0
+  reconcileEpoch = 0,
+  onTriggerGiftCelebration
 }) => {
   // Navigation tabs when in list view
   const [activeTab, setActiveTab] = useState<'chats' | 'friends' | 'online'>('chats');
@@ -271,11 +274,7 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
     if (onUpdateUser) onUpdateUser(updatedUser);
 
     sounds.playGiftFanfare();
-    confetti({
-      particleCount: 85,
-      spread: 70,
-      origin: { y: 0.6 }
-    });
+    onTriggerGiftCelebration?.(gift, currentUser.name, activeContact.name);
     toast.gift(`تم إرسال هدية ${gift.name} إلى ${activeContact.name} بنجاح! ${gift.icon}`, {
       description: `خصم ${isOwner ? 0 : gift.cost} كوينز من رصيدك`
     });
@@ -1860,42 +1859,68 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
               return filteredMessages.map((msg, idx) => {
                 const isMe = msg.senderId === currentUser.id;
 
-                // Virtual Gift Message Rendering in Private Chat (Modern Light Card)
+                // Virtual Gift Message Rendering in Private Chat (Compact Soft-Corner Card)
                 if (msg.type === 'gift' && msg.gift) {
+                  const recipientDisplay = msg.gift.recipientName || (isMe ? activeContact.name : currentUser.name);
+                  const matchedGift = LUXURY_GIFTS.find((g) => g.id === msg.gift?.giftId || g.name === msg.gift?.name);
+                  const giftPayload: GiftItem = matchedGift || {
+                    id: msg.gift.giftId || `pm_gift_${msg.id}`,
+                    name: msg.gift.name,
+                    icon: msg.gift.icon || '🎁',
+                    cost: msg.gift.cost || 0,
+                    animation: 'crown',
+                    bannerText: `أهدى ${msg.senderName} ${msg.gift.name} إلى ${recipientDisplay}`,
+                  };
+
                   return (
-                    <div key={`${msg.id || 'pm_gift'}_${idx}`} className="flex justify-center my-2">
-                      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-amber-50 via-white to-rose-50 border-2 border-amber-300 p-3 max-w-[90%] sm:max-w-sm w-full shadow-md">
-                        <div className="flex items-center gap-2.5">
-                          <div className="w-12 h-12 rounded-xl bg-amber-100 border border-amber-300 flex items-center justify-center text-3xl shadow-inner shrink-0 animate-bounce">
-                            {msg.gift.icon}
+                    <div key={`${msg.id || 'pm_gift'}_${idx}`} className="flex justify-center my-2 px-1">
+                      <div
+                        dir="rtl"
+                        className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-amber-50/95 via-white to-rose-50/90 border border-amber-300/90 px-3 py-2.5 max-w-[92%] sm:max-w-sm w-full shadow-sm"
+                      >
+                        <div className="flex items-start gap-2.5">
+                          <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-amber-100 to-amber-50 border border-amber-200/90 flex items-center justify-center text-2xl shadow-2xs shrink-0 select-none">
+                            {msg.gift.icon || '🎁'}
                           </div>
-                          <div className="flex-1 text-right min-w-0">
-                            <div className="flex items-center justify-between mb-0.5">
+
+                          <div className="flex-1 min-w-0 text-right space-y-1.5">
+                            <div className="flex items-center justify-between gap-2 flex-wrap">
+                              <span className="inline-flex items-center gap-1 text-[10.5px] font-black text-amber-800 min-w-0">
+                                <Crown className="w-3 h-3 text-amber-500 shrink-0" />
+                                <span className="truncate">هدية فاخرة: {msg.gift.name}</span>
+                              </span>
+                              <span className="px-2 py-0.5 rounded-full bg-amber-100/90 border border-amber-200 text-amber-900 text-[9.5px] font-black tabular-nums shrink-0">
+                                🪙 {msg.gift.cost.toLocaleString()} كوينز
+                              </span>
+                            </div>
+
+                            <p className="text-xs text-slate-800 font-bold leading-relaxed break-words">
+                              <span>أهدى </span>
+                              <span className="text-indigo-700 font-black">{msg.senderName}</span>
+                              <span> </span>
+                              <span className="text-rose-600 font-black">{msg.gift.name}</span>
+                              <span> إلى </span>
+                              <span className="text-amber-700 font-black">{recipientDisplay}</span>
+                            </p>
+
+                            <div className="flex items-center justify-between gap-2 pt-0.5">
                               <button
                                 type="button"
                                 onClick={() => {
                                   sounds.playGiftFanfare();
-                                  confetti({ particleCount: 70, spread: 60, origin: { y: 0.6 } });
+                                  if (onTriggerGiftCelebration) {
+                                    onTriggerGiftCelebration(giftPayload, msg.senderName, recipientDisplay);
+                                  } else {
+                                    confetti({ particleCount: 55, spread: 70, origin: { y: 0.6 } });
+                                  }
                                 }}
-                                className="px-1.5 py-0.5 rounded-md bg-amber-100 hover:bg-amber-200 border border-amber-300 text-amber-800 text-[9.5px] font-black flex items-center gap-1 active:scale-95"
+                                className="px-2.5 py-0.5 rounded-full bg-amber-100 hover:bg-amber-200 border border-amber-300/90 text-amber-900 text-[10px] font-black inline-flex items-center gap-1 active:scale-95 transition-transform cursor-pointer shrink-0"
                               >
-                                <Sparkles className="w-2.5 h-2.5 text-amber-600" />
-                                <span>مؤثرات ✨</span>
+                                <Sparkles className="w-2.5 h-2.5 text-amber-600 shrink-0" />
+                                <span>إعادة الاحتفال</span>
                               </button>
-                              <span className="text-[10px] font-black text-amber-700 flex items-center gap-1 truncate">
-                                <span>هدية فاخرة: {msg.gift.name}</span>
-                                <Crown className="w-3 h-3 text-amber-500" />
-                              </span>
-                            </div>
-                            <p className="text-xs text-slate-900 font-bold leading-tight">
-                              <span className="text-indigo-700">{isMe ? 'أنت' : msg.senderName}</span>
-                              <span className="text-slate-600 mx-1">أهديت</span>
-                              <span className="text-rose-600">{msg.gift.name}</span>
-                            </p>
-                            <div className="flex items-center justify-end gap-1 mt-1 text-[9px] text-amber-700 font-bold">
-                              <span>🪙 {msg.gift.cost.toLocaleString()} كوينز</span>
-                              <span>•</span>
-                              <span className="text-slate-500 font-normal">
+
+                              <span className="text-[9.5px] text-slate-500 font-medium tabular-nums shrink-0">
                                 {new Date(msg.timestamp).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })}
                               </span>
                             </div>

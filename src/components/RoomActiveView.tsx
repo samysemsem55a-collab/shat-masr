@@ -44,7 +44,7 @@ import {
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { toast } from '../utils/appToast';
-import { Room, Message, User, SpeakerSeat } from '../types/chat';
+import { Room, Message, User, SpeakerSeat, GiftItem } from '../types/chat';
 import { isUserAdminOrOwner, LUXURY_GIFTS } from '../data/seedData';
 import { STICKERS_CATALOG } from '../data/stickers';
 import { JoinRequestsManagerModal } from './JoinRequestsManagerModal';
@@ -107,6 +107,7 @@ interface RoomActiveViewProps {
   onOpenOnlineUsers: () => void;
   onUpdateUser?: (user: User) => void;
   onOpenWallet?: () => void;
+  onTriggerGiftCelebration?: (gift: GiftItem, senderName: string, recipientName: string) => void;
   onLoadOlderMessages?: () => Promise<number>;
   hasMoreOlderMessages?: boolean;
   isLoadingOlderMessages?: boolean;
@@ -729,6 +730,7 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
   onOpenOnlineUsers,
   onUpdateUser,
   onOpenWallet,
+  onTriggerGiftCelebration,
   onLoadOlderMessages,
   hasMoreOlderMessages = false,
   isLoadingOlderMessages = false,
@@ -758,9 +760,7 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [highlightColor, setHighlightColor] = useState<HighlightPaletteKey | null>(null);
   const [muteJoinNotices, setMuteJoinNotices] = useState<boolean>(Boolean(currentUser.muteJoinNotices));
-  const [welcomeBannerStage, setWelcomeBannerStage] = useState<'welcome' | 'notice' | null>(
-    !room.isPrivate ? 'welcome' : null
-  );
+  const [welcomeBannerStage, setWelcomeBannerStage] = useState<'welcome' | 'notice' | null>('welcome');
   const [raisedHandUserIds, setRaisedHandUserIds] = useState<string[]>([]);
   const [isHandRaised, setIsHandRaised] = useState(false);
   const isLiveAudioRoom = room.roomType === 'live_audio' || room.category === 'live_audio';
@@ -794,12 +794,8 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
     };
   }, []);
 
-  // Public room local welcome banner: 2s 'مرحباً بك في [اسم الغرفة]' -> 2s 'يرجى احترام قوانين الغرفة وعدم الإساءة للآخرين' -> hide
+  // Room local welcome banner (0ms -> 2000ms warning -> 4000ms clear)
   useEffect(() => {
-    if (room.isPrivate) {
-      setWelcomeBannerStage(null);
-      return;
-    }
     setWelcomeBannerStage('welcome');
     const switchToNoticeTimer = setTimeout(() => {
       setWelcomeBannerStage('notice');
@@ -811,7 +807,7 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
       clearTimeout(switchToNoticeTimer);
       clearTimeout(hideBannerTimer);
     };
-  }, [room.id, room.isPrivate]);
+  }, [room.id]);
 
   // Message Draft Persistence per room (Requirement 4)
   const draftStorageKey = `arab_chat_draft_${room.id}`;
@@ -1217,7 +1213,7 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
 
   // Subscribe to public room entry events for OTHER occupants only (excludes entering user)
   useEffect(() => {
-    if (room.isPrivate || muteJoinNotices) return;
+    if (muteJoinNotices) return;
     const unsubRoomJoin = realtimeSocket.subscribeToRoomUserJoined(room.id, (joinedUser, eventId) => {
       if (!joinedUser?.id || !joinedUser?.name || joinedUser.id === currentUser.id) return;
       const dedupKey = eventId || `${room.id}_${joinedUser.id}_${Math.floor(Date.now() / 5000)}`;
@@ -1234,7 +1230,7 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
         name: joinedUser.name,
         avatar: joinedUser.avatar || '',
       });
-      toast.info(`انضم ${joinedUser.name} إلى الغرفة`, {
+      toast.info(`انضم ${joinedUser.name} إلى الغرفة ${room.title}`, {
         id: `room_join_${room.id}_${joinedUser.id}`,
         duration: 3500,
       });
@@ -1246,7 +1242,7 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
     return () => {
       unsubRoomJoin();
     };
-  }, [room.id, room.title, room.isPrivate, muteJoinNotices, currentUser.id]);
+  }, [room.id, room.title, muteJoinNotices, currentUser.id]);
 
   // Close emoji picker on click outside
   useEffect(() => {
@@ -2676,7 +2672,7 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
             className="pointer-events-auto cursor-pointer px-3 py-1 rounded-full bg-slate-200/90 hover:bg-indigo-100/95 backdrop-blur-sm border border-slate-300/80 hover:border-indigo-300 text-slate-800 text-[11px] font-bold shadow-xs truncate max-w-[90vw] transition"
             title="اضغط للتفاعل مع العضو"
           >
-            انضم {activeJoinNotice.name} إلى الغرفة
+            انضم {activeJoinNotice.name} إلى الغرفة {room.title}
           </button>
 
           {isJoinActionMenuOpen && (
@@ -2793,8 +2789,8 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
 
       {/* 6. Chat Wallpaper & Feed Scroll Area (Locked Inner Scrolling) */}
       <div className="relative flex-1 min-h-0 overflow-hidden flex flex-col">
-        {/* Temporary Local 2-Stage Welcome -> Conduct Notice Banner (Public Rooms Only, Non-Blocking) */}
-        {welcomeBannerStage !== null && !room.isPrivate && (
+        {/* Temporary Local 2-Stage Welcome -> Conduct Notice Banner (Non-Blocking) */}
+        {welcomeBannerStage !== null && (
           <div className="pointer-events-none bg-amber-50/95 border-b border-amber-200/90 px-3 py-1.5 flex items-center justify-between gap-2 text-amber-950 shrink-0 z-10 animate-in fade-in">
             <div className="flex items-center gap-2 min-w-0">
               <span className="w-6 h-6 rounded-full bg-white border border-amber-300 text-amber-600 flex items-center justify-center shrink-0">
@@ -2802,7 +2798,7 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
               </span>
               <p className="text-[11px] sm:text-xs font-bold text-amber-950 leading-snug line-clamp-2">
                 {welcomeBannerStage === 'welcome'
-                  ? `مرحباً بك في ${room.title}`
+                  ? `أهلاً بك في ${room.title}`
                   : 'يرجى احترام قوانين الغرفة وعدم الإساءة للآخرين'}
               </p>
             </div>
@@ -2900,89 +2896,82 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
             );
           }
 
-          // Luxury Virtual Gift Message (Modern Light Pearl/Gold Card)
+          // Luxury Virtual Gift Message (Compact Soft-Corner Pearl/Gold Card)
           if (msg.type === 'gift' && msg.gift) {
+            const matchedCatalogGift = LUXURY_GIFTS.find((g) => g.id === msg.gift?.giftId || g.name === msg.gift?.name);
+            const giftPayload: GiftItem = matchedCatalogGift || {
+              id: msg.gift.giftId || `gift_${msg.id}`,
+              name: msg.gift.name,
+              icon: msg.gift.icon || '🎁',
+              cost: msg.gift.cost || 0,
+              animation: 'crown',
+              bannerText: `أهدى ${msg.senderName} ${msg.gift.name} إلى ${msg.gift.recipientName}`,
+            };
+
             return (
-              <motion.div 
-                key={uniqueKey} 
-                initial={{ opacity: 0, scale: 0.88, y: 16 }}
-                animate={{ opacity: [0, 1, 1], scale: [0.88, 1.04, 1], y: [16, -2, 0] }}
-                exit={{ opacity: 0, scale: 0.92, transition: { duration: 0.16 } }}
-                transition={{ duration: 0.46, times: [0, 0.55, 1], ease: 'easeOut' }}
-                className="flex justify-center my-3 px-1"
+              <motion.div
+                key={uniqueKey}
+                initial={{ opacity: 0, scale: 0.94, y: 10 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.94, transition: { duration: 0.15 } }}
+                transition={{ duration: 0.28, ease: 'easeOut' }}
+                className="flex justify-center my-2 px-1"
               >
-                <div className="relative overflow-hidden rounded-3xl bg-gradient-to-r from-amber-50 via-white to-rose-50 border-2 border-amber-300 p-3 sm:p-4 max-w-[94%] sm:max-w-md w-full shadow-lg animate-subtle-gift-pulse">
-                  <div className="relative z-10 flex items-center gap-3">
-                    <div className="relative shrink-0">
-                      <motion.span
-                        aria-hidden="true"
-                        initial={{ scale: 0.9, opacity: 0.7 }}
-                        animate={{ scale: [1, 1.28, 1], opacity: [0.65, 0, 0.65] }}
-                        transition={{ duration: 1.6, repeat: Infinity, ease: 'easeInOut' }}
-                        className="absolute inset-0 rounded-2xl bg-amber-400/50 pointer-events-none"
-                      />
-                      <motion.div
-                        initial={{ scale: 0.75, opacity: 0 }}
-                        animate={{ scale: [1, 1.12, 1], opacity: 1 }}
-                        transition={{
-                          opacity: { duration: 0.25 },
-                          scale: {
-                            duration: 1.4,
-                            repeat: Infinity,
-                            ease: 'easeInOut'
-                          }
-                        }}
-                        className="relative w-14 h-14 sm:w-16 sm:h-16 rounded-2xl bg-amber-100/90 border border-amber-300 flex items-center justify-center text-3xl sm:text-4xl shadow-md"
-                      >
-                        <motion.span
-                          animate={{ scale: [1, 1.15, 1] }}
-                          transition={{ duration: 1.4, repeat: Infinity, ease: 'easeInOut' }}
-                          className="inline-block select-none"
-                        >
-                          {msg.gift.icon}
-                        </motion.span>
-                      </motion.div>
-                      <span className="absolute -top-1 -right-1 w-3 h-3 bg-amber-400 rounded-full animate-ping" />
+                <div
+                  dir="rtl"
+                  className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-amber-50/95 via-white to-rose-50/90 border border-amber-300/90 px-3.5 py-2.5 max-w-[94%] sm:max-w-md w-full shadow-sm"
+                >
+                  <div className="flex items-start gap-3">
+                    <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-amber-100 to-amber-50 border border-amber-200/90 flex items-center justify-center text-2xl sm:text-3xl shadow-2xs shrink-0 select-none">
+                      {msg.gift.icon || '🎁'}
                     </div>
 
-                    <div className="flex-1 text-right min-w-0">
-                      <div className="flex items-center justify-between gap-1 mb-1">
+                    <div className="flex-1 min-w-0 text-right space-y-1.5">
+                      {/* Header: Gift Label & Coins Badge */}
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                        <div className="inline-flex items-center gap-1 text-[11px] font-black text-amber-800 min-w-0">
+                          <Crown className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                          <span className="truncate">هدية فاخرة: {msg.gift.name}</span>
+                        </div>
+                        <span className="px-2 py-0.5 rounded-full bg-amber-100/90 border border-amber-200 text-amber-900 text-[10px] font-black tabular-nums shrink-0">
+                          🪙 {msg.gift.cost.toLocaleString()} كوينز
+                        </span>
+                      </div>
+
+                      {/* Main Text */}
+                      <p className="text-xs sm:text-[13px] text-slate-800 font-bold leading-relaxed break-words">
+                        <span>أهدى </span>
+                        <span className="text-indigo-700 font-black">{msg.senderName}</span>
+                        <span> </span>
+                        <span className="text-rose-600 font-black">{msg.gift.name}</span>
+                        <span> إلى </span>
+                        <span className="text-amber-700 font-black">{msg.gift.recipientName}</span>
+                      </p>
+
+                      {/* Footer: Action Button & Timestamp cleanly separated */}
+                      <div className="flex items-center justify-between gap-2 pt-0.5">
                         <button
                           type="button"
                           onClick={() => {
                             sounds.playGiftFanfare();
-                            confetti({
-                              particleCount: 75,
-                              spread: 60,
-                              origin: { y: 0.6 }
-                            });
+                            if (onTriggerGiftCelebration) {
+                              onTriggerGiftCelebration(
+                                giftPayload,
+                                msg.senderName,
+                                msg.gift?.recipientName || room.title
+                              );
+                            } else {
+                              confetti({ particleCount: 55, spread: 70, origin: { y: 0.6 } });
+                            }
                           }}
-                          className="px-2 py-0.5 rounded-full bg-amber-100 hover:bg-amber-200 border border-amber-300 text-amber-800 text-[10px] font-black flex items-center gap-1 active:scale-95 transition-transform"
+                          className="px-2.5 py-1 rounded-full bg-amber-100 hover:bg-amber-200 border border-amber-300/90 text-amber-900 text-[10.5px] font-black inline-flex items-center gap-1 active:scale-95 transition-transform cursor-pointer shrink-0"
                           title="إعادة تشغيل مؤثرات الاحتفال"
                         >
-                          <Sparkles className="w-3 h-3 text-amber-600" />
-                          <span>إعادة الاحتفال ✨</span>
+                          <Sparkles className="w-3 h-3 text-amber-600 shrink-0" />
+                          <span>إعادة الاحتفال</span>
                         </button>
 
-                        <div className="text-[11px] sm:text-xs font-black text-amber-700 flex items-center gap-1 truncate">
-                          <span>هدية فاخرة: {msg.gift.name}</span>
-                          <Crown className="w-3.5 h-3.5 text-amber-500 shrink-0" />
-                        </div>
-                      </div>
-
-                      <p className="text-xs sm:text-sm text-slate-900 font-bold leading-snug">
-                        <span className="text-indigo-700">{msg.senderName}</span>
-                        <span className="text-slate-600 mx-1">أهدى</span>
-                        <span className="text-rose-600 font-black">{msg.gift.name}</span>
-                        <span className="text-slate-600 mx-1">إلى</span>
-                        <span className="text-amber-700 font-black">{msg.gift.recipientName}</span>
-                      </p>
-
-                      <div className="flex items-center justify-end gap-1.5 mt-1.5">
-                        <span className="px-2 py-0.5 rounded-md bg-amber-100 text-amber-800 border border-amber-200 text-[10px] font-black">
-                          🪙 {msg.gift.cost.toLocaleString()} كوينز
-                        </span>
-                        <span className="text-[10px] text-slate-500">
+                        <span className="text-[10px] font-medium text-slate-500 tabular-nums shrink-0">
                           {new Date(msg.timestamp).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })}
                         </span>
                       </div>
