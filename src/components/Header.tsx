@@ -10,7 +10,7 @@ import {
   ShieldCheck,
   LogOut,
   MoreVertical,
-  ShoppingBag,
+  SlidersHorizontal,
   Trophy,
   Moon,
   Sun,
@@ -20,7 +20,6 @@ import { User, UnreadSenderSummary } from '../types/chat';
 import { isUserAdminOrOwner } from '../data/seedData';
 import { getRankDisplayMeta, hasPrivilegedRank } from '../utils/userRanks';
 import { AvatarWithFrame } from './AvatarWithFrame';
-import { PWAInstallButton } from './PWAInstallButton';
 import { toast } from '../utils/appToast';
 import { VerifiedBadge } from '../utils/verifiedBadge';
 import { realtimeSocket } from '../services/realtimeSocket';
@@ -50,6 +49,7 @@ interface HeaderProps {
   isDarkMode?: boolean;
   onToggleDarkMode?: () => void;
   onOpenSupport?: () => void;
+  onOpenSettings?: () => void;
   unreadNotificationsCount?: number;
 }
 
@@ -76,6 +76,7 @@ export const Header: React.FC<HeaderProps> = React.memo(({
   isDarkMode = false,
   onToggleDarkMode,
   onOpenSupport,
+  onOpenSettings,
   unreadNotificationsCount = 0
 }) => {
   const [isMoreMenuOpen, setIsMoreMenuOpen] = useState(false);
@@ -140,17 +141,17 @@ export const Header: React.FC<HeaderProps> = React.memo(({
   };
 
   return (
-    <header dir="rtl" className="relative shrink-0 z-[50] bg-[#EAF5FD]/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-sky-200/80 dark:border-slate-800 px-2 sm:px-5 py-2 pt-[calc(env(safe-area-inset-top,0px)+0.5rem)] shadow-sm transition-colors duration-300">
-      <div className="max-w-7xl mx-auto flex items-center justify-between gap-1 sm:gap-2">
+    <header dir="rtl" className="relative shrink-0 z-[50] bg-gradient-to-l from-[#EAF5FD]/95 via-[#EFF7FE]/95 to-[#E6F1FC]/95 dark:from-slate-900/95 dark:via-slate-900/95 dark:to-slate-950/95 backdrop-blur-md border-b border-sky-200/80 dark:border-slate-800 px-1.5 sm:px-4 py-2 pt-[calc(env(safe-area-inset-top,0px)+0.5rem)] shadow-sm transition-colors duration-300">
+      <div className="max-w-7xl mx-auto flex items-center justify-between gap-1 sm:gap-1.5">
 
         {/* Primary Header Row: Profile + Desktop Brand/Pills + Symmetrical Icon Toolbar */}
-        <div className="flex items-center justify-between gap-1 sm:gap-2 min-w-0 w-full flex-1">
+        <div className="flex items-center justify-between gap-1 sm:gap-1.5 min-w-0 w-full flex-1">
           
           {/* Right Side (in RTL): Integrated Profile Card + Brand + Desktop Economy Pills */}
-          <div className="flex items-center gap-1 sm:gap-2 min-w-0 flex-1 md:flex-initial">
+          <div className="flex items-center gap-1 sm:gap-1.5 min-w-0 flex-1 md:flex-initial">
             
             {/* Integrated User Profile Card */}
-            <div className="flex items-center gap-1.5 sm:gap-2 p-1 pl-2 sm:pl-2.5 rounded-2xl bg-slate-50 hover:bg-slate-100/80 border border-slate-200 transition min-w-0 max-w-[148px] sm:max-w-[235px] md:max-w-none shrink">
+            <div className="flex items-center gap-1.5 p-1 pl-1.5 sm:pl-2.5 rounded-2xl bg-white/85 dark:bg-slate-800/85 hover:bg-white dark:hover:bg-slate-800 border border-sky-200/75 dark:border-slate-700 transition flex-1 md:flex-initial min-w-0 md:max-w-[270px] lg:max-w-[300px] shadow-2xs">
               {/* Avatar Wrapper with Status Dot (Camera upload lives exclusively in ProfileView) */}
               <div className="relative shrink-0">
                 <AvatarWithFrame
@@ -286,14 +287,12 @@ export const Header: React.FC<HeaderProps> = React.memo(({
                   <span>{currentUser.coins.toLocaleString()}</span>
                 </button>
               )}
-
-              <PWAInstallButton />
             </div>
 
           </div>
 
-          {/* Left Side (in RTL): Symmetrical Action Icons Toolbar + Store + Far-Left Menu */}
-          <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
+          {/* Left Side (in RTL): Symmetrical Action Icons Toolbar + Far-Left Menu */}
+          <div className="flex items-center gap-0.5 sm:gap-1 shrink-0">
 
             {/* Incoming Messages & Friends Side Drawer Trigger + Lightweight Unread Badge */}
             {(() => {
@@ -307,16 +306,16 @@ export const Header: React.FC<HeaderProps> = React.memo(({
                   }}
                   title="الرسائل الخاصة والأصدقاء"
                   aria-label="الرسائل الخاصة والأصدقاء"
-                  className={`relative h-9 px-2 sm:px-2.5 rounded-xl border flex items-center justify-center gap-1 transition-all shrink-0 active:scale-95 cursor-pointer ${
+                  className={`relative h-8 px-1.5 sm:px-2 rounded-xl border flex items-center justify-center gap-1 transition-all shrink-0 active:scale-95 cursor-pointer ${
                     combinedPrivateBadge > 0
                       ? 'bg-[#D6ECFC] hover:bg-[#C3E3FA] border-[#1E96E8]/55 text-[#0F5AA8] shadow-xs'
                       : 'bg-[#E1F1FD] hover:bg-[#D0E9FC] border-sky-300/90 text-[#1565C0] shadow-xs'
                   }`}
                 >
-                  <MessageCircle strokeWidth={2.2} className="w-4 h-4 opacity-100 saturate-110 brightness-105 shrink-0" />
+                  <MessageCircle strokeWidth={2.2} className="w-3.5 h-3.5 opacity-100 saturate-110 brightness-105 shrink-0" />
                   <span className="hidden sm:inline text-xs font-black">الخاص</span>
                   {combinedPrivateBadge > 0 && (
-                    <span className="absolute -top-1 -right-1 min-w-[16px] h-[16px] px-1 rounded-full bg-[#1E96E8] text-white text-[9px] font-black flex items-center justify-center shadow border border-white tabular-nums">
+                    <span className="absolute -top-1 -right-1 min-w-[15px] h-[15px] px-1 rounded-full bg-[#1E96E8] text-white text-[9px] font-black flex items-center justify-center shadow border border-white tabular-nums">
                       {combinedPrivateBadge > 99 ? '99+' : combinedPrivateBadge}
                     </span>
                   )}
@@ -329,11 +328,11 @@ export const Header: React.FC<HeaderProps> = React.memo(({
               type="button"
               onClick={onOpenFriendRequests}
               title="طلبات الصداقة"
-              className="relative w-8 h-9 sm:w-9 rounded-xl bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-600 flex items-center justify-center transition-all shrink-0 active:scale-95 cursor-pointer"
+              className="relative w-7 h-8 sm:w-8 rounded-xl bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-600 flex items-center justify-center transition-all shrink-0 active:scale-95 cursor-pointer"
             >
-              <UserPlus strokeWidth={2} className="w-4 h-4 opacity-100 saturate-110 brightness-105" />
+              <UserPlus strokeWidth={2} className="w-3.5 h-3.5 opacity-100 saturate-110 brightness-105" />
               {pendingFriendRequestsCount > 0 && (
-                <span className="absolute -top-1 -right-0.5 min-w-[16px] h-4 px-1 rounded-full bg-rose-600 text-white text-[9px] font-black flex items-center justify-center shadow border border-white tabular-nums">
+                <span className="absolute -top-1 -right-0.5 min-w-[15px] h-[15px] px-1 rounded-full bg-rose-600 text-white text-[9px] font-black flex items-center justify-center shadow border border-white tabular-nums">
                   {pendingFriendRequestsCount > 99 ? '99+' : pendingFriendRequestsCount}
                 </span>
               )}
@@ -343,13 +342,13 @@ export const Header: React.FC<HeaderProps> = React.memo(({
             <button 
               type="button"
               onClick={onOpenNotifications}
-              className="relative w-8 h-9 sm:w-9 flex items-center justify-center rounded-xl bg-slate-100 hover:bg-slate-200 border border-slate-200 text-slate-700 transition-all shrink-0 active:scale-95 cursor-pointer"
+              className="relative w-7 h-8 sm:w-8 flex items-center justify-center rounded-xl bg-slate-100 hover:bg-slate-200 border border-slate-200 text-slate-700 transition-all shrink-0 active:scale-95 cursor-pointer"
               title="الإشعارات"
               aria-label="الإشعارات"
             >
-              <Bell strokeWidth={2} className="w-4 h-4 opacity-100 saturate-110 brightness-105" />
+              <Bell strokeWidth={2} className="w-3.5 h-3.5 opacity-100 saturate-110 brightness-105" />
               {unreadNotificationsCount > 0 && (
-                <span className="absolute -top-1 -right-0.5 min-w-[16px] h-4 px-1 rounded-full bg-rose-600 text-white text-[9px] font-black flex items-center justify-center shadow border border-white tabular-nums">
+                <span className="absolute -top-1 -right-0.5 min-w-[15px] h-[15px] px-1 rounded-full bg-rose-600 text-white text-[9px] font-black flex items-center justify-center shadow border border-white tabular-nums">
                   {unreadNotificationsCount > 99 ? '99+' : unreadNotificationsCount}
                 </span>
               )}
@@ -359,7 +358,7 @@ export const Header: React.FC<HeaderProps> = React.memo(({
             <button 
               type="button"
               onClick={onOpenOnlineUsers}
-              className="h-9 flex items-center gap-1 px-1.5 sm:px-2 rounded-xl bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-800 text-[11px] font-black active:scale-95 transition-all shrink-0 whitespace-nowrap tabular-nums cursor-pointer shadow-2xs"
+              className="h-8 flex items-center gap-0.5 sm:gap-1 px-1.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-800 text-[10.5px] font-black active:scale-95 transition-all shrink-0 whitespace-nowrap tabular-nums cursor-pointer shadow-2xs"
               title="المتصلون الآن"
             >
               <Users strokeWidth={2} className="w-3 h-3 text-emerald-600 shrink-0 opacity-100 saturate-110 brightness-105" />
@@ -371,48 +370,25 @@ export const Header: React.FC<HeaderProps> = React.memo(({
             <button
               type="button"
               onClick={onOpenRadio}
-              className={`hidden lg:flex w-9 h-9 items-center justify-center rounded-xl border text-xs font-bold transition-all shrink-0 cursor-pointer ${
+              className={`hidden lg:flex w-8 h-8 items-center justify-center rounded-xl border text-xs font-bold transition-all shrink-0 cursor-pointer ${
                 isRadioPlaying
-                  ? 'bg-purple-100 border-purple-300 text-purple-700 shadow-sm animate-pulse'
-                  : 'bg-slate-100 hover:bg-slate-200 border-slate-200 text-slate-700'
+                  ? 'bg-amber-100 border-amber-300 text-amber-700 shadow-sm animate-pulse'
+                  : 'bg-amber-50/80 dark:bg-slate-800 hover:bg-amber-100/90 border-amber-200/80 dark:border-slate-700 text-amber-600'
               }`}
               title="راديو ومكتبة الطرب العربي"
             >
-              <Radio strokeWidth={2} className="w-4 h-4 text-purple-600 opacity-100 saturate-110 brightness-105" />
+              <Radio strokeWidth={2.2} className="w-3.5 h-3.5 text-amber-500 opacity-100 saturate-125 brightness-105" />
             </button>
 
             {/* Share Button (Desktop/Tablet sm+, inside More menu on small mobile) */}
             <button 
               type="button"
               onClick={handleShare}
-              className="hidden sm:flex w-9 h-9 items-center justify-center rounded-xl bg-slate-100 hover:bg-slate-200 border border-slate-200 text-slate-700 transition-colors shrink-0 active:scale-95 cursor-pointer"
+              className="hidden sm:flex w-8 h-8 items-center justify-center rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 transition-colors shrink-0 active:scale-95 cursor-pointer"
               title="مشاركة رابط المنصة"
             >
-              <Share2 strokeWidth={2} className="w-4 h-4 opacity-100 saturate-110 brightness-105" />
+              <Share2 strokeWidth={2} className="w-3.5 h-3.5 opacity-100 saturate-110 brightness-105" />
             </button>
-
-            {/* Distinctive Store & Coins Recharge Button (Hidden for Owner) */}
-            {!isOwner && (
-              <button
-                type="button"
-                onClick={() => {
-                  setIsMoreMenuOpen(false);
-                  onOpenWallet();
-                }}
-                title="المتجر وشحن الكوينز"
-                aria-label="المتجر وشحن الكوينز"
-                className="relative w-9 h-9 sm:w-auto sm:px-2.5 rounded-xl bg-gradient-to-tr from-amber-500 via-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white border border-amber-400/70 shadow-sm shadow-amber-500/20 flex items-center justify-center gap-1.5 transition-all shrink-0 whitespace-nowrap active:scale-95 cursor-pointer"
-              >
-                <ShoppingBag strokeWidth={2} className="w-4 h-4 shrink-0 opacity-100 saturate-110 brightness-105" />
-                <span className="hidden sm:inline text-xs font-black">المتجر</span>
-                <span
-                  className="sm:hidden absolute -top-1 -left-1 text-[9px] leading-none bg-white rounded-full p-0.5 shadow-xs border border-amber-200 pointer-events-none"
-                  aria-hidden="true"
-                >
-                  🪙
-                </span>
-              </button>
-            )}
 
             {/* Far-Left More Options Menu Toggle Button (...) */}
             <div className="relative shrink-0" ref={moreMenuRef}>
@@ -421,17 +397,17 @@ export const Header: React.FC<HeaderProps> = React.memo(({
                 onClick={() => {
                   setIsMoreMenuOpen((prev) => !prev);
                 }}
-                className="w-8 h-9 sm:w-9 flex items-center justify-center rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 transition-all active:scale-95 shrink-0 cursor-pointer"
+                className="w-7 h-8 sm:w-8 flex items-center justify-center rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 transition-all active:scale-95 shrink-0 cursor-pointer"
                 title="خيارات إضافية"
                 aria-label="القائمة والخيارات الإضافية"
               >
-                <MoreVertical strokeWidth={2} className="w-4 h-4 opacity-100 saturate-110 brightness-105" />
+                <MoreVertical strokeWidth={2} className="w-3.5 h-3.5 opacity-100 saturate-110 brightness-105" />
               </button>
 
               {/* Floating Dropdown Menu */}
               {isMoreMenuOpen && (
                 <div 
-                  className="absolute left-0 mt-1.5 w-52 rounded-2xl bg-white border border-slate-200 shadow-xl p-1.5 space-y-1 z-[100] text-right animate-in fade-in zoom-in-95"
+                  className="absolute left-0 mt-1.5 w-52 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 shadow-xl p-1.5 space-y-1 z-[100] text-right animate-in fade-in zoom-in-95"
                   onClick={() => setIsMoreMenuOpen(false)}
                 >
                   {/* Mobile-only quick actions */}
@@ -487,13 +463,13 @@ export const Header: React.FC<HeaderProps> = React.memo(({
                   <button
                     type="button"
                     onClick={onOpenRadio}
-                    className="w-full px-3 py-2 rounded-xl hover:bg-slate-100 text-slate-700 text-xs font-bold flex items-center justify-between transition"
+                    className="w-full px-3 py-2 rounded-xl hover:bg-amber-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 text-xs font-bold flex items-center justify-between transition"
                   >
                     <span className="flex items-center gap-2">
-                      <Radio className="w-3.5 h-3.5 text-purple-600" />
+                      <Radio className="w-3.5 h-3.5 text-amber-500" />
                       <span>راديو الطرب</span>
                     </span>
-                    {isRadioPlaying && <span className="w-2 h-2 rounded-full bg-purple-500 animate-pulse"></span>}
+                    {isRadioPlaying && <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span>}
                   </button>
 
                   <button
@@ -545,12 +521,16 @@ export const Header: React.FC<HeaderProps> = React.memo(({
                     </button>
                   )}
 
-                  <div
-                    className="md:hidden pt-1 border-t border-slate-100"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <PWAInstallButton variant="full" />
-                  </div>
+                  {onOpenSettings && (
+                    <button
+                      type="button"
+                      onClick={onOpenSettings}
+                      className="w-full px-3 py-2 rounded-xl hover:bg-indigo-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 text-xs font-bold flex items-center gap-2 transition"
+                    >
+                      <SlidersHorizontal className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
+                      <span>الإعدادات والمظهر</span>
+                    </button>
+                  )}
 
                   {onLogout && (
                     <button

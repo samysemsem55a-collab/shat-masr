@@ -27,59 +27,59 @@ export const FriendRequestsModal: React.FC<FriendRequestsModalProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[200] flex items-end sm:items-center justify-center bg-slate-900/45 backdrop-blur-sm p-0 sm:p-4 animate-in fade-in">
-      <div className="w-full sm:max-w-md bg-white border border-slate-200 rounded-t-3xl sm:rounded-3xl overflow-hidden shadow-2xl flex flex-col max-h-[85vh] text-slate-900">
+    <div className="fixed inset-0 z-[200] flex items-end sm:items-center justify-center bg-slate-900/50 backdrop-blur-sm p-0 sm:p-4 animate-in fade-in">
+      <div className="w-full sm:max-w-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-t-3xl sm:rounded-3xl overflow-hidden shadow-2xl flex flex-col max-h-[85vh] text-slate-900 dark:text-slate-100">
         
         {/* Header */}
-        <div className="p-4 bg-gradient-to-r from-indigo-50 to-white border-b border-slate-200 flex items-center justify-between">
+        <div className="p-4 bg-gradient-to-r from-indigo-50 to-white dark:from-slate-900 dark:to-slate-800 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <div className="w-9 h-9 rounded-2xl bg-indigo-100 text-indigo-600 flex items-center justify-center">
+            <div className="w-9 h-9 rounded-2xl bg-indigo-100 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 flex items-center justify-center">
               <UserPlus className="w-4 h-4" />
             </div>
             <div>
-              <h3 className="text-sm font-black text-slate-900">طلبات الصداقة الواردة</h3>
-              <p className="text-[11px] text-slate-500">
+              <h3 className="text-sm font-black text-slate-900 dark:text-white">طلبات الصداقة الواردة</h3>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400">
                 لديك {requests.length} طلبات جديدة
               </p>
             </div>
           </div>
           <button 
             onClick={onClose} 
-            className="p-1.5 rounded-full text-slate-500 hover:text-slate-900 bg-slate-100 active:scale-90 transition-transform"
+            className="p-1.5 rounded-full text-slate-500 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white bg-slate-100 dark:bg-slate-800 active:scale-90 transition-transform"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
 
         {/* Requests List */}
-        <div className="p-3 space-y-2.5 overflow-y-auto flex-1 bg-slate-50/40">
+        <div className="p-3 space-y-2.5 overflow-y-auto flex-1 bg-slate-50/40 dark:bg-slate-950/60">
           {requests.length === 0 ? (
-            <div className="p-8 text-center text-slate-500 space-y-2">
-              <div className="w-12 h-12 rounded-full bg-slate-100 flex items-center justify-center mx-auto text-xl">
+            <div className="p-8 text-center text-slate-500 dark:text-slate-400 space-y-2">
+              <div className="w-12 h-12 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center mx-auto text-xl">
                 👥
               </div>
-              <p className="text-xs font-bold text-slate-700">لا توجد طلبات صداقة معلقة حالياً</p>
-              <p className="text-[11px] text-slate-500">انضم للمجالس وتعرف على أصدقاء جدد وأرسل واستقبل طلبات الصداقة!</p>
+              <p className="text-xs font-bold text-slate-700 dark:text-slate-200">لا توجد طلبات صداقة معلقة حالياً</p>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400">انضم للمجالس وتعرف على أصدقاء جدد وأرسل واستقبل طلبات الصداقة!</p>
             </div>
           ) : (
             requests.map((req) => (
               <div 
                 key={req.id}
-                className="p-3 rounded-2xl bg-white border border-slate-200 hover:border-indigo-300 shadow-sm flex items-center justify-between gap-3 transition-colors"
+                className="p-3 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-indigo-300 dark:hover:border-indigo-500 shadow-sm flex items-center justify-between gap-3 transition-colors"
               >
                 <div className="flex items-center gap-2.5 min-w-0">
-                  <div className="w-10 h-10 rounded-full overflow-hidden border border-indigo-200 bg-slate-100 shrink-0">
+                  <div className="w-10 h-10 rounded-full overflow-hidden border border-indigo-200 dark:border-indigo-800 bg-slate-100 dark:bg-slate-800 shrink-0">
                     {req.senderAvatar ? (
                       <img src={req.senderAvatar} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                     ) : (
-                      <span className="flex items-center justify-center w-full h-full text-xs font-bold text-slate-700">
+                      <span className="flex items-center justify-center w-full h-full text-xs font-bold text-slate-700 dark:text-slate-200">
                         {req.senderName.charAt(0)}
                       </span>
                     )}
                   </div>
                   <div className="min-w-0">
-                    <h4 className="text-xs font-black text-slate-900 truncate">{req.senderName}</h4>
-                    <span className="text-[10px] text-slate-500 flex items-center gap-1 mt-0.5">
+                    <h4 className="text-xs font-black text-slate-900 dark:text-white truncate">{req.senderName}</h4>
+                    <span className="text-[10px] text-slate-500 dark:text-slate-400 flex items-center gap-1 mt-0.5">
                       <Clock className="w-2.5 h-2.5" />
                       {new Date(req.createdAt).toLocaleDateString('ar-EG')}
                     </span>
@@ -96,7 +96,7 @@ export const FriendRequestsModal: React.FC<FriendRequestsModalProps> = ({
                   </button>
                   <button
                     onClick={() => onDecline(req.id, req.senderId)}
-                    className="p-1.5 rounded-xl bg-slate-100 hover:bg-rose-50 text-slate-500 hover:text-rose-600 transition-colors"
+                    className="p-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-rose-50 dark:hover:bg-rose-950/60 text-slate-500 dark:text-slate-300 hover:text-rose-600 dark:hover:text-rose-400 transition-colors"
                     title="رفض الطلب"
                   >
                     <XIcon className="w-3.5 h-3.5" />

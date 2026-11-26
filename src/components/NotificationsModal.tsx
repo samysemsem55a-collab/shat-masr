@@ -3,12 +3,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { 
   X, 
   Bell, 
-  Gift, 
-  Coins, 
-  Sparkles, 
-  Crown, 
-  MessageCircle,
-  TrendingUp
+  Trash2
 } from 'lucide-react';
 
 import { RealtimeUserNotification } from '../services/firebase';
@@ -21,6 +16,8 @@ interface NotificationsModalProps {
   realtimeNotifications?: RealtimeUserNotification[];
   onMarkAsRead?: (notificationId: string) => void;
   onMarkAllAsRead?: () => void;
+  onDeleteNotification?: (notificationId: string) => void;
+  onClearAllNotifications?: () => void;
   unreadCount?: number;
   highlightedUnreadIds?: string[];
   notificationBgPresetId?: string;
@@ -42,6 +39,8 @@ export const NotificationsModal: React.FC<NotificationsModalProps> = ({
   realtimeNotifications = [],
   onMarkAsRead,
   onMarkAllAsRead,
+  onDeleteNotification,
+  onClearAllNotifications,
   unreadCount = 0,
   highlightedUnreadIds = [],
   notificationBgPresetId,
@@ -98,16 +97,16 @@ export const NotificationsModal: React.FC<NotificationsModalProps> = ({
             exit={{ opacity: 0, y: 20, scale: 0.96 }}
             transition={{ type: 'spring', stiffness: 360, damping: 28 }}
             onClick={(e) => e.stopPropagation()}
-            className="w-full sm:max-w-md bg-white border border-slate-200 rounded-t-3xl sm:rounded-3xl overflow-hidden shadow-2xl flex flex-col max-h-[80vh]"
+            className="w-full sm:max-w-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-t-3xl sm:rounded-3xl overflow-hidden shadow-2xl flex flex-col max-h-[80vh]"
           >
         
         {/* Header */}
-        <div className="p-4 bg-gradient-to-r from-indigo-50 via-white to-purple-50 border-b border-slate-200 flex items-center justify-between gap-2">
+        <div className="p-4 bg-gradient-to-r from-indigo-50 via-white to-purple-50 dark:from-slate-900 dark:via-slate-900 dark:to-slate-800 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 min-w-0">
-            <div className="w-8 h-8 rounded-xl bg-indigo-100 text-indigo-600 flex items-center justify-center border border-indigo-200 shrink-0">
+            <div className="w-8 h-8 rounded-xl bg-indigo-100 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 flex items-center justify-center border border-indigo-200 dark:border-indigo-800 shrink-0">
               <Bell className="w-4 h-4" />
             </div>
-            <h3 className="text-sm font-black text-slate-900 truncate">مركز الإشعارات الفورية</h3>
+            <h3 className="text-sm font-black text-slate-900 dark:text-white truncate">مركز الإشعارات الفورية</h3>
             {badgeCount > 0 && (
               <span className="px-2 py-0.5 rounded-full bg-rose-600 text-white text-[10px] font-black tabular-nums shrink-0">
                 {badgeCount > 99 ? '99+' : badgeCount}
@@ -119,21 +118,30 @@ export const NotificationsModal: React.FC<NotificationsModalProps> = ({
               <button
                 type="button"
                 onClick={onMarkAllAsRead}
-                className="px-2.5 py-1 rounded-full bg-indigo-100 hover:bg-indigo-200 text-indigo-700 text-[11px] font-bold transition cursor-pointer"
+                className="px-2.5 py-1 rounded-full bg-indigo-100 dark:bg-indigo-950/60 hover:bg-indigo-200 text-indigo-700 dark:text-indigo-300 text-[11px] font-bold transition cursor-pointer"
               >
                 قراءة الكل
               </button>
             )}
-            <button onClick={onClose} className="p-1.5 rounded-full text-slate-500 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 transition cursor-pointer">
+            {notifications.length > 0 && onClearAllNotifications && (
+              <button
+                type="button"
+                onClick={onClearAllNotifications}
+                className="px-2.5 py-1 rounded-full bg-rose-50 dark:bg-rose-950/60 hover:bg-rose-100 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-800 text-[11px] font-bold transition cursor-pointer"
+              >
+                مسح الكل
+              </button>
+            )}
+            <button onClick={onClose} className="p-1.5 rounded-full text-slate-500 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 transition cursor-pointer">
               <X className="w-4 h-4" />
             </button>
           </div>
         </div>
 
         {/* List */}
-        <div className="p-3 space-y-2 overflow-y-auto bg-slate-50/70">
+        <div className="p-3 space-y-2 overflow-y-auto bg-slate-50/70 dark:bg-slate-950/70">
           {notifications.length === 0 ? (
-            <div className="py-10 text-center text-xs font-bold text-slate-500">
+            <div className="py-10 text-center text-xs font-bold text-slate-500 dark:text-slate-400">
               لا توجد إشعارات جديدة للقصص أو المنتدى أو التحديثات حالياً.
             </div>
           ) : (
@@ -157,21 +165,21 @@ export const NotificationsModal: React.FC<NotificationsModalProps> = ({
                 className={`p-3 rounded-2xl border flex items-start gap-3 transition-colors shadow-sm ${
                   n.isNew
                     ? 'notif-bubble-shimmer cursor-pointer'
-                    : 'bg-white border-slate-200'
+                    : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700'
                 }`}
               >
                 {n.isNew && (
                   <span aria-hidden="true" className="notif-bubble-shimmer-glaze" />
                 )}
                 <div className="relative z-10 text-2xl shrink-0 mt-0.5">{n.icon}</div>
-                <div className="relative z-10 flex-1 space-y-1">
+                <div className="relative z-10 flex-1 space-y-1 min-w-0">
                   <div className="flex items-center justify-between gap-2">
                     <h4
-                      className={`text-xs font-black flex items-center gap-1.5 ${
-                        n.isNew ? '' : 'text-slate-900'
+                      className={`text-xs font-black flex items-center gap-1.5 min-w-0 ${
+                        n.isNew ? '' : 'text-slate-900 dark:text-white'
                       }`}
                     >
-                      <span>{n.title}</span>
+                      <span className="truncate">{n.title}</span>
                       {n.isNew && (
                         <span
                           className="w-2 h-2 rounded-full shrink-0"
@@ -179,17 +187,33 @@ export const NotificationsModal: React.FC<NotificationsModalProps> = ({
                         />
                       )}
                     </h4>
-                    <span
-                      className={`text-[10px] shrink-0 ${
-                        n.isNew ? 'opacity-80 font-bold' : 'text-slate-500'
-                      }`}
-                    >
-                      {n.time}
-                    </span>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <span
+                        className={`text-[10px] shrink-0 ${
+                          n.isNew ? 'opacity-80 font-bold' : 'text-slate-500 dark:text-slate-400'
+                        }`}
+                      >
+                        {n.time}
+                      </span>
+                      {onDeleteNotification && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onDeleteNotification(n.id);
+                          }}
+                          title="حذف الإشعار"
+                          aria-label="حذف الإشعار"
+                          className="p-1 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-600 dark:text-rose-400 transition cursor-pointer"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
                   </div>
                   <p
                     className={`text-xs leading-relaxed ${
-                      n.isNew ? 'font-bold opacity-95' : 'text-slate-600'
+                      n.isNew ? 'font-bold opacity-95' : 'text-slate-600 dark:text-slate-300'
                     }`}
                   >
                     {n.desc}

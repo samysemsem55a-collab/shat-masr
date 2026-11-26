@@ -75,6 +75,9 @@ interface RoomsViewProps {
   unreadForumNotifsCount?: number;
   unreadStoryNotifsCount?: number;
   onOpenNotifications?: () => void;
+  onOpenCreateTextRoom?: () => void;
+  onOpenCreateVoiceRoom?: () => void;
+  onRequestJoinRoom?: (room: Room) => void;
 }
 
 function formatRelativeArabicTime(ts: number): string {
@@ -128,36 +131,36 @@ const ForumCommentsModal: React.FC<{
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="w-full sm:max-w-lg bg-white border border-slate-200 rounded-t-3xl sm:rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh] text-[#1E293B]"
+        className="w-full sm:max-w-lg bg-white dark:bg-slate-900 border border-rose-200 dark:border-rose-900/60 rounded-t-3xl sm:rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh] text-[#1E293B] dark:text-slate-100"
       >
         {/* Header */}
-        <div className="p-4 bg-white border-b border-slate-200 flex items-center justify-between shrink-0">
+        <div className="p-4 bg-gradient-to-l from-[#9d174d] via-[#be185d] to-[#db2777] text-white border-b border-rose-400/40 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-2">
-            <div className="w-9 h-9 rounded-xl bg-indigo-50 border border-indigo-200 text-indigo-600 flex items-center justify-center">
+            <div className="w-9 h-9 rounded-xl bg-white/20 border border-white/30 text-white flex items-center justify-center">
               <MessageCircle className="w-4 h-4" />
             </div>
             <div>
-              <h3 className="text-sm font-black text-[#1E293B]">التعليقات على منشور {post.authorName}</h3>
-              <p className="text-[11px] text-slate-500">{comments.length} تعليق</p>
+              <h3 className="text-sm font-black text-white">التعليقات على منشور {post.authorName}</h3>
+              <p className="text-[11px] text-rose-100">{comments.length} تعليق</p>
             </div>
           </div>
           <button
             type="button"
             onClick={onClose}
             aria-label="إغلاق"
-            className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-600 flex items-center justify-center transition cursor-pointer"
+            className="w-8 h-8 rounded-full bg-white/15 hover:bg-white/25 text-white flex items-center justify-center transition cursor-pointer"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
 
         {/* Original Post Snippet */}
-        <div className="px-4 py-2.5 bg-[#F8FAFC] border-b border-slate-200 shrink-0">
-          <p className="text-xs text-slate-700 line-clamp-2 leading-relaxed">{post.text}</p>
+        <div className="px-4 py-2.5 bg-rose-50/70 dark:bg-rose-950/30 border-b border-rose-200/70 dark:border-rose-900/50 shrink-0">
+          <p className="text-xs text-slate-700 dark:text-slate-200 line-clamp-2 leading-relaxed">{post.text}</p>
         </div>
 
         {/* Comments List */}
-        <div className="p-4 overflow-y-auto flex-1 space-y-2.5 bg-[#F8FAFC]">
+        <div className="p-4 overflow-y-auto flex-1 space-y-2.5 bg-slate-50/80 dark:bg-slate-950/80">
           {comments.length > 0 ? (
             comments.map((c) => {
               const matchedOnline = onlineUsers.find((u) => u.id === c.authorId);
@@ -186,7 +189,7 @@ const ForumCommentsModal: React.FC<{
                 giftsReceivedCount: 0,
               };
               return (
-                <div key={c.id} className="flex items-start gap-2.5 bg-white rounded-2xl p-2.5 border border-slate-200 shadow-2xs">
+                <div key={c.id} className="flex items-start gap-2.5 bg-white dark:bg-slate-900 rounded-2xl p-2.5 border border-rose-100 dark:border-rose-900/40 shadow-2xs">
                   <button
                     type="button"
                     onClick={() => {
@@ -195,7 +198,7 @@ const ForumCommentsModal: React.FC<{
                         onOpenUserProfile(commentAuthorUser);
                       }
                     }}
-                    className="w-8 h-8 rounded-full overflow-hidden bg-indigo-100 text-indigo-700 font-bold text-xs flex items-center justify-center shrink-0 border border-slate-200 cursor-pointer hover:ring-2 hover:ring-indigo-400 transition"
+                    className="w-8 h-8 rounded-full overflow-hidden bg-rose-100 dark:bg-rose-950 text-rose-700 dark:text-rose-300 font-bold text-xs flex items-center justify-center shrink-0 border border-rose-200 dark:border-rose-800 cursor-pointer hover:ring-2 hover:ring-rose-400 transition"
                     title="عرض الملف الشخصي"
                   >
                     {c.authorAvatar ? (
@@ -214,13 +217,13 @@ const ForumCommentsModal: React.FC<{
                             onOpenUserProfile(commentAuthorUser);
                           }
                         }}
-                        className="text-xs font-black text-[#1E293B] hover:text-indigo-700 hover:underline truncate cursor-pointer text-right"
+                        className="text-xs font-black text-slate-900 dark:text-white hover:text-rose-600 dark:hover:text-rose-400 hover:underline truncate cursor-pointer text-right"
                       >
                         {c.authorName}
                       </button>
-                      <span className="text-[10px] text-slate-400 shrink-0">{formatRelativeArabicTime(c.createdAt)}</span>
+                      <span className="text-[10px] text-slate-400 dark:text-slate-500 shrink-0">{formatRelativeArabicTime(c.createdAt)}</span>
                     </div>
-                    <p className="text-xs text-slate-700 leading-relaxed mt-1 break-words">{c.text}</p>
+                    <p className="text-xs text-slate-700 dark:text-slate-300 leading-relaxed mt-1 break-words">{c.text}</p>
                   </div>
                 </div>
               );
@@ -228,26 +231,26 @@ const ForumCommentsModal: React.FC<{
           ) : (
             <div className="text-center py-8 space-y-1.5">
               <div className="text-2xl">💬</div>
-              <p className="text-xs font-bold text-slate-600">لا توجد تعليقات حتى الآن</p>
-              <p className="text-[11px] text-slate-400">كن أول من يضيف تعليقاً راقياً على هذا المنشور!</p>
+              <p className="text-xs font-bold text-slate-600 dark:text-slate-300">لا توجد تعليقات حتى الآن</p>
+              <p className="text-[11px] text-slate-400 dark:text-slate-500">كن أول من يضيف تعليقاً راقياً على هذا المنشور!</p>
             </div>
           )}
         </div>
 
         {/* Add Comment Input */}
-        <form onSubmit={handleAddComment} className="p-3 bg-white border-t border-slate-200 flex items-center gap-2 shrink-0">
+        <form onSubmit={handleAddComment} className="p-3 bg-white dark:bg-slate-900 border-t border-rose-100 dark:border-rose-900/50 flex items-center gap-2 shrink-0">
           <input
             type="text"
             value={commentText}
             onChange={(e) => setCommentText(e.target.value)}
             placeholder="اكتب تعليقك هنا..."
             autoFocus
-            className="flex-1 bg-[#F8FAFC] border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs sm:text-sm text-[#1E293B] placeholder:text-slate-400 focus:outline-none focus:border-indigo-500 focus:bg-white"
+            className="flex-1 bg-slate-50 dark:bg-slate-800 border border-rose-200 dark:border-rose-900/60 rounded-xl px-3.5 py-2.5 text-xs sm:text-sm text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none focus:border-rose-500"
           />
           <button
             type="submit"
             disabled={!commentText.trim() || isSending}
-            className="px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-black flex items-center gap-1.5 transition cursor-pointer shrink-0"
+            className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-[#be185d] to-[#db2777] hover:from-[#9d174d] hover:to-[#be185d] disabled:opacity-50 text-white text-xs font-black flex items-center gap-1.5 transition cursor-pointer shrink-0"
           >
             <Send className="w-3.5 h-3.5" />
             <span>{isSending ? 'جاري الإرسال...' : 'إرسال'}</span>
@@ -298,31 +301,31 @@ const ForumLikesModal: React.FC<{
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="w-full sm:max-w-md bg-white border border-slate-200 rounded-t-3xl sm:rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[80vh] text-[#1E293B]"
+        className="w-full sm:max-w-md bg-white dark:bg-slate-900 border border-rose-200 dark:border-rose-900/60 rounded-t-3xl sm:rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[80vh] text-[#1E293B] dark:text-slate-100"
       >
         {/* Header */}
-        <div className="p-4 bg-white border-b border-slate-200 flex items-center justify-between shrink-0">
+        <div className="p-4 bg-gradient-to-l from-[#9d174d] via-[#be185d] to-[#db2777] text-white border-b border-rose-400/40 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-2">
-            <div className="w-9 h-9 rounded-xl bg-rose-50 border border-rose-200 text-rose-600 flex items-center justify-center">
-              <Heart className="w-4 h-4 fill-rose-500 text-rose-500" />
+            <div className="w-9 h-9 rounded-xl bg-white/20 border border-white/30 text-white flex items-center justify-center">
+              <Heart className="w-4 h-4 fill-white text-white" />
             </div>
             <div>
-              <h3 className="text-sm font-black text-[#1E293B]">المعجبون بالمنشور</h3>
-              <p className="text-[11px] text-slate-500">{Math.max(likedIds.length, post.likesCount || 0)} إعجاب</p>
+              <h3 className="text-sm font-black text-white">المعجبون بالمنشور</h3>
+              <p className="text-[11px] text-rose-100">{Math.max(likedIds.length, post.likesCount || 0)} إعجاب</p>
             </div>
           </div>
           <button
             type="button"
             onClick={onClose}
             aria-label="إغلاق"
-            className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-600 flex items-center justify-center transition cursor-pointer"
+            className="w-8 h-8 rounded-full bg-white/15 hover:bg-white/25 text-white flex items-center justify-center transition cursor-pointer"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
 
         {/* Likers List */}
-        <div className="p-3 overflow-y-auto flex-1 space-y-2 bg-[#F8FAFC]">
+        <div className="p-3 overflow-y-auto flex-1 space-y-2 bg-slate-50/80 dark:bg-slate-950/80">
           {resolvedLikers.length > 0 ? (
             resolvedLikers.map((liker) => {
               const rankMeta = getRankDisplayMeta(liker.role, liker.vipBadge);
@@ -354,7 +357,7 @@ const ForumLikesModal: React.FC<{
               return (
                 <div
                   key={liker.id}
-                  className="p-2.5 rounded-2xl bg-white border border-slate-200 flex items-center justify-between gap-2 shadow-2xs"
+                  className="p-2.5 rounded-2xl bg-white dark:bg-slate-900 border border-rose-100 dark:border-rose-900/40 flex items-center justify-between gap-2 shadow-2xs"
                 >
                   <button
                     type="button"
@@ -388,7 +391,7 @@ const ForumLikesModal: React.FC<{
                           {rankMeta.label}
                         </span>
                       ) : (
-                        <span className="text-[10px] text-slate-400 font-medium">
+                        <span className="text-[10px] text-slate-400 dark:text-slate-500 font-medium">
                           {liker.gender === 'female' ? 'عضوة 👩' : 'عضو 👨'}
                         </span>
                       )}
@@ -427,12 +430,12 @@ const ForumLikesModal: React.FC<{
                           }
                         );
                       }}
-                      className="px-2.5 py-1.5 rounded-xl bg-emerald-50 hover:bg-emerald-600 text-emerald-700 hover:text-white border border-emerald-200 text-[11px] font-black transition cursor-pointer shrink-0"
+                      className="px-2.5 py-1.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/60 hover:bg-emerald-600 text-emerald-700 dark:text-emerald-300 hover:text-white border border-emerald-200 dark:border-emerald-800 text-[11px] font-black transition cursor-pointer shrink-0"
                     >
                       مراسلة ✉️
                     </button>
                   ) : (
-                    <span className="px-2 py-0.5 rounded-full bg-indigo-50 border border-indigo-200 text-indigo-700 text-[10px] font-bold">
+                    <span className="px-2 py-0.5 rounded-full bg-rose-50 dark:bg-rose-950/60 border border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-300 text-[10px] font-bold">
                       أنت
                     </span>
                   )}
@@ -442,7 +445,7 @@ const ForumLikesModal: React.FC<{
           ) : (
             <div className="text-center py-8 space-y-2">
               <div className="text-2xl">❤️</div>
-              <p className="text-xs font-bold text-slate-600">لا توجد إعجابات على هذا المنشور بعد</p>
+              <p className="text-xs font-bold text-slate-600 dark:text-slate-300">لا توجد إعجابات على هذا المنشور بعد</p>
               <button
                 type="button"
                 onClick={() => onToggleLike(post)}
@@ -455,14 +458,14 @@ const ForumLikesModal: React.FC<{
         </div>
 
         {/* Footer quick toggle like */}
-        <div className="p-3 bg-white border-t border-slate-200 flex items-center justify-between gap-2 shrink-0">
+        <div className="p-3 bg-white dark:bg-slate-900 border-t border-rose-100 dark:border-rose-900/50 flex items-center justify-between gap-2 shrink-0">
           <button
             type="button"
             onClick={() => onToggleLike(post)}
             className={`flex-1 py-2.5 rounded-xl text-xs font-black flex items-center justify-center gap-1.5 transition cursor-pointer ${
               isLikedByMe
-                ? 'bg-rose-100 text-rose-700 border border-rose-200'
-                : 'bg-rose-600 hover:bg-rose-500 text-white'
+                ? 'bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-800'
+                : 'bg-gradient-to-r from-[#be185d] to-[#db2777] hover:from-[#9d174d] hover:to-[#be185d] text-white'
             }`}
           >
             <Heart className={`w-3.5 h-3.5 ${isLikedByMe ? 'fill-rose-500 text-rose-500' : 'text-white'}`} />
@@ -513,33 +516,33 @@ const ForumViewersModal: React.FC<{
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="w-full sm:max-w-md bg-white border border-slate-200 rounded-t-3xl sm:rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[80vh] text-[#1E293B]"
+        className="w-full sm:max-w-md bg-white dark:bg-slate-900 border border-rose-200 dark:border-rose-900/60 rounded-t-3xl sm:rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[80vh] text-[#1E293B] dark:text-slate-100"
       >
-        <div className="p-4 bg-white border-b border-slate-200 flex items-center justify-between shrink-0">
+        <div className="p-4 bg-gradient-to-l from-[#9d174d] via-[#be185d] to-[#db2777] text-white border-b border-rose-400/40 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-2">
-            <div className="w-9 h-9 rounded-xl bg-indigo-50 border border-indigo-200 text-indigo-600 flex items-center justify-center">
+            <div className="w-9 h-9 rounded-xl bg-white/20 border border-white/30 text-white flex items-center justify-center">
               <Eye className="w-4 h-4" />
             </div>
             <div>
-              <h3 className="text-sm font-black text-[#1E293B]">المشاهدون للمنشور</h3>
-              <p className="text-[11px] text-slate-500">شافه {totalViews} عضو</p>
+              <h3 className="text-sm font-black text-white">المشاهدون للمنشور</h3>
+              <p className="text-[11px] text-rose-100">شافه {totalViews} عضو</p>
             </div>
           </div>
           <button
             type="button"
             onClick={onClose}
             aria-label="إغلاق"
-            className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-600 flex items-center justify-center transition cursor-pointer"
+            className="w-8 h-8 rounded-full bg-white/15 hover:bg-white/25 text-white flex items-center justify-center transition cursor-pointer"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
 
-        <div className="p-4 overflow-y-auto flex-1 space-y-2 bg-[#F8FAFC]">
+        <div className="p-4 overflow-y-auto flex-1 space-y-2 bg-slate-50/80 dark:bg-slate-950/80">
           {viewersList.length === 0 ? (
             <div className="text-center py-8 space-y-1.5">
               <div className="text-2xl">👁️</div>
-              <p className="text-xs font-bold text-slate-600">لا توجد مشاهدات مسجلة حتى الآن</p>
+              <p className="text-xs font-bold text-slate-600 dark:text-slate-300">لا توجد مشاهدات مسجلة حتى الآن</p>
             </div>
           ) : (
             viewersList.map((viewer) => {
@@ -579,24 +582,24 @@ const ForumViewersModal: React.FC<{
                       onOpenUserProfile(profileTarget);
                     }
                   }}
-                  className="w-full flex items-center justify-between gap-2.5 bg-white hover:bg-indigo-50/70 rounded-2xl p-2.5 border border-slate-200 shadow-2xs text-right cursor-pointer transition"
+                  className="w-full flex items-center justify-between gap-2.5 bg-white dark:bg-slate-900 hover:bg-rose-50/70 dark:hover:bg-rose-950/30 rounded-2xl p-2.5 border border-rose-100 dark:border-rose-900/40 shadow-2xs text-right cursor-pointer transition"
                 >
                   <div className="flex items-center gap-2.5 min-w-0">
                     {viewer.avatar ? (
                       <img
                         src={viewer.avatar}
                         alt={viewer.name}
-                        className="w-9 h-9 rounded-full object-cover border border-slate-200 shrink-0"
+                        className="w-9 h-9 rounded-full object-cover border border-rose-200 dark:border-rose-800 shrink-0"
                         referrerPolicy="no-referrer"
                       />
                     ) : (
-                      <span className="w-9 h-9 rounded-full bg-indigo-100 text-indigo-700 font-black text-xs flex items-center justify-center shrink-0">
+                      <span className="w-9 h-9 rounded-full bg-rose-100 dark:bg-rose-950 text-rose-700 dark:text-rose-300 font-black text-xs flex items-center justify-center shrink-0">
                         {(viewer.name || 'ع').charAt(0)}
                       </span>
                     )}
-                    <span className="text-xs font-black text-[#1E293B] truncate">{viewer.name}</span>
+                    <span className="text-xs font-black text-slate-900 dark:text-white truncate">{viewer.name}</span>
                   </div>
-                  <span className="text-[10.5px] font-semibold text-slate-500 shrink-0">
+                  <span className="text-[10.5px] font-semibold text-slate-500 dark:text-slate-400 shrink-0">
                     {formatRelativeArabicTime(viewer.viewedAt)}
                   </span>
                 </button>
@@ -675,10 +678,14 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
   unreadForumNotifsCount = 0,
   unreadStoryNotifsCount = 0,
   onOpenNotifications,
+  onOpenCreateTextRoom,
+  onOpenCreateVoiceRoom,
+  onRequestJoinRoom,
 }) => {
   const [forumPosts, setForumPosts] = useState<ForumPost[]>([]);
   const [forumLimit, setForumLimit] = useState<number>(20);
-  const [roomCategoryFilter, setRoomCategoryFilter] = useState<'all' | 'general' | 'live_audio'>('all');
+  const [claimingMissionIds, setClaimingMissionIds] = useState<Record<string, boolean>>({});
+  const [localClaimedMissionIds, setLocalClaimedMissionIds] = useState<Record<string, boolean>>({});
   const [isComposerExpanded, setIsComposerExpanded] = useState(false);
   const [postText, setPostText] = useState('');
   const [postImageUrl, setPostImageUrl] = useState<string>('');
@@ -722,23 +729,19 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
     [forumPosts, viewersModalPostId]
   );
 
-  // Include غرفة مصر 1, غرفة مصر 2, and any active Live Audio rooms
+  // Public rooms (Egypt 1 & 2) first, followed compactly by member-created text/voice rooms directly above the Forum
   const visibleRooms = useMemo(() => {
-    const core = rooms.filter(
-      (r) =>
-        r.id === 'room_egypt' ||
-        r.id === 'room_egypt2' ||
-        r.roomType === 'live_audio' ||
-        r.category === 'live_audio'
+    const publicPrimary = rooms.filter(
+      (r) => r.id === 'room_egypt' || r.id === 'room_egypt2'
     );
-    if (roomCategoryFilter === 'general') {
-      return core.filter((r) => r.roomType !== 'live_audio' && r.category !== 'live_audio');
-    }
-    if (roomCategoryFilter === 'live_audio') {
-      return core.filter((r) => r.roomType === 'live_audio' || r.category === 'live_audio');
-    }
-    return core;
-  }, [rooms, roomCategoryFilter]);
+    const createdOrLive = rooms.filter(
+      (r) =>
+        r.id !== 'room_egypt' &&
+        r.id !== 'room_egypt2' &&
+        (!r.isPrivate || r.ownerId === currentUser.id || r.hostId === currentUser.id)
+    );
+    return [...publicPrimary, ...createdOrLive];
+  }, [rooms, currentUser.id]);
 
   const onlineUserIds = useMemo(() => new Set(onlineUsers.map(u => u.id)), [onlineUsers]);
   const isOwner = isUserAdminOrOwner(currentUser) || currentUser.role === 'admin' || currentUser.role === 'super_admin';
@@ -1036,13 +1039,29 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
 
   const handleClaimShared = async (mission: SharedRoomMission) => {
     if (mission.currentProgress < mission.targetProgress) return;
-    if ((mission.claimedBy || []).includes(currentUser.id)) return;
-    await claimSharedMissionReward(mission.id, currentUser.id);
-    sounds.playGiftFanfare();
-    if (onClaimSharedRewardCoins) {
-      onClaimSharedRewardCoins(mission.rewardCoins, mission.rewardVipLabel);
+    if (
+      (mission.claimedBy || []).includes(currentUser.id) ||
+      localClaimedMissionIds[mission.id] ||
+      claimingMissionIds[mission.id]
+    ) {
+      return;
     }
-    toast.success(`مبروك! تم استلام جائزة المهمة الجماعية (+${mission.rewardCoins} كوينز) 🎉`);
+    setClaimingMissionIds((prev) => ({ ...prev, [mission.id]: true }));
+    setLocalClaimedMissionIds((prev) => ({ ...prev, [mission.id]: true }));
+    try {
+      await claimSharedMissionReward(mission.id, currentUser.id);
+      sounds.playGiftFanfare();
+      if (onClaimSharedRewardCoins) {
+        onClaimSharedRewardCoins(mission.rewardCoins, mission.rewardVipLabel);
+      }
+      toast.success(`مبروك! تم استلام جائزة المهمة الجماعية (+${mission.rewardCoins} كوينز) 🎉`);
+    } finally {
+      setClaimingMissionIds((prev) => {
+        const next = { ...prev };
+        delete next[mission.id];
+        return next;
+      });
+    }
   };
 
   const handleSharePostToFriend = async (friend: Friend, post: ForumPost) => {
@@ -1076,12 +1095,6 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
     });
 
     return [...base].sort((a, b) => {
-      const aPinned = Boolean(a.isPinned);
-      const bPinned = Boolean(b.isPinned);
-      if (aPinned !== bPinned) return aPinned ? -1 : 1;
-      if (aPinned && bPinned) {
-        return (b.pinnedAt || b.createdAt) - (a.pinnedAt || a.createdAt);
-      }
       if (forumFilter === 'trend') {
         const aIs24h = now - (a.createdAt || 0) <= 86400000 ? 1 : 0;
         const bIs24h = now - (b.createdAt || 0) <= 86400000 ? 1 : 0;
@@ -1203,52 +1216,30 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
         onOpenNotifications={onOpenNotifications}
       />
 
-      {/* 2. Top Compact Horizontal Strip: غرف شات مصر العامة + Live Audio Rooms */}
-      <div id="home-rooms-section" className="bg-white/95 border border-slate-200 rounded-2xl mt-1 sm:mt-2 p-2 sm:p-2.5 shadow-sm">
-        <div className="flex items-center justify-between gap-2 px-0.5 mb-2">
-          <h2 className="text-xs sm:text-sm font-black text-slate-900 flex items-center gap-1.5 whitespace-nowrap">
-            <span>🇪🇬 غرف شات مصر</span>
-            <span className="px-2 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-[10px] font-bold">
-              مفتوحة 24/7
-            </span>
-          </h2>
-        </div>
-
-        {/* Filter Row with Inline Room Missions — Fits cleanly on ONE single row without wrapping */}
-        <div
-          dir="rtl"
-          className="w-full flex flex-nowrap items-center gap-1 sm:gap-1.5 justify-between mb-2"
-        >
-          {[
-            { id: 'all', label: 'الكل' },
-            { id: 'general', label: 'غرف عامة' },
-            { id: 'live_audio', label: 'صوتية مباشرة' },
-          ].map((pill) => (
-            <button
-              key={pill.id}
-              type="button"
-              onClick={() => setRoomCategoryFilter(pill.id as any)}
-              className={`flex-1 min-w-0 justify-center text-[11px] sm:text-xs px-1.5 sm:px-3 py-1.5 rounded-[18px] whitespace-nowrap font-bold flex items-center transition cursor-pointer ${
-                roomCategoryFilter === pill.id
-                  ? 'bg-indigo-600 text-white shadow-2xs'
-                  : 'bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200'
-              }`}
-            >
-              {pill.label}
-            </button>
-          ))}
+      {/* 2. Top Compact Rooms Strip: Dual Create Buttons + Egypt 1 & 2 + Newly Created Member/Voice Rooms */}
+      <div id="home-rooms-section" className="bg-white/95 dark:bg-slate-900/95 border border-slate-200 dark:border-slate-800 rounded-2xl mt-1 p-2 sm:p-2.5 shadow-sm">
+        {/* Dual Equal Full-Width Create Room Action Buttons */}
+        <div dir="rtl" className="grid grid-cols-2 gap-2 mb-2">
+          <button
+            type="button"
+            onClick={() => onOpenCreateTextRoom?.()}
+            className="w-full py-2 px-2.5 rounded-xl bg-gradient-to-l from-indigo-600 to-blue-600 hover:from-indigo-500 hover:to-blue-500 text-white text-[11.5px] sm:text-xs font-black flex items-center justify-center gap-1.5 shadow-xs active:scale-[0.98] transition cursor-pointer whitespace-nowrap"
+          >
+            <MessageSquare className="w-3.5 h-3.5 shrink-0" />
+            <span className="truncate">إنشاء غرفة دردشة</span>
+          </button>
 
           <button
             type="button"
-            onClick={() => setShowMobileMissions(prev => !prev)}
-            className="lg:hidden flex-1 min-w-0 justify-center text-[11px] px-1.5 py-1.5 rounded-[18px] whitespace-nowrap font-bold bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-800 flex items-center gap-1 cursor-pointer"
+            onClick={() => onOpenCreateVoiceRoom?.()}
+            className="w-full py-2 px-2.5 rounded-xl bg-gradient-to-l from-purple-600 to-fuchsia-600 hover:from-purple-500 hover:to-fuchsia-500 text-white text-[11.5px] sm:text-xs font-black flex items-center justify-center gap-1.5 shadow-xs active:scale-[0.98] transition cursor-pointer whitespace-nowrap"
           >
-            <Target className="w-3 h-3 text-amber-600 shrink-0" />
-            <span>مهام الغرف</span>
+            <Mic className="w-3.5 h-3.5 shrink-0" />
+            <span className="truncate">إنشاء غرفة صوتية</span>
           </button>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-[10px]">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
           {visibleRooms.map((room) => {
             const isEgypt1 = room.id === 'room_egypt';
             const isLiveAudio = room.roomType === 'live_audio' || room.category === 'live_audio';
@@ -1298,7 +1289,7 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
                   }
                   onSelectRoom(room);
                 }}
-                className={`group relative cursor-pointer overflow-hidden rounded-2xl bg-gradient-to-br ${gradientTheme} border p-3 min-h-[96px] sm:min-h-[108px] text-white shadow-sm hover:shadow-lg hover:brightness-105 active:scale-[0.99] transition-all flex flex-col justify-between gap-1.5 ${
+                className={`group relative cursor-pointer overflow-hidden rounded-2xl bg-gradient-to-br ${gradientTheme} border p-2.5 min-h-[78px] sm:min-h-[86px] text-white shadow-sm hover:shadow-lg hover:brightness-105 active:scale-[0.99] transition-all flex flex-col justify-between gap-1 ${
                   isRoomPulsing ? 'ring-2 ring-amber-300/75 shadow-[0_6px_22px_rgba(251,191,36,0.28)]' : ''
                 }`}
               >
@@ -1436,36 +1427,52 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
                   </div>
                 )}
 
-                {/* Bottom Cover Footer & Compact Enter Button */}
+                {/* Bottom Cover Footer & Compact Enter / Request Join Buttons */}
                 <div className="relative z-10 flex items-center justify-between gap-2 pt-1 border-t border-white/15">
                   <span className="text-[10px] font-bold text-white/85 truncate">
                     {room.isLocked ? 'دخول المديرين فقط' : isEgypt1 ? '🇪🇬 تجمع المصريين الرئيسي' : '✨ سهر وتعارف على مدار الساعة'}
                   </span>
 
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onSelectRoom(room);
-                    }}
-                    className={`px-3 py-1.5 rounded-xl font-black text-[11px] flex items-center gap-1 shrink-0 shadow-sm transition-transform group-hover:scale-[1.02] cursor-pointer ${
-                      room.isLocked && !canManageThisRoom
-                        ? 'bg-white/95 text-rose-700'
-                        : `bg-white ${ctaColor}`
-                    }`}
-                  >
-                    {room.isLocked && !canManageThisRoom ? (
-                      <>
-                        <Lock className="w-3 h-3" />
-                        <span>مقفلة</span>
-                      </>
-                    ) : (
-                      <>
-                        <span>دخول الغرفة</span>
-                        {room.isLocked ? <Lock className="w-3 h-3" /> : <ArrowLeft className="w-3 h-3" />}
-                      </>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    {onRequestJoinRoom && room.ownerId !== currentUser.id && room.hostId !== currentUser.id && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onRequestJoinRoom(room);
+                        }}
+                        className="px-2.5 py-1.5 rounded-xl bg-black/35 hover:bg-black/50 border border-white/30 text-white font-black text-[10.5px] shrink-0 transition cursor-pointer"
+                        title="إرسال طلب انضمام لمالك الغرفة"
+                      >
+                        طلب انضمام
+                      </button>
                     )}
-                  </button>
+
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onSelectRoom(room);
+                      }}
+                      className={`px-3 py-1.5 rounded-xl font-black text-[11px] flex items-center gap-1 shrink-0 shadow-sm transition-transform group-hover:scale-[1.02] cursor-pointer ${
+                        room.isLocked && !canManageThisRoom
+                          ? 'bg-white/95 text-rose-700'
+                          : `bg-white ${ctaColor}`
+                      }`}
+                    >
+                      {room.isLocked && !canManageThisRoom ? (
+                        <>
+                          <Lock className="w-3 h-3" />
+                          <span>مقفلة</span>
+                        </>
+                      ) : (
+                        <>
+                          <span>دخول الغرفة</span>
+                          {room.isLocked ? <Lock className="w-3 h-3" /> : <ArrowLeft className="w-3 h-3" />}
+                        </>
+                      )}
+                    </button>
+                  </div>
                 </div>
               </div>
             );
@@ -1487,25 +1494,28 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
             {sharedMissions.map((m) => {
               const pct = Math.min(100, Math.round(((m.currentProgress || 0) / Math.max(1, m.targetProgress)) * 100));
               const isCompleted = (m.currentProgress || 0) >= m.targetProgress;
-              const isClaimed = (m.claimedBy || []).includes(currentUser.id);
+              const isClaimed = Boolean((m.claimedBy || []).includes(currentUser.id) || localClaimedMissionIds[m.id]);
+              const isClaiming = Boolean(claimingMissionIds[m.id]);
               return (
-                <div key={m.id} className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 space-y-1.5">
+                <div key={m.id} className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 space-y-1.5">
                   <div className="flex items-center justify-between gap-2">
-                    <span className="text-xs font-black text-slate-900">{m.title}</span>
-                    <span className="text-[10px] font-black text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded">+{m.rewardCoins} 🪙</span>
+                    <span className="text-xs font-black text-slate-900 dark:text-white">{m.title}</span>
+                    <span className="text-[10px] font-black text-amber-700 dark:text-amber-300 bg-amber-100 dark:bg-amber-950/60 px-1.5 py-0.5 rounded">+{m.rewardCoins} 🪙</span>
                   </div>
-                  <p className="text-[10.5px] text-slate-600">{m.description}</p>
-                  <div className="w-full h-2 bg-slate-200 rounded-full overflow-hidden">
+                  <p className="text-[10.5px] text-slate-600 dark:text-slate-300">{m.description}</p>
+                  <div className="w-full h-2 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
                     <div className="h-full bg-gradient-to-r from-amber-500 to-emerald-500 transition-all" style={{ width: `${pct}%` }} />
                   </div>
                   <div className="flex items-center justify-between text-[10px]">
-                    <span className="font-bold text-slate-600">{m.currentProgress} / {m.targetProgress} ({pct}%)</span>
+                    <span className="font-bold text-slate-600 dark:text-slate-300">{m.currentProgress} / {m.targetProgress} ({pct}%)</span>
                     {isCompleted && !isClaimed ? (
-                      <button onClick={() => handleClaimShared(m)} className="px-2.5 py-1 rounded-lg bg-emerald-600 text-white font-black">استلام الجائزة 🎁</button>
+                      <button disabled={isClaiming} onClick={() => handleClaimShared(m)} className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 text-white font-black cursor-pointer">
+                        {isClaiming ? 'جاري الاستلام...' : 'استلام الجائزة 🎁'}
+                      </button>
                     ) : isClaimed ? (
-                      <span className="text-emerald-600 font-black flex items-center gap-0.5"><CheckCircle2 className="w-3 h-3" /> تم الاستلام</span>
+                      <span className="text-emerald-600 dark:text-emerald-400 font-black flex items-center gap-0.5"><CheckCircle2 className="w-3 h-3" /> تم الاستلام</span>
                     ) : (
-                      <span className="text-indigo-600 font-bold">{m.rewardVipLabel}</span>
+                      <span className="text-indigo-600 dark:text-indigo-400 font-bold">{m.rewardVipLabel}</span>
                     )}
                   </div>
                 </div>
@@ -1520,26 +1530,21 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
         
         {/* Main Column: منتدى التعارف والتواصل الاجتماعي */}
         <div className="lg:col-span-8 space-y-3">
-          {/* Forum Header & Composer with Compact Matching Cover */}
-          <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
-            {/* Compact Matching Forum Cover Banner */}
-            <div className="relative overflow-hidden bg-gradient-to-br from-[#312e81]/95 via-[#7c2d12]/90 to-[#b45309]/95 px-3.5 py-2.5 text-white border-b border-amber-300/30">
+          {/* Forum Header & Composer with Distinct Pink / Rose Theme */}
+          <div className="bg-rose-50/45 dark:bg-slate-900 border border-rose-200 dark:border-rose-900/60 rounded-2xl overflow-hidden shadow-sm">
+            {/* Compact Distinct Pink/Rose Forum Cover Banner */}
+            <div className="relative overflow-hidden bg-gradient-to-br from-[#9d174d] via-[#be185d] to-[#db2777] px-3.5 py-3 text-white border-b border-rose-300/40">
               <div
                 aria-hidden="true"
-                style={{
-                  backgroundImage: "url('/assets/wallpapers/nature_nile_sunset.jpg')",
-                  backgroundSize: 'cover',
-                  backgroundPosition: 'center'
-                }}
-                className="absolute inset-0 opacity-20 pointer-events-none"
+                className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.22),transparent_55%)] pointer-events-none"
               />
               <div className="relative z-10 flex flex-wrap items-center justify-between gap-2">
                 <div>
-                  <h1 className="text-xs sm:text-sm font-black flex items-center gap-1.5 drop-shadow-xs">
-                    <Sparkles className="w-4 h-4 text-amber-300" />
+                  <h1 className="text-xs sm:text-sm font-black text-white flex items-center gap-1.5 drop-shadow-xs">
+                    <Sparkles className="w-4 h-4 text-rose-100" />
                     <span>منتدى التعارف والتواصل الاجتماعي الراقي</span>
                   </h1>
-                  <p className="text-[10.5px] text-white/90 mt-0.5">
+                  <p className="text-[10.5px] text-rose-100/95 mt-0.5">
                     شارك خاطرة تعارف، صورة لطيفة، أو ابدأ محادثة خاصة فورية 🌸
                   </p>
                 </div>
@@ -1548,21 +1553,21 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
                     <button
                       type="button"
                       onClick={() => onOpenNotifications?.()}
-                      className="px-2 py-0.5 rounded-full bg-rose-600 hover:bg-rose-500 text-white text-[10px] font-black flex items-center gap-1 shadow-xs tabular-nums cursor-pointer transition"
+                      className="px-2 py-0.5 rounded-full bg-white text-[#be185d] hover:bg-rose-50 text-[10px] font-black flex items-center gap-1 shadow-xs tabular-nums cursor-pointer transition"
                       title="عرض إشعارات المنتدى غير المقروءة"
                     >
                       <span>🔔</span>
                       <span>{unreadForumNotifsCount > 99 ? '99+' : unreadForumNotifsCount}</span>
                     </button>
                   )}
-                  <span className="px-2.5 py-0.5 rounded-full bg-black/25 border border-white/25 text-white text-[10px] font-black">
+                  <span className="px-2.5 py-0.5 rounded-full bg-black/25 border border-white/30 text-white text-[10px] font-black">
                     {filteredPosts.length} مشاركة
                   </span>
                 </div>
               </div>
             </div>
 
-            <div className="p-3 sm:p-3.5 space-y-2.5">
+            <div className="p-3 sm:p-3.5 space-y-2.5 bg-white/85 dark:bg-slate-900">
               {/* Hidden image input for forum posts */}
               <input
                 ref={forumImageInputRef}
@@ -1578,14 +1583,14 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
                   <button
                     type="button"
                     onClick={() => setIsComposerExpanded(true)}
-                    className="flex-1 text-right bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs sm:text-sm text-slate-500 font-bold transition cursor-text"
+                    className="flex-1 text-right bg-rose-50/70 dark:bg-slate-800 hover:bg-rose-50 dark:hover:bg-slate-800/80 border border-rose-200 dark:border-rose-900/50 rounded-xl px-3.5 py-2.5 text-xs sm:text-sm text-slate-600 dark:text-slate-300 font-bold transition cursor-text"
                   >
                     اكتب حاجة حلوة... شارك خاطرة أو تحية مع الأعضاء ✍️
                   </button>
                   <button
                     type="button"
                     onClick={() => forumImageInputRef.current?.click()}
-                    className="px-3 py-2.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 text-xs font-black flex items-center gap-1 cursor-pointer shrink-0"
+                    className="px-3 py-2.5 rounded-xl bg-rose-50 dark:bg-rose-950/60 hover:bg-rose-100 dark:hover:bg-rose-900/60 border border-rose-200 dark:border-rose-800 text-[#be185d] dark:text-rose-300 text-xs font-black flex items-center gap-1 cursor-pointer shrink-0 transition"
                     title="إرفاق صورة"
                   >
                     <ImageIcon className="w-4 h-4" />
@@ -1600,19 +1605,19 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
                     value={postText}
                     onChange={(e) => setPostText(e.target.value)}
                     placeholder="اكتب منشور تعارف، تحية، أو اذكر صديق بـ @..."
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs sm:text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-indigo-500 resize-none"
+                    className="w-full bg-rose-50/50 dark:bg-slate-800 border border-rose-200 dark:border-rose-900/60 rounded-xl p-2.5 text-xs sm:text-sm text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none focus:border-[#db2777] resize-none"
                   />
 
                   {/* @username Autocomplete Dropdown */}
                   {mentionSuggestions.length > 0 && (
-                    <div className="bg-white border border-indigo-200 rounded-xl shadow-lg p-1.5 space-y-1 z-30">
-                      <span className="text-[10px] font-black text-indigo-600 px-2 block">إشارة إلى عضو متصل:</span>
+                    <div className="bg-white dark:bg-slate-800 border border-rose-200 dark:border-rose-800 rounded-xl shadow-lg p-1.5 space-y-1 z-30">
+                      <span className="text-[10px] font-black text-[#be185d] dark:text-rose-300 px-2 block">إشارة إلى عضو متصل:</span>
                       {mentionSuggestions.map((u) => (
                         <button
                           key={u.id}
                           type="button"
                           onClick={() => handleInsertMention(u.name)}
-                          className="w-full px-2.5 py-1.5 rounded-lg hover:bg-indigo-50 flex items-center gap-2 text-right text-xs font-bold text-slate-800 cursor-pointer"
+                          className="w-full px-2.5 py-1.5 rounded-lg hover:bg-rose-50 dark:hover:bg-rose-950/50 flex items-center gap-2 text-right text-xs font-bold text-slate-800 dark:text-slate-100 cursor-pointer"
                         >
                           <span className="w-2 h-2 rounded-full bg-emerald-500" />
                           <span className="truncate">{u.name}</span>
@@ -1622,7 +1627,7 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
                   )}
 
                   {postImageUrl && (
-                    <div className="relative inline-block rounded-xl overflow-hidden border border-slate-200 bg-slate-50 shadow-xs">
+                    <div className="relative inline-block rounded-xl overflow-hidden border border-rose-200 dark:border-rose-800 bg-rose-50/50 dark:bg-slate-800 shadow-xs">
                       <img src={postImageUrl} alt="معاينة الصورة" className="max-h-36 w-auto object-contain" />
                       <button
                         type="button"
@@ -1640,7 +1645,7 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
                       <button
                         type="button"
                         onClick={() => forumImageInputRef.current?.click()}
-                        className="px-2.5 py-1.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 text-[11px] font-black flex items-center gap-1 cursor-pointer transition"
+                        className="px-2.5 py-1.5 rounded-xl bg-rose-50 dark:bg-rose-950/60 hover:bg-rose-100 dark:hover:bg-rose-900/60 border border-rose-200 dark:border-rose-800 text-[#be185d] dark:text-rose-300 text-[11px] font-black flex items-center gap-1 cursor-pointer transition"
                       >
                         <ImageIcon className="w-3.5 h-3.5" />
                         <span>إضافة صورة</span>
@@ -1649,7 +1654,7 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
                         <button
                           type="button"
                           onClick={() => setIsComposerExpanded(false)}
-                          className="px-2.5 py-1.5 rounded-xl bg-slate-100 text-slate-600 text-[11px] font-bold cursor-pointer"
+                          className="px-2.5 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 text-[11px] font-bold cursor-pointer"
                         >
                           طيّ
                         </button>
@@ -1658,7 +1663,7 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
                     <button
                       type="submit"
                       disabled={(!postText.trim() && !postImageUrl) || isPublishing}
-                      className="px-4 py-1.5 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 disabled:opacity-50 text-white text-xs font-black flex items-center gap-1.5 shadow-sm active:scale-95 transition-all cursor-pointer"
+                      className="px-4 py-1.5 rounded-xl bg-gradient-to-r from-[#be185d] to-[#db2777] hover:from-[#9d174d] hover:to-[#be185d] disabled:opacity-50 text-white text-xs font-black flex items-center gap-1.5 shadow-sm active:scale-95 transition-all cursor-pointer"
                     >
                       <Send className="w-3.5 h-3.5" />
                       <span>{isPublishing ? 'جاري النشر...' : 'نشر في المنتدى'}</span>
@@ -1668,7 +1673,7 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
               )}
 
               {/* RTL Forum Filter Tabs: الكل (Default) | التريند | الشباب | البنات | المتواجدون الآن */}
-              <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 pt-1.5 border-t border-slate-100 text-xs font-bold">
+              <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 pt-1.5 border-t border-rose-100 dark:border-rose-900/40 text-xs font-bold">
                 {[
                   { id: 'all', label: '🌟 الكل' },
                   { id: 'trend', label: '🔥 التريند' },
@@ -1683,9 +1688,9 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
                     className={`px-3 py-1.5 rounded-xl whitespace-nowrap transition-all cursor-pointer ${
                       forumFilter === tab.id
                         ? tab.id === 'trend'
-                          ? 'bg-gradient-to-r from-amber-500 to-rose-600 text-white shadow-xs'
-                          : 'bg-indigo-600 text-white shadow-xs'
-                        : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                          ? 'bg-gradient-to-r from-amber-500 to-[#db2777] text-white shadow-xs'
+                          : 'bg-gradient-to-r from-[#be185d] to-[#db2777] text-white shadow-xs'
+                        : 'bg-rose-50/80 dark:bg-slate-800 hover:bg-rose-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 border border-rose-100 dark:border-slate-700'
                     }`}
                   >
                     {tab.label}
@@ -1697,10 +1702,10 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
 
           {/* Forum Posts Feed */}
           {filteredPosts.length === 0 ? (
-            <div className="bg-white border border-slate-200 rounded-2xl p-8 text-center space-y-2 shadow-sm">
+            <div className="bg-white dark:bg-slate-900 border border-rose-200 dark:border-rose-900/60 rounded-2xl p-8 text-center space-y-2 shadow-sm">
               <div className="text-3xl">🌸</div>
-              <h3 className="text-sm font-black text-slate-900">لا توجد منشورات في هذا التصنيف بعد</h3>
-              <p className="text-xs text-slate-500">كن أول من يبدأ التعارف وينشر تحية جميلة في المنتدى!</p>
+              <h3 className="text-sm font-black text-slate-900 dark:text-white">لا توجد منشورات في هذا التصنيف بعد</h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400">كن أول من يبدأ التعارف وينشر تحية جميلة في المنتدى!</p>
             </div>
           ) : (
             <div className="space-y-2.5">
@@ -1742,15 +1747,15 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
                     data-post-id={post.id}
                     className={`rounded-2xl p-2.5 sm:p-3 shadow-sm transition-all border ${
                       highlightedPostId === post.id
-                        ? 'bg-indigo-50/70 border-indigo-400 ring-2 ring-indigo-300'
+                        ? 'bg-rose-50/80 dark:bg-rose-950/40 border-rose-400 ring-2 ring-rose-300 dark:ring-rose-700'
                         : post.isPinned
-                        ? 'bg-gradient-to-br from-amber-50/75 via-white to-rose-50/40 border-amber-300 ring-1 ring-amber-200'
-                        : 'bg-white border-slate-200 hover:border-indigo-200'
+                        ? 'bg-gradient-to-br from-rose-50/85 via-white to-pink-50/60 dark:from-rose-950/35 dark:via-slate-900 dark:to-slate-900 border-rose-300 dark:border-rose-700 ring-1 ring-rose-200 dark:ring-rose-800/40'
+                        : 'bg-white dark:bg-slate-900 border-rose-100/90 dark:border-rose-900/45 hover:border-rose-300 dark:hover:border-rose-700'
                     }`}
                   >
                     {post.isPinned && (
-                      <div className="mb-1.5 inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-amber-100 border border-amber-300 text-amber-900 text-[10.5px] font-black">
-                        <Pin className="w-3 h-3 text-amber-700" />
+                      <div className="mb-1.5 inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-rose-100 dark:bg-rose-950/70 border border-rose-300 dark:border-rose-700 text-[#9d174d] dark:text-rose-200 text-[10.5px] font-black">
+                        <Pin className="w-3 h-3 text-[#be185d] dark:text-rose-300" />
                         <span>منشور مثبت من الإدارة 📌</span>
                       </div>
                     )}
@@ -1785,7 +1790,7 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
                             <VerifiedBadge verified={Boolean(post.authorVerified || post.authorRole === 'owner')} size="sm" />
                             <span className="text-xs">{post.authorCountryFlag || '🇪🇬'}</span>
                             {isPostAuthorOnline && (
-                              <span className="px-1.5 py-0.2 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-[9px] font-black">
+                              <span className="px-1.5 py-0.2 rounded-full bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-300 text-[9px] font-black">
                                 متصل
                               </span>
                             )}
@@ -1795,7 +1800,7 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
                               </span>
                             )}
                           </div>
-                          <div className="flex items-center gap-2 text-[10px] text-slate-500 mt-0.5 flex-wrap">
+                          <div className="flex items-center gap-2 text-[10px] text-slate-500 dark:text-slate-400 mt-0.5 flex-wrap">
                             <span>{formatRelativeArabicTime(post.createdAt)}</span>
                             <span>•</span>
                             {(() => {
@@ -1809,7 +1814,7 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
                                   <button
                                     type="button"
                                     onClick={() => setViewersModalPostId(post.id)}
-                                    className="font-bold text-indigo-700 hover:text-indigo-900 hover:underline inline-flex items-center gap-1 cursor-pointer"
+                                    className="font-bold text-[#be185d] dark:text-rose-300 hover:underline inline-flex items-center gap-1 cursor-pointer"
                                     title="عرض قائمة من شاهدوا المنشور"
                                   >
                                     <span>👁️ شافه {viewersCountVal}</span>
@@ -1817,7 +1822,7 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
                                 );
                               }
                               return (
-                                <span className="font-bold text-slate-600 inline-flex items-center gap-1">
+                                <span className="font-bold text-slate-600 dark:text-slate-300 inline-flex items-center gap-1">
                                   <span>👁️ {viewersCountVal}</span>
                                 </span>
                               );
@@ -1833,8 +1838,8 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
                             onClick={() => handleTogglePin(post)}
                             className={`px-2 py-1 rounded-lg text-[10px] font-black flex items-center gap-1 transition cursor-pointer ${
                               post.isPinned
-                                ? 'bg-amber-500 text-white'
-                                : 'bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200'
+                                ? 'bg-[#be185d] text-white'
+                                : 'bg-rose-50 dark:bg-rose-950/60 hover:bg-rose-100 text-[#be185d] dark:text-rose-300 border border-rose-200 dark:border-rose-800'
                             }`}
                             title={post.isPinned ? 'إلغاء التثبيت' : 'تثبيت المنشور'}
                           >
@@ -1845,14 +1850,14 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
                         <button
                           type="button"
                           onClick={() => setOpenPostMenuId((prev) => (prev === post.id ? null : post.id))}
-                          className="p-1.5 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-slate-100 transition cursor-pointer"
+                          className="p-1.5 rounded-lg text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-rose-50 dark:hover:bg-slate-800 transition cursor-pointer"
                           title="خيارات المنشور"
                         >
                           <MoreVertical className="w-4 h-4" />
                         </button>
 
                         {openPostMenuId === post.id && (
-                          <div className="absolute left-0 top-full mt-1 w-44 bg-white border border-slate-200 rounded-xl shadow-xl py-1 z-[100] text-right">
+                          <div className="absolute left-0 top-full mt-1 w-44 bg-white dark:bg-slate-800 border border-rose-200 dark:border-rose-900/60 rounded-xl shadow-xl py-1 z-[100] text-right">
                             <button
                               type="button"
                               onClick={() => {
@@ -1863,7 +1868,7 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
                                   setSharePostModal(post);
                                 }
                               }}
-                              className="w-full px-3 py-2 text-xs font-bold text-slate-700 hover:bg-indigo-50 hover:text-indigo-700 flex items-center gap-2 cursor-pointer"
+                              className="w-full px-3 py-2 text-xs font-bold text-slate-700 dark:text-slate-200 hover:bg-rose-50 dark:hover:bg-rose-950/50 hover:text-[#be185d] dark:hover:text-rose-300 flex items-center gap-2 cursor-pointer"
                             >
                               <Share2 className="w-3.5 h-3.5" />
                               <span>مشاركة في الخاص</span>
@@ -1875,7 +1880,7 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
                                   setOpenPostMenuId(null);
                                   setConfirmDeletePostId(post.id);
                                 }}
-                                className="w-full px-3 py-2 text-xs font-bold text-rose-600 hover:bg-rose-50 flex items-center gap-2 cursor-pointer"
+                                className="w-full px-3 py-2 text-xs font-bold text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/60 flex items-center gap-2 cursor-pointer"
                               >
                                 <Trash2 className="w-3.5 h-3.5" />
                                 <span>حذف المنشور 🗑️</span>
@@ -1888,8 +1893,8 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
 
                     {/* Inline Delete Confirmation Banner */}
                     {confirmDeletePostId === post.id && (
-                      <div className="mt-2 p-2.5 rounded-xl bg-rose-50 border border-rose-200 flex items-center justify-between gap-2 text-xs">
-                        <span className="font-black text-rose-900">هل تريد حذف المنشور؟</span>
+                      <div className="mt-2 p-2.5 rounded-xl bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-800 flex items-center justify-between gap-2 text-xs">
+                        <span className="font-black text-rose-900 dark:text-rose-200">هل تريد حذف المنشور؟</span>
                         <div className="flex items-center gap-1.5 shrink-0">
                           <button
                             type="button"
@@ -1905,7 +1910,7 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
                           <button
                             type="button"
                             onClick={() => setConfirmDeletePostId(null)}
-                            className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 text-slate-700 font-bold text-[11px] cursor-pointer"
+                            className="px-2.5 py-1 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 font-bold text-[11px] cursor-pointer"
                           >
                             إلغاء
                           </button>
@@ -1921,11 +1926,11 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
                       const displayText = isLong && !isExpanded ? `${rawText.slice(0, 180)}...` : rawText;
                       const parts = displayText.split(/(@[^\s،.!؟]+)/g);
                       return (
-                        <div className="mt-2 bg-slate-50/70 rounded-xl p-2.5 border border-slate-100">
-                          <p className="text-xs sm:text-sm text-slate-800 leading-relaxed whitespace-pre-wrap break-words">
+                        <div className="mt-2 bg-rose-50/40 dark:bg-slate-800/80 rounded-xl p-2.5 border border-rose-100/80 dark:border-slate-700/70">
+                          <p className="text-xs sm:text-sm text-slate-800 dark:text-slate-100 leading-relaxed whitespace-pre-wrap break-words">
                             {parts.map((part, idx) =>
                               part.startsWith('@') ? (
-                                <span key={idx} className="font-black text-indigo-600">
+                                <span key={idx} className="font-black text-[#be185d] dark:text-rose-400">
                                   {part}
                                 </span>
                               ) : (
@@ -1939,7 +1944,7 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
                               onClick={() =>
                                 setExpandedPostIds((prev) => ({ ...prev, [post.id]: !isExpanded }))
                               }
-                              className="mt-1 text-[11px] font-black text-indigo-600 hover:underline cursor-pointer"
+                              className="mt-1 text-[11px] font-black text-[#be185d] dark:text-rose-400 hover:underline cursor-pointer"
                             >
                               {isExpanded ? 'عرض أقل' : 'شاهد المزيد'}
                             </button>
@@ -1951,7 +1956,7 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
                     {post.imageUrl && (
                       <div
                         onClick={() => setLightboxImageUrl(post.imageUrl || null)}
-                        className="mt-2 rounded-xl overflow-hidden border border-slate-200/90 bg-slate-100/75 flex items-center justify-center max-h-[230px] cursor-zoom-in group relative"
+                        className="mt-2 rounded-xl overflow-hidden border border-rose-200/80 dark:border-slate-700 bg-rose-50/40 dark:bg-slate-800/75 flex items-center justify-center max-h-[230px] cursor-zoom-in group relative"
                         title="اضغط لتكبير الصورة"
                       >
                         <img
@@ -1967,20 +1972,20 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
                     )}
 
                     {/* Compact Responsive Post Action Bar (Fits 360px+ cleanly without overflow) */}
-                    <div className="mt-1.5 pt-1 border-t border-slate-100/80 flex items-center justify-between gap-1 flex-wrap">
+                    <div className="mt-1.5 pt-1.5 border-t border-rose-100/80 dark:border-slate-800 flex items-center justify-between gap-1 flex-wrap">
                       <div className="flex items-center gap-1 min-w-0 flex-wrap">
                         <div
                           className={`inline-flex items-center rounded-lg text-[10px] sm:text-[11px] font-black border overflow-hidden shrink-0 ${
                             isLikedByMe
-                              ? 'bg-rose-100 text-rose-700 border-rose-200'
-                              : 'bg-slate-100 text-slate-700 border-slate-200'
+                              ? 'bg-rose-100 dark:bg-rose-950/70 text-[#be185d] dark:text-rose-300 border-rose-300 dark:border-rose-700'
+                              : 'bg-rose-50/70 dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-rose-200/80 dark:border-slate-700'
                           }`}
                         >
                           <button
                             type="button"
                             onClick={() => handleToggleLike(post)}
                             title={isLikedByMe ? 'إلغاء الإعجاب' : 'أعجبني'}
-                            className="px-1.5 py-1 hover:bg-rose-200/50 active:scale-95 transition flex items-center cursor-pointer"
+                            className="px-1.5 py-1 hover:bg-rose-200/50 dark:hover:bg-rose-900/40 active:scale-95 transition flex items-center cursor-pointer"
                           >
                             <Heart className={`w-3 h-3 ${isLikedByMe ? 'fill-rose-500 text-rose-500' : ''}`} />
                           </button>
@@ -1988,7 +1993,7 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
                             type="button"
                             onClick={() => setLikesModalPostId(post.id)}
                             title="عرض قائمة المعجبين"
-                            className="pr-1 pl-1.5 py-1 border-r border-slate-200/80 hover:bg-rose-200/40 active:scale-95 transition flex items-center gap-0.5 whitespace-nowrap cursor-pointer"
+                            className="pr-1 pl-1.5 py-1 border-r border-rose-200/80 dark:border-slate-700 hover:bg-rose-200/40 dark:hover:bg-rose-900/40 active:scale-95 transition flex items-center gap-0.5 whitespace-nowrap cursor-pointer"
                           >
                             <span>إعجاب</span>
                             <span className="tabular-nums">({post.likesCount || 0})</span>
@@ -1998,7 +2003,7 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
                         <button
                           type="button"
                           onClick={() => setCommentsModalPostId(post.id)}
-                          className="px-2 py-1 rounded-lg text-[10px] sm:text-[11px] font-black flex items-center gap-1 whitespace-nowrap transition active:scale-95 cursor-pointer bg-slate-100 hover:bg-indigo-50 text-slate-700 hover:text-indigo-700 border border-slate-200 shrink-0"
+                          className="px-2 py-1 rounded-lg text-[10px] sm:text-[11px] font-black flex items-center gap-1 whitespace-nowrap transition active:scale-95 cursor-pointer bg-rose-50/70 dark:bg-slate-800 hover:bg-rose-100 dark:hover:bg-rose-950/60 text-slate-700 dark:text-slate-200 hover:text-[#be185d] dark:hover:text-rose-300 border border-rose-200/80 dark:border-slate-700 shrink-0"
                         >
                           <MessageCircle className="w-3 h-3" />
                           <span>تعليق</span>
@@ -2014,7 +2019,7 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
                               setSharePostModal(post);
                             }
                           }}
-                          className="px-2 py-1 rounded-lg text-[10px] sm:text-[11px] font-black flex items-center gap-1 whitespace-nowrap transition active:scale-95 cursor-pointer bg-slate-100 hover:bg-indigo-50 text-slate-700 hover:text-indigo-700 border border-slate-200 shrink-0"
+                          className="px-2 py-1 rounded-lg text-[10px] sm:text-[11px] font-black flex items-center gap-1 whitespace-nowrap transition active:scale-95 cursor-pointer bg-rose-50/70 dark:bg-slate-800 hover:bg-rose-100 dark:hover:bg-rose-950/60 text-slate-700 dark:text-slate-200 hover:text-[#be185d] dark:hover:text-rose-300 border border-rose-200/80 dark:border-slate-700 shrink-0"
                           title="مشاركة المنشور في المحادثة الخاصة"
                         >
                           <Share2 className="w-3 h-3" />
@@ -2026,7 +2031,7 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
                         <button
                           type="button"
                           onClick={() => onOpenPrivateChatWith(peerForDm)}
-                          className="px-2 py-1 rounded-lg bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-[10px] sm:text-[11px] font-black flex items-center gap-1 whitespace-nowrap shadow-xs active:scale-95 transition-all cursor-pointer shrink-0"
+                          className="px-2 py-1 rounded-lg bg-gradient-to-r from-[#be185d] to-[#db2777] hover:from-[#9d174d] hover:to-[#be185d] text-white text-[10px] sm:text-[11px] font-black flex items-center gap-1 whitespace-nowrap shadow-xs active:scale-95 transition-all cursor-pointer shrink-0"
                         >
                           <Mail className="w-3 h-3" />
                           <span>مراسلة</span>
@@ -2042,7 +2047,7 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
                 <button
                   type="button"
                   onClick={() => setForumLimit((prev) => prev + 20)}
-                  className="w-full py-2.5 rounded-2xl bg-white hover:bg-indigo-50 border border-indigo-200 text-indigo-700 text-xs font-black shadow-xs active:scale-98 transition cursor-pointer"
+                  className="w-full py-2.5 rounded-2xl bg-white dark:bg-slate-900 hover:bg-rose-50 dark:hover:bg-rose-950/40 border border-rose-200 dark:border-rose-800 text-[#be185d] dark:text-rose-300 text-xs font-black shadow-xs active:scale-98 transition cursor-pointer"
                 >
                   تحميل المزيد ({forumPosts.length}) ↓
                 </button>
@@ -2053,14 +2058,14 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
 
         {/* Sticky Sidebar (Desktop lg+): مهام الغرف اليومية المشتركة */}
         <aside className="hidden lg:block lg:col-span-4 sticky top-20 space-y-3">
-          <div className="bg-white border border-amber-200 rounded-2xl p-4 shadow-sm space-y-3">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
+          <div className="bg-white dark:bg-slate-900 border border-amber-200 dark:border-amber-900/60 rounded-2xl p-4 shadow-sm space-y-3">
+            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-2.5">
               <div>
-                <h3 className="text-sm font-black text-slate-900 flex items-center gap-1.5">
+                <h3 className="text-sm font-black text-slate-900 dark:text-white flex items-center gap-1.5">
                   <Target className="w-4 h-4 text-amber-500" />
                   <span>مهام الغرف اليومية المشتركة</span>
                 </h3>
-                <p className="text-[10.5px] text-slate-500 mt-0.5">
+                <p className="text-[10.5px] text-slate-500 dark:text-slate-400 mt-0.5">
                   تعاونوا معاً لتحقيق الأهداف الجماعية وفتح جوائز VIP للجميع 🤝
                 </p>
               </div>
@@ -2071,24 +2076,25 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
               {sharedMissions.map((m) => {
                 const pct = Math.min(100, Math.round(((m.currentProgress || 0) / Math.max(1, m.targetProgress)) * 100));
                 const isCompleted = (m.currentProgress || 0) >= m.targetProgress;
-                const isClaimed = (m.claimedBy || []).includes(currentUser.id);
+                const isClaimed = Boolean((m.claimedBy || []).includes(currentUser.id) || localClaimedMissionIds[m.id]);
+                const isClaiming = Boolean(claimingMissionIds[m.id]);
 
                 return (
-                  <div key={m.id} className="p-3 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
+                  <div key={m.id} className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 space-y-2">
                     <div className="flex items-start justify-between gap-2">
                       <div className="flex items-center gap-1.5 min-w-0">
                         <span className="text-base shrink-0">{m.icon}</span>
-                        <h4 className="text-xs font-black text-slate-900 truncate">{m.title}</h4>
+                        <h4 className="text-xs font-black text-slate-900 dark:text-white truncate">{m.title}</h4>
                       </div>
-                      <span className="px-1.5 py-0.5 rounded bg-amber-100 border border-amber-200 text-amber-800 text-[10px] font-black shrink-0">
+                      <span className="px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-950/60 border border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-300 text-[10px] font-black shrink-0">
                         +{m.rewardCoins} 🪙
                       </span>
                     </div>
 
-                    <p className="text-[11px] text-slate-600 leading-snug">{m.description}</p>
+                    <p className="text-[11px] text-slate-600 dark:text-slate-300 leading-snug">{m.description}</p>
 
                     <div className="space-y-1">
-                      <div className="w-full h-2 bg-slate-200 rounded-full overflow-hidden">
+                      <div className="w-full h-2 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
                         <div
                           className={`h-full rounded-full transition-all duration-300 ${
                             isCompleted ? 'bg-emerald-500' : 'bg-gradient-to-r from-indigo-500 to-amber-500'
@@ -2096,7 +2102,7 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
                           style={{ width: `${pct}%` }}
                         />
                       </div>
-                      <div className="flex items-center justify-between text-[10px] text-slate-500 font-bold">
+                      <div className="flex items-center justify-between text-[10px] text-slate-500 dark:text-slate-400 font-bold">
                         <span>التقدم الجماعي: {m.currentProgress} / {m.targetProgress}</span>
                         <span>{(m.contributors || []).length} مساهم</span>
                       </div>
@@ -2104,20 +2110,21 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
 
                     <div className="pt-1 flex items-center justify-between">
                       {m.rewardVipLabel && (
-                        <span className="text-[10px] text-indigo-700 font-bold bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded-lg">
+                        <span className="text-[10px] text-indigo-700 dark:text-indigo-300 font-bold bg-indigo-50 dark:bg-indigo-950/60 border border-indigo-200 dark:border-indigo-800 px-2 py-0.5 rounded-lg">
                           🎁 {m.rewardVipLabel}
                         </span>
                       )}
                       {isCompleted && !isClaimed ? (
                         <button
                           type="button"
+                          disabled={isClaiming}
                           onClick={() => handleClaimShared(m)}
-                          className="px-3 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-black shadow-xs transition cursor-pointer"
+                          className="px-3 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 text-white text-[11px] font-black shadow-xs transition cursor-pointer"
                         >
-                          استلام الآن 🎉
+                          {isClaiming ? 'جاري الاستلام...' : 'استلام الآن 🎉'}
                         </button>
                       ) : isClaimed ? (
-                        <span className="text-[10.5px] text-emerald-600 font-black flex items-center gap-1">
+                        <span className="text-[10.5px] text-emerald-600 dark:text-emerald-400 font-black flex items-center gap-1">
                           <CheckCircle2 className="w-3.5 h-3.5" /> تم الاستلام
                         </span>
                       ) : (
@@ -2170,37 +2177,37 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-sm bg-white border border-slate-200 rounded-3xl p-4 shadow-2xl space-y-3 text-right"
+            className="w-full max-w-sm bg-white dark:bg-slate-900 border border-rose-200 dark:border-rose-900/60 rounded-3xl p-4 shadow-2xl space-y-3 text-right"
           >
-            <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+            <div className="flex items-center justify-between border-b border-rose-100 dark:border-slate-800 pb-2">
               <div className="flex items-center gap-2">
-                <Share2 className="w-4 h-4 text-indigo-600" />
-                <h3 className="text-sm font-black text-slate-900">مشاركة المنشور مع صديق</h3>
+                <Share2 className="w-4 h-4 text-[#be185d] dark:text-rose-400" />
+                <h3 className="text-sm font-black text-slate-900 dark:text-white">مشاركة المنشور مع صديق</h3>
               </div>
               <button
                 type="button"
                 onClick={() => setSharePostModal(null)}
-                className="p-1 rounded-full bg-slate-100 text-slate-500 hover:text-slate-900 cursor-pointer"
+                className="p-1 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
             <div className="max-h-60 overflow-y-auto space-y-1.5">
               {friendsList.length === 0 ? (
-                <p className="text-xs text-slate-500 text-center py-6">لا يوجد أصدقاء في قائمتك حالياً للمشاركة معهم.</p>
+                <p className="text-xs text-slate-500 dark:text-slate-400 text-center py-6">لا يوجد أصدقاء في قائمتك حالياً للمشاركة معهم.</p>
               ) : (
                 friendsList.map((f) => (
                   <button
                     key={f.friendId || f.id}
                     type="button"
                     onClick={() => handleSharePostToFriend(f, sharePostModal)}
-                    className="w-full p-2.5 rounded-2xl bg-slate-50 hover:bg-indigo-50 border border-slate-200 flex items-center justify-between gap-2 text-right cursor-pointer"
+                    className="w-full p-2.5 rounded-2xl bg-rose-50/50 dark:bg-slate-800 hover:bg-rose-100/70 dark:hover:bg-rose-950/40 border border-rose-100 dark:border-slate-700 flex items-center justify-between gap-2 text-right cursor-pointer"
                   >
                     <div className="flex items-center gap-2 min-w-0">
-                      <span className="text-xs font-black text-slate-900 truncate">{f.name}</span>
+                      <span className="text-xs font-black text-slate-900 dark:text-white truncate">{f.name}</span>
                       <span className="text-xs">{f.countryFlag || '🇪🇬'}</span>
                     </div>
-                    <span className="text-[11px] font-black text-indigo-600 shrink-0">إرسال ✉️</span>
+                    <span className="text-[11px] font-black text-[#be185d] dark:text-rose-400 shrink-0">إرسال ✉️</span>
                   </button>
                 ))
               )}

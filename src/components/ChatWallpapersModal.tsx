@@ -212,21 +212,21 @@ export const ChatWallpapersModal: React.FC<ChatWallpapersModalProps> = ({
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="w-full sm:max-w-2xl bg-white border border-slate-200 rounded-t-3xl sm:rounded-3xl overflow-hidden shadow-2xl flex flex-col max-h-[92vh]"
+        className="w-full sm:max-w-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-t-3xl sm:rounded-3xl overflow-hidden shadow-2xl flex flex-col max-h-[92vh]"
       >
         
         {/* Header */}
-        <div className="p-3.5 sm:p-4 bg-gradient-to-r from-indigo-50 via-white to-purple-50 border-b border-slate-200 flex items-center justify-between shrink-0">
+        <div className="p-3.5 sm:p-4 bg-gradient-to-r from-indigo-50 via-white to-purple-50 dark:from-slate-900 dark:via-slate-900 dark:to-slate-800 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-2 sm:gap-2.5 min-w-0">
-            <div className="w-9 h-9 rounded-xl bg-indigo-100 border border-indigo-200 text-indigo-600 flex items-center justify-center shrink-0">
+            <div className="w-9 h-9 rounded-xl bg-indigo-100 dark:bg-indigo-950/60 border border-indigo-200 dark:border-indigo-800 text-indigo-600 dark:text-indigo-400 flex items-center justify-center shrink-0">
               <Palette className="w-5 h-5" />
             </div>
             <div className="min-w-0">
-              <h3 className="text-sm sm:text-base font-black text-slate-900 flex items-center gap-1.5 truncate">
+              <h3 className="text-sm sm:text-base font-black text-slate-900 dark:text-white flex items-center gap-1.5 truncate">
                 <span>خلفيات وألوان الشات</span>
                 <Sparkles className="w-4 h-4 text-amber-500 shrink-0" />
               </h3>
-              <p className="text-[11px] sm:text-xs text-slate-500 truncate">
+              <p className="text-[11px] sm:text-xs text-slate-500 dark:text-slate-400 truncate">
                 {modalMode === 'room' && roomTitle
                   ? `عاين واختر خلفية تظهر لجميع المتواجدين في ${roomTitle}`
                   : modalMode === 'notifications'
@@ -236,20 +236,20 @@ export const ChatWallpapersModal: React.FC<ChatWallpapersModalProps> = ({
             </div>
           </div>
 
-          <button onClick={onClose} className="p-1.5 rounded-full text-slate-500 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 transition shrink-0 cursor-pointer">
+          <button onClick={onClose} className="p-1.5 rounded-full text-slate-500 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 transition shrink-0 cursor-pointer">
             <X className="w-4 h-4" />
           </button>
         </div>
 
         {/* Unified Mode Switch */}
-        <div className="px-3.5 py-2 bg-white border-b border-slate-200 flex items-center gap-1.5 shrink-0 overflow-x-auto scrollbar-none">
+        <div className="px-3.5 py-2 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-700 flex items-center gap-1.5 shrink-0 overflow-x-auto scrollbar-none">
           <button
             type="button"
             onClick={() => setModalMode('personal')}
             className={`flex-1 min-w-fit py-1.5 px-3 rounded-xl text-xs font-black transition cursor-pointer whitespace-nowrap ${
               modalMode === 'personal'
                 ? 'bg-indigo-600 text-white shadow-xs'
-                : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700'
             }`}
           >
             خلفيتك الخاصة 🎨
@@ -260,7 +260,7 @@ export const ChatWallpapersModal: React.FC<ChatWallpapersModalProps> = ({
             className={`flex-1 min-w-fit py-1.5 px-3 rounded-xl text-xs font-black transition cursor-pointer whitespace-nowrap ${
               modalMode === 'notifications'
                 ? 'bg-sky-600 text-white shadow-xs'
-                : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700'
             }`}
           >
             خلفيات الإشعارات ✨
@@ -272,7 +272,7 @@ export const ChatWallpapersModal: React.FC<ChatWallpapersModalProps> = ({
               className={`flex-1 min-w-fit py-1.5 px-3 rounded-xl text-xs font-black transition cursor-pointer whitespace-nowrap ${
                 modalMode === 'room'
                   ? 'bg-emerald-600 text-white shadow-xs'
-                  : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                  : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700'
               }`}
             >
               خلفية الغرفة للجميع 🌟
@@ -292,11 +292,11 @@ export const ChatWallpapersModal: React.FC<ChatWallpapersModalProps> = ({
           <>
             <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-3 sm:p-4 space-y-3">
               {/* Interactive Live Preview Panel for Room Background */}
-              <div className="p-3 bg-slate-50 border border-slate-200 rounded-2xl space-y-2.5">
+              <div className="p-3 bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 rounded-2xl space-y-2.5">
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-1.5 min-w-0">
                     <Eye className="w-4 h-4 text-emerald-600 shrink-0" />
-                    <span className="text-xs font-black text-slate-800 truncate">
+                    <span className="text-xs font-black text-slate-800 dark:text-slate-100 truncate">
                       معاينة مباشرة للغرفة: {previewedRoomTheme.name}
                     </span>
                   </div>
@@ -361,7 +361,7 @@ export const ChatWallpapersModal: React.FC<ChatWallpapersModalProps> = ({
                     className={`px-3 py-1.5 rounded-xl text-[11px] font-black whitespace-nowrap shrink-0 transition-all cursor-pointer ${
                       roomFilter === tab.id
                         ? 'bg-emerald-600 text-white shadow-xs'
-                        : 'bg-slate-50 border border-slate-200 text-slate-600 hover:text-slate-900'
+                        : 'bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
                     }`}
                   >
                     {tab.label}
@@ -382,12 +382,12 @@ export const ChatWallpapersModal: React.FC<ChatWallpapersModalProps> = ({
                       key={theme.id}
                       type="button"
                       onClick={() => setSelectedRoomThemeId(theme.id)}
-                      className={`group rounded-2xl border-2 overflow-hidden text-right transition-all flex flex-col bg-white cursor-pointer ${
+                      className={`group rounded-2xl border-2 overflow-hidden text-right transition-all flex flex-col bg-white dark:bg-slate-900 cursor-pointer ${
                         isPreviewSelected
                           ? 'border-emerald-600 ring-2 ring-emerald-200 shadow-md'
                           : isActiveRoom
                           ? 'border-emerald-400 shadow-sm'
-                          : 'border-slate-200 hover:border-emerald-300 shadow-2xs'
+                          : 'border-slate-200 dark:border-slate-700 hover:border-emerald-300 shadow-2xs'
                       }`}
                     >
                       <div
@@ -421,12 +421,12 @@ export const ChatWallpapersModal: React.FC<ChatWallpapersModalProps> = ({
                           مرحباً بكم ✨
                         </span>
                       </div>
-                      <div className="px-2.5 py-2 bg-white border-t border-slate-100 w-full flex items-center justify-between gap-1">
-                        <p className="text-[11px] font-black text-slate-900 truncate">
+                      <div className="px-2.5 py-2 bg-white dark:bg-slate-900 border-t border-slate-100 dark:border-slate-800 w-full flex items-center justify-between gap-1">
+                        <p className="text-[11px] font-black text-slate-900 dark:text-white truncate">
                           {theme.name}
                         </p>
                         {isPreviewSelected && (
-                          <span className="text-[9px] font-black text-emerald-700 shrink-0">معاينة</span>
+                          <span className="text-[9px] font-black text-emerald-600 dark:text-emerald-400 shrink-0">معاينة</span>
                         )}
                       </div>
                     </button>
@@ -436,18 +436,18 @@ export const ChatWallpapersModal: React.FC<ChatWallpapersModalProps> = ({
             </div>
 
             {/* Pinned Bottom Apply Bar for Room Background */}
-            <div className="px-3.5 py-2.5 bg-white border-t border-slate-200 flex items-center justify-between gap-2 shrink-0">
+            <div className="px-3.5 py-2.5 bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-700 flex items-center justify-between gap-2 shrink-0">
               {selectedRoomThemeId !== 'default' ? (
                 <button
                   type="button"
                   onClick={() => setSelectedRoomThemeId('default')}
-                  className="px-2.5 py-1.5 rounded-xl bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-600 text-[11px] font-bold flex items-center gap-1 transition cursor-pointer shrink-0"
+                  className="px-2.5 py-1.5 rounded-xl bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 text-[11px] font-bold flex items-center gap-1 transition cursor-pointer shrink-0"
                 >
                   <RotateCcw className="w-3 h-3" />
                   <span>الافتراضية</span>
                 </button>
               ) : (
-                <span className="text-[11px] text-slate-500 font-bold truncate">
+                <span className="text-[11px] text-slate-500 dark:text-slate-400 font-bold truncate">
                   اضغط على أي خلفية لمعاينتها ثم تطبيقها
                 </span>
               )}
@@ -466,11 +466,11 @@ export const ChatWallpapersModal: React.FC<ChatWallpapersModalProps> = ({
           <>
             <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-3 sm:p-4 space-y-3">
               {/* Interactive Live Preview Panel for Personal & Private Chat Background */}
-              <div className="p-3 bg-slate-50 border border-slate-200 rounded-2xl space-y-2.5">
+              <div className="p-3 bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 rounded-2xl space-y-2.5">
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-1.5 min-w-0">
                     <Eye className="w-4 h-4 text-indigo-600 shrink-0" />
-                    <span className="text-xs font-black text-slate-800 truncate">
+                    <span className="text-xs font-black text-slate-800 dark:text-slate-100 truncate">
                       معاينة مباشرة للشات: {previewedPersonalWallpaper.name}
                     </span>
                   </div>
@@ -640,12 +640,12 @@ export const ChatWallpapersModal: React.FC<ChatWallpapersModalProps> = ({
                         setNotice(null);
                         setSelectedPersonalId(wallpaper.id);
                       }}
-                      className={`rounded-2xl border-2 transition-all overflow-hidden flex flex-col justify-between cursor-pointer bg-white ${
+                      className={`rounded-2xl border-2 transition-all overflow-hidden flex flex-col justify-between cursor-pointer bg-white dark:bg-slate-900 ${
                         isPreviewSelected
                           ? 'border-indigo-600 ring-2 ring-indigo-300/60 shadow-md'
                           : isActive
                           ? 'border-emerald-500 shadow-sm'
-                          : 'border-slate-200 hover:border-indigo-300 shadow-2xs'
+                          : 'border-slate-200 dark:border-slate-700 hover:border-indigo-300 shadow-2xs'
                       }`}
                     >
                       {/* Visual Thumbnail Box */}
@@ -680,25 +680,25 @@ export const ChatWallpapersModal: React.FC<ChatWallpapersModalProps> = ({
                       </div>
 
                       {/* Info & Selection Footer */}
-                      <div className="p-2.5 bg-white text-right flex items-center justify-between gap-2 border-t border-slate-100">
+                      <div className="p-2.5 bg-white dark:bg-slate-900 text-right flex items-center justify-between gap-2 border-t border-slate-100 dark:border-slate-800">
                         <div className="min-w-0">
-                          <h4 className="text-xs font-black text-slate-900 truncate">
+                          <h4 className="text-xs font-black text-slate-900 dark:text-white truncate">
                             {wallpaper.name}
                           </h4>
-                          <p className="text-[10px] text-slate-500 truncate mt-0.5">
+                          <p className="text-[10px] text-slate-500 dark:text-slate-400 truncate mt-0.5">
                             {wallpaper.description}
                           </p>
                         </div>
 
                         <div className="shrink-0 text-left">
                           {wallpaper.priceCoins === 0 ? (
-                            <span className="text-[10px] font-black text-emerald-600 block">مجاناً 🎁</span>
+                            <span className="text-[10px] font-black text-emerald-600 dark:text-emerald-400 block">مجاناً 🎁</span>
                           ) : isUnlocked ? (
-                            <span className="text-[10px] font-black text-emerald-600 flex items-center gap-0.5">
+                            <span className="text-[10px] font-black text-emerald-600 dark:text-emerald-400 flex items-center gap-0.5">
                               <CheckCircle2 className="w-3 h-3" /> متاح
                             </span>
                           ) : (
-                            <span className="text-[10px] font-black text-amber-600 block">
+                            <span className="text-[10px] font-black text-amber-600 dark:text-amber-400 block">
                               🪙 {wallpaper.priceCoins}
                             </span>
                           )}
@@ -711,16 +711,16 @@ export const ChatWallpapersModal: React.FC<ChatWallpapersModalProps> = ({
             </div>
 
             {/* Pinned Apply / Purchase Footer */}
-            <div className="px-3.5 py-2.5 bg-white border-t border-slate-200 flex items-center justify-between gap-2 flex-wrap shrink-0">
+            <div className="px-3.5 py-2.5 bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-700 flex items-center justify-between gap-2 flex-wrap shrink-0">
               <div className="flex items-center gap-2 min-w-0">
                 {previewedPersonalWallpaper.priceCoins === 0 ? (
-                  <span className="text-[11px] font-black text-emerald-600">مجاناً 🎁</span>
+                  <span className="text-[11px] font-black text-emerald-600 dark:text-emerald-400">مجاناً 🎁</span>
                 ) : isPreviewedPersonalUnlocked ? (
-                  <span className="text-[11px] font-black text-emerald-600 flex items-center gap-1">
+                  <span className="text-[11px] font-black text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
                     <CheckCircle2 className="w-3.5 h-3.5" /> متاح لديك
                   </span>
                 ) : (
-                  <span className="text-xs font-black text-amber-600 flex items-center gap-1">
+                  <span className="text-xs font-black text-amber-600 dark:text-amber-400 flex items-center gap-1">
                     🪙 {previewedPersonalWallpaper.priceCoins} كوينز
                   </span>
                 )}
@@ -728,7 +728,7 @@ export const ChatWallpapersModal: React.FC<ChatWallpapersModalProps> = ({
                   <button
                     type="button"
                     onClick={() => setSelectedPersonalId(DEFAULT_CHAT_WALLPAPER_ID)}
-                    className="px-2 py-1 rounded-lg bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-600 text-[10px] font-bold flex items-center gap-1 cursor-pointer"
+                    className="px-2 py-1 rounded-lg bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 text-[10px] font-bold flex items-center gap-1 cursor-pointer"
                   >
                     <RotateCcw className="w-3 h-3" />
                     <span>الافتراضية</span>

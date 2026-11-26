@@ -239,6 +239,7 @@ export interface Message {
   stickerEmoji?: string;
   stickerLabel?: string;
   stickerAnimation?: string;
+  stickerUrl?: string;
   gift?: {
     giftId: string;
     name: string;

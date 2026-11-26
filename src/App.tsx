@@ -2,12 +2,12 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { AnimatePresence, motion } from 'framer-motion';
 import { Toaster } from 'sonner';
 import { toast, TOASTER_ICONS, getToasterOptions } from './utils/appToast';
-import { X, Check, RefreshCw, UserPlus, MessageCircle, Sparkles, Download } from 'lucide-react';
+import { X, Check, RefreshCw, UserPlus, MessageCircle, Sparkles, Download, Bell, Swords, DoorOpen } from 'lucide-react';
 import { Header } from './components/Header';
 import { BottomNav, NavTab } from './components/BottomNav';
 import { RoomsView } from './components/RoomsView';
 import { RoomActiveView } from './components/RoomActiveView';
-import { GamesView } from './components/GamesView';
+import { GamesView, AcceptedExternalChallenge } from './components/GamesView';
 import { PrivateChatView } from './components/PrivateChatView';
 import { ProfileView } from './components/ProfileView';
 import { LuxuryGiftModal } from './components/LuxuryGiftModal';
@@ -29,6 +29,8 @@ import { WelcomeAuthModal } from './components/WelcomeAuthModal';
 import { WelcomeScreen } from './components/WelcomeScreen';
 import { CallModal } from './components/CallModal';
 import { LeaderboardModal } from './components/LeaderboardModal';
+import { SettingsModal } from './components/SettingsModal';
+import { ChatWallpapersModal } from './components/ChatWallpapersModal';
 import { ConsentRequestModal } from './components/ConsentRequestModal';
 import {
   ConsentRequestPayload,
@@ -37,10 +39,11 @@ import {
 } from './services/consentService';
 
 import { User, Room, Message, GiftItem, VipTier, SpeakerSeat, FriendRequest, DailyMission, UnreadSenderSummary, ForumPost } from './types/chat';
-import { INITIAL_ROOMS, getOrCreateUser, isUserAdminOrOwner, hasCompletedMandatoryProfile } from './data/seedData';
+import { INITIAL_ROOMS, getOrCreateUser, isUserAdminOrOwner, hasCompletedMandatoryProfile, PRIMARY_OWNER_EMAIL } from './data/seedData';
 import {
   readSavedNotificationBgPresetId,
   saveNotificationBgPresetId,
+  getNotificationBgPresetById,
 } from './data/wallpapers';
 import { sounds } from './utils/soundEffects';
 import { preloadAppAssets } from './utils/assetCache';
@@ -66,6 +69,13 @@ import {
   syncUserProfileToFirebase,
   awardBadgeToUser,
   sendRoomJoinRequest,
+  subscribeToOwnerRoomJoinRequests,
+  resolveRoomJoinRequest,
+  sendRoomInvitation,
+  subscribeToRoomInvitations,
+  respondToRoomInvitation,
+  subscribeToIncomingGameChallenges,
+  respondToGameChallenge,
   logOutUser,
   sendFriendRequest,
   acceptFriendRequestInDB,
@@ -96,7 +106,12 @@ import {
   getLocalActiveCall,
   subscribeToUserNotifications,
   markUserNotificationsRead,
+  deleteUserNotification,
+  clearAllUserNotifications,
   RealtimeUserNotification,
+  RoomInvitation,
+  OwnerRoomJoinRequest,
+  GameChallengeInvite,
   AppUpdateNotice
 } from './services/firebase';
 import { isUserTrulyOnline, getServerNowMs, resolveTimestampMs } from './utils/presenceStatus';
@@ -377,8 +392,19 @@ export default function App() {
       const saved = localStorage.getItem('arab_chat_rooms');
       if (saved) {
         const parsed: Room[] = JSON.parse(saved);
-        const valid = parsed.filter(r => r.id === 'room_egypt' || r.id === 'room_egypt2');
-        if (valid.length === 2) return hydrateRoomBg(valid);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const defaultMap = new Map(INITIAL_ROOMS.map((r) => [r.id, r]));
+          const nonPrivate = parsed.filter((r) => r && r.id && !r.isPrivate);
+          for (const def of INITIAL_ROOMS) {
+            if (!nonPrivate.some((r) => r.id === def.id)) {
+              nonPrivate.unshift(def);
+            }
+          }
+          const merged = nonPrivate.map((r) =>
+            defaultMap.has(r.id) ? { ...defaultMap.get(r.id)!, ...r } : r
+          );
+          return hydrateRoomBg(merged);
+        }
       }
     } catch {}
     return hydrateRoomBg(INITIAL_ROOMS);
@@ -447,9 +473,15 @@ export default function App() {
 
   // Friend Requests State
   const [pendingFriendRequests, setPendingFriendRequests] = useState<FriendRequest[]>([]);
+  const [seenFriendRequestIds, setSeenFriendRequestIds] = useState<Set<string>>(() => new Set());
   const [isFriendRequestsOpen, setIsFriendRequestsOpen] = useState(false);
 
-  // Real-time Top Floating Banners (Global Join, DM Notice, Friend Request, App Update)
+  const unreadFriendRequestsCount = useMemo(
+    () => pendingFriendRequests.filter((r) => !seenFriendRequestIds.has(r.id)).length,
+    [pendingFriendRequests, seenFriendRequestIds]
+  );
+
+  // Real-time Top Floating Banners (Global Join, DM Notice, Friend Request, Room Invites, Owner Join Requests, Game Challenges, App Update)
   const [globalJoinBanner, setGlobalJoinBanner] = useState<{ id: string; name: string; avatar?: string } | null>(null);
   const [isGlobalJoinMenuOpen, setIsGlobalJoinMenuOpen] = useState(false);
   const globalJoinTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -467,6 +499,25 @@ export default function App() {
   const friendReqBannerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const seenFriendBannerIdsRef = useRef<Set<string>>(new Set());
 
+  const [bellNotifBanner, setBellNotifBanner] = useState<RealtimeUserNotification | null>(null);
+  const bellNotifTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const [incomingRoomInvite, setIncomingRoomInvite] = useState<RoomInvitation | null>(null);
+  const dismissedRoomInviteIdsRef = useRef<Set<string>>(new Set());
+
+  const [ownerRoomJoinRequest, setOwnerRoomJoinRequest] = useState<OwnerRoomJoinRequest | null>(null);
+  const dismissedOwnerJoinReqIdsRef = useRef<Set<string>>(new Set());
+
+  const [incomingGameChallenge, setIncomingGameChallenge] = useState<GameChallengeInvite | null>(null);
+  const dismissedGameChallengeIdsRef = useRef<Set<string>>(new Set());
+  const [acceptedGameChallenge, setAcceptedGameChallenge] = useState<AcceptedExternalChallenge | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (bellNotifTimerRef.current) clearTimeout(bellNotifTimerRef.current);
+    };
+  }, []);
+
   const [appUpdateNotice, setAppUpdateNotice] = useState<AppUpdateNotice | null>(null);
   const [remoteVersionInfo, setRemoteVersionInfo] = useState<{ version: string; forceUpdate: boolean; notificationsEnabled: boolean; message?: string } | null>(null);
   const [isRemoteBannerDismissed, setIsRemoteBannerDismissed] = useState(false);
@@ -480,7 +531,7 @@ export default function App() {
   const [isGiftModalOpen, setIsGiftModalOpen] = useState(false);
   const [giftRecipientUser, setGiftRecipientUser] = useState<User | null>(null);
   const [isCreateRoomOpen, setIsCreateRoomOpen] = useState(false);
-  const [createRoomType, setCreateRoomType] = useState<'voice' | 'text_only'>('voice');
+  const [createRoomType, setCreateRoomType] = useState<'voice' | 'text_only' | 'live_audio'>('text_only');
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const [recentlyViewedUnreadIds, setRecentlyViewedUnreadIds] = useState<string[]>([]);
   const [isOnlineUsersOpen, setIsOnlineUsersOpen] = useState(false);
@@ -488,6 +539,9 @@ export default function App() {
   const [isRadioModalOpen, setIsRadioModalOpen] = useState(false);
   const [selectedProfileUser, setSelectedProfileUser] = useState<User | null>(null);
   const [isLeaderboardOpen, setIsLeaderboardOpen] = useState(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [settingsSection, setSettingsSection] = useState<'general' | 'support'>('general');
+  const [isWallpapersModalOpen, setIsWallpapersModalOpen] = useState(false);
   const [incomingConsentRequest, setIncomingConsentRequest] = useState<ConsentRequestPayload | null>(null);
   const [isPhoneAuthOpen, setIsPhoneAuthOpen] = useState(false);
   const isProfileReady = hasCompletedMandatoryProfile(currentUser);
@@ -632,10 +686,52 @@ export default function App() {
     });
   };
 
+  const roomsRef = useRef<Room[]>(rooms);
+  roomsRef.current = rooms;
+
+  const allRegisteredUsersRef = useRef<User[]>(allRegisteredUsers);
+  allRegisteredUsersRef.current = allRegisteredUsers;
+
+  const resolveRoomOwnerId = useCallback((room?: Room | null): string => {
+    if (!room) return '';
+    if (room.ownerId) return room.ownerId;
+    if (room.hostId) return room.hostId;
+    const ownerUser =
+      allRegisteredUsersRef.current.find(
+        (u) => u.email?.toLowerCase() === PRIMARY_OWNER_EMAIL.toLowerCase() || u.role === 'owner'
+      ) ||
+      globalOnlineUsersRef.current.find(
+        (u) => u.email?.toLowerCase() === PRIMARY_OWNER_EMAIL.toLowerCase() || u.role === 'owner'
+      );
+    return ownerUser?.id || '';
+  }, []);
+
   const handleRequestJoinPrivateRoom = async (roomId: string): Promise<boolean> => {
-    await sendRoomJoinRequest(roomId, currentUser);
+    const target = roomsRef.current.find((r) => r.id === roomId);
+    const ownerId = resolveRoomOwnerId(target);
+    await sendRoomJoinRequest(roomId, currentUserRef.current, {
+      roomTitle: target?.title,
+      ownerId,
+    });
     return true;
   };
+
+  const handleRequestJoinRoomFromCard = useCallback(
+    async (room: Room) => {
+      const me = currentUserRef.current;
+      const ownerId = resolveRoomOwnerId(room);
+      if (ownerId && ownerId === me.id) {
+        handleSelectRoom(room);
+        return;
+      }
+      await sendRoomJoinRequest(room.id, me, {
+        roomTitle: room.title,
+        ownerId,
+      });
+      toast.success(`تم إرسال طلب الانضمام إلى مالك غرفة "${room.title}" 📩`);
+    },
+    [resolveRoomOwnerId]
+  );
 
   const currentUserRef = useRef<User>(currentUser);
   currentUserRef.current = currentUser;
@@ -1577,6 +1673,72 @@ export default function App() {
     return () => unsub();
   }, [currentUser.id, isProfileReady]);
 
+  // Dedicated onSnapshot listener: Real-time Room Invitations (works inside active room & anywhere)
+  useEffect(() => {
+    if (!isProfileReady || !currentUser.id) return;
+    const unsub = subscribeToRoomInvitations(currentUser.id, (invites) => {
+      const next = invites.find(
+        (inv) => inv.status === 'pending' && !dismissedRoomInviteIdsRef.current.has(inv.id)
+      );
+      if (next) {
+        setIncomingRoomInvite((prev) => {
+          if (prev?.id !== next.id) {
+            sounds.playNotificationChime();
+            toast.info(`يدعوك ${next.fromUserName} للانضمام إلى ${next.roomTitle} 🚪`);
+          }
+          return next;
+        });
+      } else {
+        setIncomingRoomInvite(null);
+      }
+    });
+    return () => unsub();
+  }, [currentUser.id, isProfileReady]);
+
+  // Dedicated onSnapshot listener: Owner Room Join Requests (from room cards / private rooms)
+  useEffect(() => {
+    if (!isProfileReady || !currentUser.id) return;
+    const unsub = subscribeToOwnerRoomJoinRequests(currentUser.id, (reqs) => {
+      const next = reqs.find(
+        (req) => req.status === 'pending' && !dismissedOwnerJoinReqIdsRef.current.has(req.id)
+      );
+      if (next) {
+        setOwnerRoomJoinRequest((prev) => {
+          if (prev?.id !== next.id) {
+            sounds.playNotificationChime();
+            toast.info(`يريد ${next.userName} الانضمام إلى غرفتك 🔑`);
+          }
+          return next;
+        });
+      } else {
+        setOwnerRoomJoinRequest(null);
+      }
+    });
+    return () => unsub();
+  }, [currentUser.id, isProfileReady]);
+
+  // Dedicated onSnapshot listener: Incoming XO Game Challenges across all tabs & inside rooms
+  useEffect(() => {
+    if (!isProfileReady || !currentUser.id) return;
+    const unsub = subscribeToIncomingGameChallenges(currentUser.id, (challenges) => {
+      const next = challenges.find(
+        (ch) => ch.status === 'pending' && !dismissedGameChallengeIdsRef.current.has(ch.matchId)
+      );
+      if (next) {
+        setIncomingGameChallenge((prev) => {
+          if (prev?.matchId !== next.matchId) {
+            sounds.playNotificationChime();
+            toast.info(`⚔️ يتحداك ${next.fromName} في لعبة إكس أو`);
+          }
+          return next;
+        });
+      } else {
+        setIncomingGameChallenge(null);
+      }
+    });
+    return () => unsub();
+  }, [currentUser.id, isProfileReady]);
+
   // Real-time social notifications (Forum post & Story likes/comments & App updates)
   const [realtimeNotifications, setRealtimeNotifications] = useState<RealtimeUserNotification[]>([]);
   const realtimeNotificationsRef = useRef<RealtimeUserNotification[]>([]);
@@ -1596,8 +1758,13 @@ export default function App() {
       for (const item of list) {
         if (!item.id || seenNotifIdsRef.current.has(item.id)) continue;
         seenNotifIdsRef.current.add(item.id);
-        if ((item.createdAt || 0) >= mountThresholdMs && item.message) {
+        if (!item.isRead && (item.createdAt || 0) >= mountThresholdMs && item.message) {
           sounds.playNotificationChime();
+          setBellNotifBanner(item);
+          if (bellNotifTimerRef.current) clearTimeout(bellNotifTimerRef.current);
+          bellNotifTimerRef.current = setTimeout(() => {
+            setBellNotifBanner((curr) => (curr?.id === item.id ? null : curr));
+          }, 5200);
           toast.social(item.message, {
             id: `rt_notif_${item.id}`,
             duration: 4500,
@@ -2030,6 +2197,7 @@ export default function App() {
         stickerEmoji: msgData.stickerEmoji,
         stickerLabel: msgData.stickerLabel,
         stickerAnimation: msgData.stickerAnimation,
+        stickerUrl: msgData.stickerUrl,
         isHighlighted: msgData.isHighlighted ? true : undefined,
         highlightColor: msgData.isHighlighted ? msgData.highlightColor : undefined,
         reactions: {},
@@ -2212,6 +2380,8 @@ export default function App() {
     setPrivatePromptRoom(null);
     setIsDailyMissionsOpen(false);
     setIsFriendRequestsOpen(false);
+    setIsSettingsOpen(false);
+    setIsWallpapersModalOpen(false);
     setIsLogoutModalOpen(false);
   }, []);
 
@@ -2278,7 +2448,7 @@ export default function App() {
 
   // Create Room Handler
   const handleOpenCreateVoiceRoom = () => {
-    setCreateRoomType('voice');
+    setCreateRoomType('live_audio');
     setIsCreateRoomOpen(true);
   };
 
@@ -2365,12 +2535,19 @@ export default function App() {
 
   // Host Invite to Mic removed cleanly (text-first experience)
 
-  // Host Invite to Mic
+  // Room Invitation from Online Users Modal (works inside active room)
   const handleInviteUserToMic = (user: User) => {
     if (activeRoom) {
-      showAppNotice(`تم إرسال دعوة المايك إلى ${user.name} بنجاح! 🎤`, 'info');
+      sendRoomInvitation({
+        roomId: activeRoom.id,
+        roomTitle: activeRoom.title,
+        isPrivate: activeRoom.isPrivate,
+        fromUser: currentUserRef.current,
+        targetUserId: user.id,
+      }).catch(() => {});
+      showAppNotice(`تم إرسال دعوة الانضمام إلى الغرفة إلى ${user.name} بنجاح! 🚪`, 'info');
     } else {
-      showAppNotice(`يرجى دخول أي مجلس أولاً لدعوة ${user.name} إلى المايك.`, 'warn');
+      showAppNotice(`يرجى دخول أي غرفة أولاً لدعوة ${user.name} للانضمام.`, 'warn');
     }
   };
 
@@ -2467,7 +2644,14 @@ export default function App() {
     markAllNotificationsRead();
   }, [markAllNotificationsRead]);
   const openOnlineUsers = useCallback(() => setIsOnlineUsersOpen(true), []);
-  const openFriendRequests = useCallback(() => setIsFriendRequestsOpen(true), []);
+  const openFriendRequests = useCallback(() => {
+    setSeenFriendRequestIds((prev) => {
+      const next = new Set(prev);
+      pendingFriendRequests.forEach((r) => next.add(r.id));
+      return next;
+    });
+    setIsFriendRequestsOpen(true);
+  }, [pendingFriendRequests]);
   const openAdmin = useCallback(() => setIsAdminOpen(true), []);
   const openRadio = useCallback(() => setIsRadioModalOpen(true), []);
   const openMissions = useCallback(() => setIsDailyMissionsOpen(true), []);
@@ -2500,10 +2684,37 @@ export default function App() {
     toast.info('اختر الصديق أو العضو لإرسال المنشور له في الخاص 📩');
   }, [closeAllModals]);
 
+  const handleDeleteNotification = useCallback((notificationId: string) => {
+    if (!notificationId) return;
+    if (notificationId.startsWith('app_update_')) {
+      setIsAppUpdateNotifRead(true);
+      setAppUpdateNotice(null);
+      return;
+    }
+    if (currentUserRef.current?.id) {
+      deleteUserNotification(currentUserRef.current.id, notificationId).catch(() => {});
+    }
+    setRealtimeNotifications((prev) => prev.filter((n) => n.id !== notificationId));
+  }, []);
+
+  const handleClearAllNotifications = useCallback(() => {
+    setIsAppUpdateNotifRead(true);
+    setAppUpdateNotice(null);
+    if (currentUserRef.current?.id) {
+      clearAllUserNotifications(currentUserRef.current.id).catch(() => {});
+    }
+    setRealtimeNotifications([]);
+  }, []);
+
+  const openSettings = useCallback(() => {
+    setSettingsSection('general');
+    setIsSettingsOpen(true);
+  }, []);
+
   const openSupportFromHeader = useCallback(() => {
     closeAllModals();
-    setOpenSupportRequested(true);
-    setCurrentTab('profile');
+    setSettingsSection('support');
+    setIsSettingsOpen(true);
   }, [closeAllModals]);
 
   const handleBottomTabChange = useCallback((tab: NavTab) => {
@@ -2592,6 +2803,8 @@ export default function App() {
       if (isPrivatePromptOpen) { setIsPrivatePromptOpen(false); return; }
       if (isDailyMissionsOpen) { setIsDailyMissionsOpen(false); return; }
       if (isFriendRequestsOpen) { setIsFriendRequestsOpen(false); return; }
+      if (isSettingsOpen) { setIsSettingsOpen(false); return; }
+      if (isWallpapersModalOpen) { setIsWallpapersModalOpen(false); return; }
 
       // 1.5. Close active 1-on-1 private chat back to chats list
       if (isInsidePrivateChat) {
@@ -2619,7 +2832,8 @@ export default function App() {
     isAdminOpen, isWalletOpen, isVipOpen, isGiftModalOpen, isCreateRoomOpen,
     isNotificationsOpen, isOnlineUsersOpen, isPrivateChatDrawerOpen, isRadioModalOpen,
     isLeaderboardOpen, selectedProfileUser, isPhoneAuthOpen, isPrivatePromptOpen,
-    isDailyMissionsOpen, isFriendRequestsOpen, isInsidePrivateChat, activeRoom, currentTab
+    isDailyMissionsOpen, isFriendRequestsOpen, isSettingsOpen, isWallpapersModalOpen,
+    isInsidePrivateChat, activeRoom, currentTab
   ]);
 
   // Friend Request Accept / Decline (Optimistic UI with safe rollback)
@@ -3003,10 +3217,10 @@ export default function App() {
                 setDmTopBanner(null);
                 handleOpenIncomingChat(target);
               }}
-              className="pointer-events-auto cursor-pointer flex items-center justify-between gap-2.5 px-3.5 py-2.5 rounded-2xl bg-white/95 backdrop-blur-md border border-indigo-200 shadow-xl text-slate-900 hover:bg-indigo-50/70 transition-colors"
+              className="pointer-events-auto cursor-pointer flex items-center justify-between gap-2.5 px-3.5 py-2.5 rounded-2xl bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border border-indigo-200 dark:border-indigo-700/60 shadow-xl text-slate-900 dark:text-slate-100 hover:bg-indigo-50/70 dark:hover:bg-slate-800/95 transition-colors"
             >
               <div className="flex items-center gap-2.5 min-w-0">
-                <div className="w-8 h-8 rounded-full bg-indigo-100 border border-indigo-200 flex items-center justify-center text-indigo-600 shrink-0 overflow-hidden">
+                <div className="w-8 h-8 rounded-full bg-indigo-100 dark:bg-indigo-900/60 border border-indigo-200 dark:border-indigo-700 flex items-center justify-center text-indigo-600 dark:text-indigo-300 shrink-0 overflow-hidden">
                   {dmTopBanner.senderAvatar ? (
                     <img src={dmTopBanner.senderAvatar} alt={dmTopBanner.senderName} className="w-full h-full object-cover" />
                   ) : (
@@ -3014,10 +3228,10 @@ export default function App() {
                   )}
                 </div>
                 <div className="min-w-0">
-                  <p className="text-xs font-black text-slate-900 truncate">
+                  <p className="text-xs font-black text-slate-900 dark:text-slate-100 truncate">
                     أرسل إليك {dmTopBanner.senderName} رسالة خاصة
                   </p>
-                  <p className="text-[11px] text-slate-500 truncate">{dmTopBanner.preview}</p>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">{dmTopBanner.preview}</p>
                 </div>
               </div>
               <button
@@ -3027,7 +3241,7 @@ export default function App() {
                   setDmTopBanner(null);
                 }}
                 aria-label="إغلاق"
-                className="p-1 rounded-full text-slate-400 hover:text-slate-700 shrink-0 cursor-pointer"
+                className="p-1 rounded-full text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 shrink-0 cursor-pointer"
               >
                 <X className="w-3.5 h-3.5" />
               </button>
@@ -3042,17 +3256,17 @@ export default function App() {
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: -10, scale: 0.97 }}
               transition={{ duration: 0.26, ease: [0.22, 1, 0.36, 1] }}
-              className="pointer-events-auto flex items-center justify-between gap-2 px-3.5 py-2.5 rounded-2xl bg-white/95 backdrop-blur-md border border-amber-200 shadow-xl text-slate-900"
+              className="pointer-events-auto flex items-center justify-between gap-2 px-3.5 py-2.5 rounded-2xl bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border border-amber-200 dark:border-amber-700/60 shadow-xl text-slate-900 dark:text-slate-100"
             >
               <div className="flex items-center gap-2 min-w-0">
-                <div className="w-8 h-8 rounded-full bg-amber-100 border border-amber-200 flex items-center justify-center text-amber-600 shrink-0 overflow-hidden">
+                <div className="w-8 h-8 rounded-full bg-amber-100 dark:bg-amber-900/50 border border-amber-200 dark:border-amber-700 flex items-center justify-center text-amber-600 dark:text-amber-300 shrink-0 overflow-hidden">
                   {friendReqBanner.senderAvatar ? (
                     <img src={friendReqBanner.senderAvatar} alt={friendReqBanner.senderName} className="w-full h-full object-cover" />
                   ) : (
                     <UserPlus className="w-4 h-4" />
                   )}
                 </div>
-                <p className="text-xs font-black text-slate-900 truncate">
+                <p className="text-xs font-black text-slate-900 dark:text-slate-100 truncate">
                   أرسل لك {friendReqBanner.senderName} طلب صداقة
                 </p>
               </div>
@@ -3068,7 +3282,7 @@ export default function App() {
                 <button
                   type="button"
                   onClick={() => handleDeclineFriendRequest(friendReqBanner.id, friendReqBanner.senderId)}
-                  className="px-2.5 py-1 rounded-xl bg-rose-100 hover:bg-rose-200 text-rose-700 text-[11px] font-black active:scale-95 transition cursor-pointer"
+                  className="px-2.5 py-1 rounded-xl bg-rose-100 hover:bg-rose-200 dark:bg-rose-900/50 dark:hover:bg-rose-800/60 text-rose-700 dark:text-rose-200 text-[11px] font-black active:scale-95 transition cursor-pointer"
                 >
                   رفض
                 </button>
@@ -3076,13 +3290,291 @@ export default function App() {
                   type="button"
                   onClick={() => setFriendReqBanner(null)}
                   aria-label="إغلاق"
-                  className="p-1 rounded-full text-slate-400 hover:text-slate-700 cursor-pointer"
+                  className="p-1 rounded-full text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 cursor-pointer"
                 >
                   <X className="w-3.5 h-3.5" />
                 </button>
               </div>
             </motion.div>
           )}
+
+          {/* Incoming Room Invitation Top Banner (Works on Home & Inside Rooms) */}
+          {incomingRoomInvite && (
+            <motion.div
+              key={`rinv-${incomingRoomInvite.id}`}
+              initial={{ opacity: 0, y: -12, scale: 0.97 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: -10, scale: 0.97 }}
+              transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
+              className="pointer-events-auto flex items-center justify-between gap-2 px-3.5 py-2.5 rounded-2xl bg-gradient-to-l from-rose-700 to-pink-600 text-white border border-rose-400/50 shadow-xl"
+            >
+              <div className="flex items-center gap-2 min-w-0">
+                <div className="w-8 h-8 rounded-full bg-white/20 border border-white/30 flex items-center justify-center shrink-0 overflow-hidden">
+                  {incomingRoomInvite.fromUserAvatar ? (
+                    <img src={incomingRoomInvite.fromUserAvatar} alt={incomingRoomInvite.fromUserName} className="w-full h-full object-cover" />
+                  ) : (
+                    <DoorOpen className="w-4 h-4" />
+                  )}
+                </div>
+                <p className="text-xs font-black leading-snug break-words">
+                  يدعوك {incomingRoomInvite.fromUserName} للانضمام إلى {incomingRoomInvite.roomTitle}
+                </p>
+              </div>
+              <div className="flex items-center gap-1 shrink-0">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const inv = incomingRoomInvite;
+                    dismissedRoomInviteIdsRef.current.add(inv.id);
+                    setIncomingRoomInvite(null);
+                    await respondToRoomInvitation(currentUser.id, inv.id, 'accepted', inv.roomId);
+                    const existingRoom = roomsRef.current.find((r) => r.id === inv.roomId);
+                    if (existingRoom) {
+                      const granted: Room = {
+                        ...existingRoom,
+                        allowedUserIds: Array.from(new Set([...(existingRoom.allowedUserIds || []), currentUser.id])),
+                      };
+                      setRooms((prev) => prev.map((r) => (r.id === granted.id ? granted : r)));
+                      handleSelectRoom(granted);
+                    } else {
+                      const fallbackRoom: Room = {
+                        id: inv.roomId,
+                        title: inv.roomTitle || 'غرفة الدردشة',
+                        description: 'تمت دعوتك للانضمام إلى الغرفة',
+                        subtext: `دعوة من ${inv.fromUserName}`,
+                        category: inv.isPrivate ? 'member_rooms' : 'general',
+                        type: 'text',
+                        roomType: 'text_only',
+                        icon: '💬',
+                        iconBg: 'bg-rose-500',
+                        activeUsers: 1,
+                        visitorsCount: '1',
+                        isLive: false,
+                        isVoiceActive: false,
+                        accentGradient: 'from-rose-600 to-pink-700',
+                        isPrivate: Boolean(inv.isPrivate),
+                        ownerId: inv.fromUserId,
+                        allowedUserIds: [currentUser.id],
+                        speakers: [],
+                        moderators: [],
+                      };
+                      setRooms((prev) => [fallbackRoom, ...prev]);
+                      handleSelectRoom(fallbackRoom);
+                    }
+                  }}
+                  className="px-2.5 py-1 rounded-xl bg-white text-rose-700 hover:bg-rose-50 text-[11px] font-black shadow-xs active:scale-95 transition cursor-pointer"
+                >
+                  انضمام للغرفة
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    dismissedRoomInviteIdsRef.current.add(incomingRoomInvite.id);
+                    respondToRoomInvitation(currentUser.id, incomingRoomInvite.id, 'declined', incomingRoomInvite.roomId).catch(() => {});
+                    setIncomingRoomInvite(null);
+                  }}
+                  className="px-2 py-1 rounded-xl bg-white/15 hover:bg-white/25 text-white text-[11px] font-black cursor-pointer"
+                >
+                  تجاهل
+                </button>
+              </div>
+            </motion.div>
+          )}
+
+          {/* Owner Room Join Request Top Banner (Approve / Reject instantly) */}
+          {ownerRoomJoinRequest && (
+            <motion.div
+              key={`rjoin-${ownerRoomJoinRequest.id}`}
+              initial={{ opacity: 0, y: -12, scale: 0.97 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: -10, scale: 0.97 }}
+              transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
+              className="pointer-events-auto flex items-center justify-between gap-2 px-3.5 py-2.5 rounded-2xl bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border border-rose-300 dark:border-rose-700/70 shadow-xl text-slate-900 dark:text-slate-100"
+            >
+              <div className="flex items-center gap-2 min-w-0">
+                <div className="w-8 h-8 rounded-full bg-rose-100 dark:bg-rose-900/50 border border-rose-200 dark:border-rose-700 flex items-center justify-center text-rose-600 dark:text-rose-300 shrink-0 overflow-hidden">
+                  {ownerRoomJoinRequest.userAvatar ? (
+                    <img src={ownerRoomJoinRequest.userAvatar} alt={ownerRoomJoinRequest.userName} className="w-full h-full object-cover" />
+                  ) : (
+                    <DoorOpen className="w-4 h-4" />
+                  )}
+                </div>
+                <div className="min-w-0">
+                  <p className="text-xs font-black leading-snug break-words">
+                    يريد {ownerRoomJoinRequest.userName} الانضمام إلى غرفتك
+                  </p>
+                  {ownerRoomJoinRequest.roomTitle && (
+                    <p className="text-[10.5px] text-slate-500 dark:text-slate-400 truncate">{ownerRoomJoinRequest.roomTitle}</p>
+                  )}
+                </div>
+              </div>
+              <div className="flex items-center gap-1 shrink-0">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const req = ownerRoomJoinRequest;
+                    dismissedOwnerJoinReqIdsRef.current.add(req.id);
+                    setOwnerRoomJoinRequest(null);
+                    await resolveRoomJoinRequest(req.roomId, req.userId, 'accepted', {
+                      ownerId: currentUser.id,
+                      roomTitle: req.roomTitle,
+                      approverUser: currentUser,
+                    });
+                    setRooms((prev) =>
+                      prev.map((r) =>
+                        r.id === req.roomId
+                          ? { ...r, allowedUserIds: Array.from(new Set([...(r.allowedUserIds || []), req.userId])) }
+                          : r
+                      )
+                    );
+                    toast.success(`تم قبول انضمام ${req.userName} إلى الغرفة ✅`);
+                  }}
+                  className="px-2.5 py-1 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-black shadow-xs active:scale-95 transition cursor-pointer"
+                >
+                  قبول
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const req = ownerRoomJoinRequest;
+                    dismissedOwnerJoinReqIdsRef.current.add(req.id);
+                    setOwnerRoomJoinRequest(null);
+                    await resolveRoomJoinRequest(req.roomId, req.userId, 'rejected', {
+                      ownerId: currentUser.id,
+                      roomTitle: req.roomTitle,
+                    });
+                    toast.info(`تم رفض طلب ${req.userName}`);
+                  }}
+                  className="px-2.5 py-1 rounded-xl bg-rose-100 hover:bg-rose-200 dark:bg-rose-900/50 dark:hover:bg-rose-800/60 text-rose-700 dark:text-rose-200 text-[11px] font-black active:scale-95 transition cursor-pointer"
+                >
+                  رفض
+                </button>
+              </div>
+            </motion.div>
+          )}
+
+          {/* Incoming Game Challenge Top Banner (Accept jumps straight into live XO game) */}
+          {incomingGameChallenge && (
+            <motion.div
+              key={`gchal-${incomingGameChallenge.matchId}`}
+              initial={{ opacity: 0, y: -12, scale: 0.97 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: -10, scale: 0.97 }}
+              transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
+              className="pointer-events-auto flex items-center justify-between gap-2 px-3.5 py-2.5 rounded-2xl bg-gradient-to-l from-indigo-600 to-violet-600 text-white border border-indigo-400/50 shadow-xl"
+            >
+              <div className="flex items-center gap-2 min-w-0">
+                <div className="w-8 h-8 rounded-full bg-white/20 border border-white/30 flex items-center justify-center shrink-0 overflow-hidden">
+                  {incomingGameChallenge.fromAvatar ? (
+                    <img src={incomingGameChallenge.fromAvatar} alt={incomingGameChallenge.fromName} className="w-full h-full object-cover" />
+                  ) : (
+                    <Swords className="w-4 h-4" />
+                  )}
+                </div>
+                <div className="min-w-0">
+                  <p className="text-xs font-black leading-snug break-words">
+                    يتحداك {incomingGameChallenge.fromName} في لعبة إكس أو
+                  </p>
+                  {incomingGameChallenge.wager > 0 && (
+                    <p className="text-[10.5px] text-amber-200 font-bold">
+                      رهان التحدي: {incomingGameChallenge.wager} كوينز 🪙
+                    </p>
+                  )}
+                </div>
+              </div>
+              <div className="flex items-center gap-1 shrink-0">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const ch = incomingGameChallenge;
+                    dismissedGameChallengeIdsRef.current.add(ch.matchId);
+                    setIncomingGameChallenge(null);
+                    await respondToGameChallenge({
+                      userId: currentUser.id,
+                      matchId: ch.matchId,
+                      acceptorUser: currentUser,
+                      status: 'accepted',
+                    });
+                    setAcceptedGameChallenge({
+                      matchId: ch.matchId,
+                      opponentId: ch.fromId,
+                      opponentName: ch.fromName,
+                      opponentAvatar: ch.fromAvatar,
+                      wager: ch.wager,
+                    });
+                    closeAllModals();
+                    setActiveRoom(null);
+                    setCurrentTab('games');
+                  }}
+                  className="px-2.5 py-1 rounded-xl bg-white text-indigo-700 hover:bg-indigo-50 text-[11px] font-black shadow-xs active:scale-95 transition cursor-pointer"
+                >
+                  قبول واللعب
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const ch = incomingGameChallenge;
+                    dismissedGameChallengeIdsRef.current.add(ch.matchId);
+                    setIncomingGameChallenge(null);
+                    respondToGameChallenge({
+                      userId: currentUser.id,
+                      matchId: ch.matchId,
+                      acceptorUser: currentUser,
+                      status: 'declined',
+                    }).catch(() => {});
+                  }}
+                  className="px-2 py-1 rounded-xl bg-white/15 hover:bg-white/25 text-white text-[11px] font-black cursor-pointer"
+                >
+                  رفض
+                </button>
+              </div>
+            </motion.div>
+          )}
+
+          {/* Incoming Forum / Story Bell Notification Top Banner (Works on Home & Inside Rooms) */}
+          {bellNotifBanner && (() => {
+            const notifBg = getNotificationBgPresetById(readSavedNotificationBgPresetId(currentUser));
+            return (
+              <motion.div
+                key={`bell-${bellNotifBanner.id}`}
+                initial={{ opacity: 0, y: -12, scale: 0.97 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: -10, scale: 0.97 }}
+                transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
+                onClick={() => {
+                  setBellNotifBanner(null);
+                  openNotifications();
+                }}
+                style={{
+                  background: notifBg.background,
+                  borderColor: notifBg.borderColor,
+                  color: notifBg.textColor,
+                }}
+                className="pointer-events-auto cursor-pointer flex items-center justify-between gap-2.5 px-3.5 py-2.5 rounded-2xl border shadow-xl backdrop-blur-md"
+              >
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="w-8 h-8 rounded-full bg-white/25 border border-white/30 flex items-center justify-center shrink-0">
+                    <Bell className="w-4 h-4" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-xs font-black truncate">{bellNotifBanner.message}</p>
+                    <p className="text-[10.5px] opacity-80 truncate">اضغط لعرض الإشعارات</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setBellNotifBanner(null);
+                  }}
+                  aria-label="إغلاق"
+                  className="p-1 rounded-full hover:bg-black/10 shrink-0 cursor-pointer"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </motion.div>
+            );
+          })()}
         </AnimatePresence>
       </div>
 
@@ -3098,7 +3590,7 @@ export default function App() {
           onOpenFriendRequests={openFriendRequests}
           onOpenLeaderboard={openLeaderboard}
           onOpenAdmin={openAdmin}
-          pendingFriendRequestsCount={pendingFriendRequests.length}
+          pendingFriendRequestsCount={unreadFriendRequestsCount}
           onlineUsersCount={Math.max(1, trulyOnlineUsers.length)}
           onOpenRadio={openRadio}
           isRadioPlaying={isRadioPlaying}
@@ -3111,6 +3603,7 @@ export default function App() {
           isDarkMode={isDarkMode}
           onToggleDarkMode={toggleDarkMode}
           onOpenSupport={openSupportFromHeader}
+          onOpenSettings={openSettings}
           unreadNotificationsCount={unreadNotificationsCount}
         />
       )}
@@ -3179,6 +3672,9 @@ export default function App() {
             unreadForumNotifsCount={unreadForumNotificationsCount}
             unreadStoryNotifsCount={unreadStoryNotificationsCount}
             onOpenNotifications={openNotifications}
+            onOpenCreateTextRoom={handleOpenCreateTextRoom}
+            onOpenCreateVoiceRoom={handleOpenCreateVoiceRoom}
+            onRequestJoinRoom={handleRequestJoinRoomFromCard}
           />
         </div>
 
@@ -3203,7 +3699,12 @@ export default function App() {
               onOpenUserProfile={(u) => setSelectedProfileUser(u)}
               onOpenPrivateChatWith={handleOpenPrivateChatWith}
               onOpenMessagesDrawer={openMessagesDrawer}
-              unreadPrivateCount={totalUnreadMessagesCount + pendingFriendRequests.length}
+              unreadPrivateCount={totalUnreadMessagesCount}
+              pendingFriendRequestsCount={unreadFriendRequestsCount}
+              unreadNotificationsCount={unreadNotificationsCount}
+              onOpenFriendRequests={openFriendRequests}
+              onOpenNotifications={openNotifications}
+              isDarkMode={isDarkMode}
               onSendGiftToUser={handleSendGiftToUser}
               onOpenOnlineUsers={openOnlineUsers}
               onUpdateUser={(updated) => {
@@ -3258,6 +3759,8 @@ export default function App() {
                     allOnlineUsers={globalOnlineUsers}
                     onUpdateCoins={(coins) => handleUpdateUserBalance(coins, currentUser.earningsEgp)}
                     onOpenWallet={openWallet}
+                    externalAcceptedChallenge={acceptedGameChallenge}
+                    onConsumeExternalChallenge={() => setAcceptedGameChallenge(null)}
                   />
                 </div>
               )}
@@ -3273,9 +3776,8 @@ export default function App() {
                     }}
                     onOpenWallet={openWallet}
                     onOpenVip={openVip}
+                    onOpenSettings={openSettings}
                     onLogout={handleLogout}
-                    isDarkMode={isDarkMode}
-                    onToggleDarkMode={toggleDarkMode}
                     openToSupport={openSupportRequested}
                     onConsumeSupportScroll={() => setOpenSupportRequested(false)}
                   />
@@ -3290,7 +3792,7 @@ export default function App() {
         <BottomNav
           currentTab={isPrivateChatDrawerOpen ? 'chat' : currentTab}
           onTabChange={handleBottomTabChange}
-          unreadChatsCount={totalUnreadMessagesCount + pendingFriendRequests.length}
+          unreadChatsCount={totalUnreadMessagesCount + unreadFriendRequestsCount}
         />
       )}
 
@@ -3356,9 +3858,39 @@ export default function App() {
         realtimeNotifications={bellNotifications}
         onMarkAsRead={markNotificationRead}
         onMarkAllAsRead={markAllNotificationsRead}
+        onDeleteNotification={handleDeleteNotification}
+        onClearAllNotifications={handleClearAllNotifications}
         unreadCount={unreadNotificationsCount}
         highlightedUnreadIds={recentlyViewedUnreadIds}
         notificationBgPresetId={readSavedNotificationBgPresetId(currentUser)}
+      />
+
+      <SettingsModal
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
+        currentUser={currentUser}
+        onUpdateUser={(updated) => {
+          const merged = { ...currentUserRef.current, ...updated };
+          setCurrentUser(merged);
+          propagateUserIdentityAcrossApp(merged).catch(() => {});
+        }}
+        isDarkMode={isDarkMode}
+        onToggleDarkMode={toggleDarkMode}
+        onOpenWallpapers={() => setIsWallpapersModalOpen(true)}
+        onLogout={handleLogout}
+        initialSection={settingsSection}
+      />
+
+      <ChatWallpapersModal
+        isOpen={isWallpapersModalOpen}
+        onClose={() => setIsWallpapersModalOpen(false)}
+        currentUser={currentUser}
+        onUpdateUser={(updated) => {
+          const merged = { ...currentUserRef.current, ...updated };
+          setCurrentUser(merged);
+          propagateUserIdentityAcrossApp(merged).catch(() => {});
+        }}
+        onOpenWallet={openWallet}
       />
 
       {/* Online Users List Side Drawer with real presence occupants */}
@@ -3396,7 +3928,7 @@ export default function App() {
               exit={{ x: '-100%', opacity: 0.8 }}
               transition={{ type: 'spring', stiffness: 360, damping: 34 }}
               onClick={(e) => e.stopPropagation()}
-              className="h-full w-full sm:max-w-[420px] bg-white sm:border-r border-slate-200 shadow-2xl flex flex-col overflow-hidden"
+              className="h-full w-full sm:max-w-[420px] bg-white dark:bg-slate-900 sm:border-r border-slate-200 dark:border-slate-700 shadow-2xl flex flex-col overflow-hidden"
             >
               <PrivateChatView
                 isDrawer
@@ -3574,14 +4106,14 @@ export default function App() {
 
       {/* Logout Confirmation Modal */}
       {isLogoutModalOpen && (
-        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm animate-in fade-in" dir="rtl">
-          <div className="w-full max-w-sm bg-white border border-rose-200 rounded-3xl p-6 text-center space-y-4 shadow-2xl">
-            <div className="w-14 h-14 rounded-2xl bg-rose-50 border border-rose-200 flex items-center justify-center mx-auto text-2xl text-rose-500">
+        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-slate-900/55 backdrop-blur-sm animate-in fade-in" dir="rtl">
+          <div className="w-full max-w-sm bg-white dark:bg-slate-900 border border-rose-200 dark:border-rose-900/60 rounded-3xl p-6 text-center space-y-4 shadow-2xl">
+            <div className="w-14 h-14 rounded-2xl bg-rose-50 dark:bg-rose-950/60 border border-rose-200 dark:border-rose-800 flex items-center justify-center mx-auto text-2xl text-rose-500">
               🚪
             </div>
             <div>
-              <h3 className="text-base font-black text-slate-900">هل أنت متأكد من أنك تريد المغادرة؟</h3>
-              <p className="text-xs text-slate-600 mt-1.5 leading-relaxed">
+              <h3 className="text-base font-black text-slate-900 dark:text-white">هل أنت متأكد من أنك تريد المغادرة؟</h3>
+              <p className="text-xs text-slate-600 dark:text-slate-300 mt-1.5 leading-relaxed">
                 سيتم إنهاء جلستك الحالية والعودة لشاشة البداية والترحيب.
               </p>
             </div>
@@ -3596,7 +4128,7 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => setIsLogoutModalOpen(false)}
-                className="flex-1 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition active:scale-95 cursor-pointer"
+                className="flex-1 py-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold transition active:scale-95 cursor-pointer"
               >
                 إلغاء
               </button>

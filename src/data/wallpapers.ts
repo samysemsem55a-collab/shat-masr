@@ -79,12 +79,12 @@ export const CHAT_WALLPAPERS: ChatWallpaper[] = [
   {
     id: 'wp_doodle_custom',
     name: 'نقوش وتطريز الشات الرسمية 💬',
-    description: 'الخلفية الكلاسيكية بنقوش ورسومات التطريز الهادئة للمحادثات الخاصة.',
+    description: 'الخلفية الكلاسيكية بنقوش التطريز العربية الهادئة للمحادثات العامة والخاصة.',
     thumbnail: '💬',
     style: {
-      backgroundImage: "linear-gradient(to bottom, rgba(13, 20, 36, 0.45), rgba(13, 20, 36, 0.60)), url('/assets/wallpapers/chat_doodle_custom.jpg')",
-      backgroundColor: '#f1f5f9',
-      backgroundSize: '340px',
+      backgroundImage: "linear-gradient(to bottom, rgba(13, 20, 36, 0.42), rgba(13, 20, 36, 0.58)), url('/assets/wallpapers/chat_embroidery_official.jpg')",
+      backgroundColor: '#0f172a',
+      backgroundSize: '360px',
       backgroundRepeat: 'repeat'
     },
     priceCoins: 0,

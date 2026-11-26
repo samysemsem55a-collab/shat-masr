@@ -17,9 +17,17 @@ export const FloatingMiniRadioBar: React.FC<FloatingMiniRadioBarProps> = React.m
 }) => {
   const [radioSnap, setRadioSnap] = useState<RadioPlayerSnapshot>(() => globalRadioPlayer.getSnapshot());
   const [dismissed, setDismissed] = useState(false);
+  const [hasDelayElapsed, setHasDelayElapsed] = useState(false);
   const [keyboardOffset, setKeyboardOffset] = useState(0);
   const [showVolumeSlider, setShowVolumeSlider] = useState(false);
   const prevPlayingRef = useRef<boolean>(radioSnap.isPlaying);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setHasDelayElapsed(true);
+    }, 60000);
+    return () => window.clearTimeout(timer);
+  }, []);
 
   useEffect(() => {
     return globalRadioPlayer.subscribe((snap) => {
@@ -48,7 +56,7 @@ export const FloatingMiniRadioBar: React.FC<FloatingMiniRadioBarProps> = React.m
     };
   }, []);
 
-  if (dismissed || isRadioModalOpen) {
+  if (dismissed || isRadioModalOpen || (!hasDelayElapsed && !radioSnap.isPlaying)) {
     return null;
   }
 
@@ -89,7 +97,7 @@ export const FloatingMiniRadioBar: React.FC<FloatingMiniRadioBarProps> = React.m
       dir="rtl"
       lang="ar"
       style={{ bottom: `${computedBottomPx}px` }}
-      className="fixed z-[49] left-2 right-2 sm:left-4 sm:right-auto sm:w-[440px] max-w-full bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border border-slate-200 dark:border-slate-700 rounded-2xl px-2.5 py-2 shadow-lg flex flex-col gap-1.5 text-right transition-colors"
+      className="radio-gentle-bob fixed z-[49] left-2 right-2 sm:left-4 sm:right-auto sm:w-[440px] max-w-full bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border border-slate-200 dark:border-slate-700 rounded-2xl px-2.5 py-2 shadow-lg flex flex-col gap-1.5 text-right transition-colors"
     >
       {/* Top Line: Full Unclipped Title + Close X */}
       <div className="flex items-start justify-between gap-2 min-w-0">
@@ -99,8 +107,9 @@ export const FloatingMiniRadioBar: React.FC<FloatingMiniRadioBarProps> = React.m
           className="flex-1 min-w-0 text-right cursor-pointer"
           title="فتح مشغل الراديو والمكتبة الموسيقية"
         >
-          <p className="text-[11.5px] sm:text-xs font-black text-slate-900 dark:text-white leading-snug break-words">
-            📻 راديو شات مصر - قرآن كريم | أغاني
+          <p className="text-[11.5px] sm:text-xs font-black text-slate-900 dark:text-white leading-snug break-words flex items-center gap-1.5">
+            <Radio className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+            <span>راديو شات مصر - قرآن كريم | أغاني</span>
           </p>
           <p
             className={`text-[10.5px] font-semibold leading-snug truncate ${
@@ -171,7 +180,7 @@ export const FloatingMiniRadioBar: React.FC<FloatingMiniRadioBarProps> = React.m
               : 'bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-700 hover:bg-slate-100'
           }`}
         >
-          <Radio className="w-3.5 h-3.5 shrink-0" />
+          <Radio className="w-3.5 h-3.5 shrink-0 text-amber-500" />
           <span className="truncate">قرآن كريم</span>
         </button>
 

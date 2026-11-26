@@ -112,7 +112,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
     }
 
     if (user.id && currentUser?.id && user.id !== currentUser.id) {
-      recordProfileVisit(user.id, currentUser.id).catch(() => {});
+      recordProfileVisit(user.id, currentUser).catch(() => {});
     }
 
     return () => {
@@ -294,7 +294,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
         <button
           type="button"
           onClick={onClose}
-          className="h-9 px-3 rounded-xl bg-white/80 hover:bg-white border border-sky-200 text-slate-700 text-xs font-black flex items-center gap-1.5 active:scale-95 transition cursor-pointer"
+          className="h-9 px-3 rounded-xl bg-white/80 dark:bg-slate-800 hover:bg-white dark:hover:bg-slate-700 border border-sky-200 dark:border-slate-700 text-slate-700 dark:text-slate-100 text-xs font-black flex items-center gap-1.5 active:scale-95 transition cursor-pointer"
         >
           <ArrowRight className="w-4 h-4 text-[#1E96E8]" />
           <span>رجوع</span>
@@ -308,7 +308,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
           type="button"
           onClick={onClose}
           aria-label="إغلاق"
-          className="w-9 h-9 rounded-xl bg-white/80 hover:bg-white border border-sky-200 text-slate-600 hover:text-slate-900 flex items-center justify-center active:scale-95 transition cursor-pointer"
+          className="w-9 h-9 rounded-xl bg-white/80 dark:bg-slate-800 hover:bg-white dark:hover:bg-slate-700 border border-sky-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white flex items-center justify-center active:scale-95 transition cursor-pointer"
         >
           <X className="w-4 h-4" />
         </button>
@@ -432,8 +432,8 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                   disabled={friendRequestSent || isAlreadyFriend}
                   className={`py-3 px-4 rounded-2xl font-black text-xs flex items-center justify-center gap-1.5 border transition active:scale-95 cursor-pointer ${
                     isAlreadyFriend || friendRequestSent
-                      ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
-                      : 'bg-white hover:bg-sky-50 border-sky-200 text-sky-800'
+                      ? 'bg-emerald-50 dark:bg-emerald-950/60 border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-300'
+                      : 'bg-white dark:bg-slate-900 hover:bg-sky-50 dark:hover:bg-slate-800 border-sky-200 dark:border-slate-700 text-sky-800 dark:text-sky-300'
                   }`}
                 >
                   {isAlreadyFriend ? (
@@ -458,7 +458,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
               <button
                 type="button"
                 onClick={onClose}
-                className="py-3 px-4 rounded-2xl bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 font-black text-xs active:scale-95 transition cursor-pointer"
+                className="py-3 px-4 rounded-2xl bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 font-black text-xs active:scale-95 transition cursor-pointer"
               >
                 إغلاق
               </button>
@@ -585,20 +585,20 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
 
             {/* Quick Stats + Secondary Actions */}
             <div className="grid grid-cols-4 gap-2 text-center text-xs">
-              <div className="p-2 rounded-xl bg-white border border-sky-100">
-                <span className="text-[10px] text-slate-500 block">التقييم ⭐</span>
-                <span className="font-black text-amber-600 tabular-nums">{userRating}</span>
+              <div className="p-2 rounded-xl bg-white dark:bg-slate-900 border border-sky-100 dark:border-slate-800">
+                <span className="text-[10px] text-slate-500 dark:text-slate-400 block">التقييم ⭐</span>
+                <span className="font-black text-amber-600 dark:text-amber-400 tabular-nums">{userRating}</span>
               </div>
-              <div className="p-2 rounded-xl bg-white border border-sky-100">
-                <span className="text-[10px] text-slate-500 block">الهدايا 🎁</span>
-                <span className="font-black text-pink-600 tabular-nums">{mergedUser.giftsReceivedCount || 0}</span>
+              <div className="p-2 rounded-xl bg-white dark:bg-slate-900 border border-sky-100 dark:border-slate-800">
+                <span className="text-[10px] text-slate-500 dark:text-slate-400 block">الهدايا 🎁</span>
+                <span className="font-black text-pink-600 dark:text-pink-400 tabular-nums">{mergedUser.giftsReceivedCount || 0}</span>
               </div>
-              <div className="p-2 rounded-xl bg-white border border-sky-100">
-                <span className="text-[10px] text-slate-500 block">الإعجابات ❤️</span>
-                <span className="font-black text-rose-600 tabular-nums">{mergedUser.likesReceived || 0}</span>
+              <div className="p-2 rounded-xl bg-white dark:bg-slate-900 border border-sky-100 dark:border-slate-800">
+                <span className="text-[10px] text-slate-500 dark:text-slate-400 block">الإعجابات ❤️</span>
+                <span className="font-black text-rose-600 dark:text-rose-400 tabular-nums">{mergedUser.likesReceived || 0}</span>
               </div>
-              <div className="p-2 rounded-xl bg-white border border-sky-100">
-                <span className="text-[10px] text-slate-500 block">الزيارات 👁️</span>
+              <div className="p-2 rounded-xl bg-white dark:bg-slate-900 border border-sky-100 dark:border-slate-800">
+                <span className="text-[10px] text-slate-500 dark:text-slate-400 block">الزيارات 👁️</span>
                 <span className="font-black text-[#1E96E8] tabular-nums">{mergedUser.profileVisitsCount || 0}</span>
               </div>
             </div>
@@ -611,7 +611,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                     onClose();
                     onSendGiftToUser(mergedUser);
                   }}
-                  className="py-2.5 px-2 rounded-xl bg-white hover:bg-pink-50 border border-pink-200 text-pink-700 font-black text-xs flex items-center justify-center gap-1 active:scale-95 transition cursor-pointer"
+                  className="py-2.5 px-2 rounded-xl bg-white dark:bg-slate-900 hover:bg-pink-50 dark:hover:bg-pink-950/40 border border-pink-200 dark:border-pink-800 text-pink-700 dark:text-pink-300 font-black text-xs flex items-center justify-center gap-1 active:scale-95 transition cursor-pointer"
                 >
                   <Gift className="w-3.5 h-3.5" />
                   <span>هدية</span>
@@ -623,8 +623,8 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                   disabled={hasRated}
                   className={`py-2.5 px-2 rounded-xl font-black text-xs flex items-center justify-center gap-1 border active:scale-95 transition cursor-pointer ${
                     hasRated
-                      ? 'bg-amber-50 border-amber-200 text-amber-700'
-                      : 'bg-white hover:bg-amber-50 border-amber-200 text-amber-700'
+                      ? 'bg-amber-50 dark:bg-amber-950/50 border-amber-200 dark:border-amber-800 text-amber-700 dark:text-amber-300'
+                      : 'bg-white dark:bg-slate-900 hover:bg-amber-50 dark:hover:bg-amber-950/40 border-amber-200 dark:border-amber-800 text-amber-700 dark:text-amber-300'
                   }`}
                 >
                   <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-500" />
@@ -634,7 +634,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                 <button
                   type="button"
                   onClick={() => setIsReportOpen(true)}
-                  className="py-2.5 px-2 rounded-xl bg-white hover:bg-rose-50 border border-rose-200 text-rose-700 font-black text-xs flex items-center justify-center gap-1 active:scale-95 transition cursor-pointer"
+                  className="py-2.5 px-2 rounded-xl bg-white dark:bg-slate-900 hover:bg-rose-50 dark:hover:bg-rose-950/40 border border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-300 font-black text-xs flex items-center justify-center gap-1 active:scale-95 transition cursor-pointer"
                 >
                   <Flag className="w-3.5 h-3.5" />
                   <span>إبلاغ</span>
@@ -647,17 +647,17 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
 
       {/* Report User Modal Overlay */}
       {isReportOpen && (
-        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs z-[230] p-4 flex items-center justify-center animate-in fade-in">
-          <div className="w-full max-w-sm bg-white border border-slate-200 rounded-3xl p-4 shadow-2xl text-right space-y-3">
-            <div className="flex items-center justify-between border-b border-slate-200 pb-2">
-              <div className="flex items-center gap-2 text-rose-600">
-                <AlertTriangle className="w-5 h-5 text-rose-600" />
-                <h4 className="font-black text-sm text-slate-900">إبلاغ عن مخالفة</h4>
+        <div className="fixed inset-0 bg-slate-900/55 backdrop-blur-xs z-[230] p-4 flex items-center justify-center animate-in fade-in">
+          <div className="w-full max-w-sm bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-3xl p-4 shadow-2xl text-right space-y-3">
+            <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-700 pb-2">
+              <div className="flex items-center gap-2 text-rose-600 dark:text-rose-400">
+                <AlertTriangle className="w-5 h-5 text-rose-600 dark:text-rose-400" />
+                <h4 className="font-black text-sm text-slate-900 dark:text-white">إبلاغ عن مخالفة</h4>
               </div>
               <button
                 type="button"
                 onClick={() => setIsReportOpen(false)}
-                className="p-1 rounded-full bg-slate-100 text-slate-500 hover:text-slate-900 cursor-pointer"
+                className="p-1 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>

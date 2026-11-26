@@ -578,9 +578,16 @@ export const CallModal: React.FC<CallModalProps> = ({
           // Fall through to full warning below
         }
       }
-      console.error('[Call] Media access failed:', err?.name || err?.message || err);
+      const errName = err?.name || '';
+      console.warn('[Call] Media access unavailable:', errName || err?.message || err);
       setIsPermissionDenied(true);
-      setMicWarning('اسمح بالميكروفون والكاميرا عشان المكالمة تشتغل');
+      if (errName === 'NotFoundError' || errName === 'DevicesNotFoundError') {
+        setMicWarning('لم يتم العثور على ميكروفون أو كاميرا متصلة بالجهاز');
+      } else if (errName === 'NotReadableError' || errName === 'TrackStartError') {
+        setMicWarning('الميكروفون أو الكاميرا قيد الاستخدام في تطبيق آخر');
+      } else {
+        setMicWarning('اسمح بالميكروفون والكاميرا من إعدادات المتصفح لتشغيل المكالمة');
+      }
       return null;
     }
   }, []);

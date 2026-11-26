@@ -32,7 +32,8 @@ import {
   MoreVertical,
   Flag,
   Reply,
-  Download
+  Download,
+  ChevronDown
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { User, Message, Friend, GiftItem, UnreadSenderSummary } from '../types/chat';
@@ -58,14 +59,14 @@ import { LuxuryGiftModal } from './LuxuryGiftModal';
 import { CallModal } from './CallModal';
 import { CoinsTransferModal } from './CoinsTransferModal';
 import { ChatWallpapersModal } from './ChatWallpapersModal';
-import { STICKERS_CATALOG, CURATED_EMOJIS } from '../data/stickers';
+import { ANIMATED_GIF_STICKERS, CURATED_EMOJIS } from '../data/stickers';
 import { toast } from '../utils/appToast';
 import { getWallpaperStyleById, DEFAULT_CHAT_WALLPAPER_ID } from '../data/wallpapers';
 import { AvatarWithFrame } from './AvatarWithFrame';
 import { MessageStatusIcon } from './MessageStatusIcon';
 import { BlurredChatImage } from './BlurredChatImage';
 import { getRankDisplayMeta } from '../utils/userRanks';
-import { ANIMATED_INLINE_EMOJIS, InlineRichText } from './InlineRichText';
+import { InlineRichText } from './InlineRichText';
 import { VerifiedBadge } from '../utils/verifiedBadge';
 import { compressImageFileToBlob } from '../utils/imageCompression';
 import { downloadImageToDevice } from '../utils/downloadImage';
@@ -182,6 +183,8 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
   const isNearBottomRef = useRef<boolean>(true);
   const hasInitialScrolledRef = useRef<boolean>(false);
   const prevLastDmIdRef = useRef<string | null>(null);
+  const [showScrollDownBtn, setShowScrollDownBtn] = useState(false);
+  const [unreadBelowCount, setUnreadBelowCount] = useState(0);
 
   const scrollToMessage = (msgId?: string) => {
     if (!msgId) return;
@@ -639,11 +642,21 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
     const el = messagesScrollRef.current;
     if (!el) return;
     const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-    isNearBottomRef.current = distanceFromBottom <= 100;
+    const nearBottom = distanceFromBottom <= 100;
+    isNearBottomRef.current = nearBottom;
+    setShowScrollDownBtn(!nearBottom);
+    if (nearBottom) {
+      setUnreadBelowCount(0);
+    }
     if (el.scrollTop < 48 && hasMoreOlderDm && !isLoadingOlderDm) {
       triggerLoadOlderDm();
     }
   };
+
+  useEffect(() => {
+    setShowScrollDownBtn(false);
+    setUnreadBelowCount(0);
+  }, [activeContact?.id]);
 
   useEffect(() => {
     if (!activeContact || typeof window === 'undefined' || !window.visualViewport) return;
@@ -668,6 +681,8 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
     if (!hasInitialScrolledRef.current) {
       hasInitialScrolledRef.current = true;
       prevLastDmIdRef.current = lastId;
+      isNearBottomRef.current = true;
+      setUnreadBelowCount(0);
       requestAnimationFrame(() => {
         messagesEndRef.current?.scrollIntoView({ behavior: 'auto' });
       });
@@ -676,7 +691,10 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
     if (lastId && lastId !== prevLastDmIdRef.current) {
       prevLastDmIdRef.current = lastId;
       if (isNearBottomRef.current || isOwnLastMsg) {
+        setUnreadBelowCount(0);
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+      } else {
+        setUnreadBelowCount((prev) => prev + 1);
       }
     }
   }, [messages, activeContact?.id, currentUser.id]);
@@ -978,6 +996,74 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
       console.warn('Direct message send failed:', err);
       toast.error('تعذر إرسال الرسالة — اضغط على 🌍❌ لإعادة المحاولة');
       setMessages(prev => prev.map(m => (m.id === tempId ? { ...m, status: 'failed' } : m)));
+    }
+  };
+
+  const handleSendSticker = async (stk: { id: string; gifUrl: string; label: string; emoji: string }) => {
+    if (!activeContact) return;
+    sounds.playMessageSent();
+    setIsEmojiStickerOpen(false);
+    const activeReply = replyingTo
+      ? {
+          id: replyingTo.id,
+          senderName: replyingTo.senderName,
+          content: replyingTo.content || replyingTo.text || '',
+          type: replyingTo.type,
+        }
+      : undefined;
+    setReplyingTo(null);
+    const tempId = `temp_dm_stk_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const convId = getConversationId(currentUser.id, activeContact.id);
+    const newMsg: Partial<Message> & { recipientName?: string; recipientAvatar?: string; recipientSessionId?: string } = {
+      id: tempId,
+      tempId,
+      clientId: tempId,
+      roomId: convId,
+      senderId: currentUser.id,
+      senderName: currentUser.name,
+      senderAvatar: currentUser.avatar,
+      senderRole: currentUser.role,
+      senderVipBadge: currentUser.vipBadge,
+      badges: currentUser.badges || ['عضو نشط'],
+      recipientId: activeContact.id,
+      recipientName: activeContact.name,
+      recipientAvatar: activeContact.avatar,
+      recipientSessionId: getActivePeerSessionId(),
+      type: 'sticker',
+      stickerUrl: stk.gifUrl,
+      stickerLabel: stk.label,
+      stickerEmoji: stk.emoji,
+      content: stk.label,
+      text: stk.label,
+      replyTo: activeReply,
+      createdAt: Date.now(),
+      timestamp: Date.now(),
+      status: 'sent',
+    };
+
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+      const offlineMsg: Message = { ...(newMsg as Message), id: tempId, tempId, roomId: convId, status: 'pending_offline' };
+      setMessages((prev) => [...prev, offlineMsg]);
+      offlineQueue.enqueue({
+        id: tempId,
+        targetType: 'dm',
+        targetId: convId,
+        recipientId: activeContact.id,
+        recipientSessionId: getActivePeerSessionId(),
+        message: offlineMsg,
+        queuedAt: Date.now(),
+      });
+      return;
+    }
+
+    const optimisticMsg: Message = { ...(newMsg as Message), id: tempId, tempId, roomId: convId, status: 'sent' };
+    isNearBottomRef.current = true;
+    setMessages((prev) => [...prev, optimisticMsg]);
+    try {
+      const sent = await sendDirectMessage(currentUser.id, activeContact.id, newMsg);
+      setMessages((prev) => prev.map((m) => (m.id === tempId || m.tempId === tempId ? sent : m)));
+    } catch {
+      setMessages((prev) => prev.map((m) => (m.id === tempId ? { ...m, status: 'failed' } : m)));
     }
   };
 
@@ -1410,13 +1496,10 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
 
                         <div className="min-w-0">
                           <div className="flex items-center gap-1.5">
-                            <h4 className="text-sm font-black text-slate-900 truncate flex items-center gap-1">
+                            <h4 className="text-sm font-black text-slate-900 dark:text-white truncate flex items-center gap-1">
                               <span className="truncate">{chat.peerName || 'عضو شات مصر'}</span>
                               <VerifiedBadge verified={globalOnlineUsers.find(u => u.id === chat.peerId)?.verified} size="xs" />
                             </h4>
-                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-sky-50 border border-sky-200 text-[#1565C0] font-bold shrink-0">
-                              محادثة مباشرة
-                            </span>
                           </div>
                           {typingPeersMap[chat.peerId] ? (
                             <p className="text-xs truncate max-w-[190px] sm:max-w-xs mt-0.5 text-[#1E96E8] font-bold flex items-center gap-1.5">
@@ -1805,7 +1888,8 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
             </div>
           )}
 
-          {/* Messages Feed */}
+          {/* Messages Feed Wrapper with Scroll-to-Latest Badge */}
+          <div className="relative flex-1 min-h-0 flex flex-col overflow-hidden">
           <div
             ref={messagesScrollRef}
             onScroll={handleMessagesScroll}
@@ -2051,7 +2135,7 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                     }}
                     className={`max-w-[85%] sm:max-w-[75%] rounded-2xl px-3.5 py-2.5 text-xs sm:text-sm space-y-1 cursor-pointer select-text transition-transform active:scale-[0.99] ${
                     msg.type === 'sticker'
-                      ? 'bg-white/95 backdrop-blur-md text-slate-900 border border-sky-200/80 shadow-xs'
+                      ? 'bg-white/95 dark:bg-slate-800/95 backdrop-blur-md text-slate-900 dark:text-slate-100 border border-sky-200/80 dark:border-slate-700 shadow-xs'
                       : isMe
                       ? 'bg-gradient-to-l from-[#1E96E8] to-[#2196F3] text-white border border-sky-400/30 rounded-tr-none shadow-sm'
                       : 'bg-white/95 dark:bg-slate-800/95 backdrop-blur-md text-slate-900 dark:text-slate-100 border border-sky-100 dark:border-slate-700 rounded-tl-none shadow-xs'
@@ -2078,10 +2162,19 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                       </div>
                     )}
                     {msg.type === 'sticker' ? (
-                      <p className="leading-relaxed whitespace-pre-wrap font-medium text-slate-900">
-                        <InlineRichText text={msg.stickerEmoji || msg.content || '✨'} />
-                        {msg.stickerLabel ? ` ${msg.stickerLabel}` : ''}
-                      </p>
+                      msg.stickerUrl ? (
+                        <img
+                          src={msg.stickerUrl}
+                          alt={msg.stickerLabel || 'ملصق متحرك'}
+                          className="w-20 h-20 object-contain rounded-xl select-none"
+                          loading="lazy"
+                        />
+                      ) : (
+                        <p className="leading-relaxed whitespace-pre-wrap font-medium text-slate-900 dark:text-slate-100">
+                          <InlineRichText text={msg.stickerEmoji || msg.content || '✨'} />
+                          {msg.stickerLabel ? ` ${msg.stickerLabel}` : ''}
+                        </p>
+                      )
                     ) : msg.type === 'image' && (msg.mediaUrl || msg.imageUrl) ? (
                       <div className="space-y-1.5">
                         <BlurredChatImage
@@ -2213,6 +2306,29 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
             <div ref={messagesEndRef} />
           </div>
 
+          {showScrollDownBtn && (
+            <button
+              type="button"
+              onClick={() => {
+                isNearBottomRef.current = true;
+                setShowScrollDownBtn(false);
+                setUnreadBelowCount(0);
+                messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+              }}
+              className="absolute bottom-3 left-3 z-20 px-2.5 py-1.5 rounded-full bg-[#1E96E8] hover:bg-[#1982CC] text-white text-[11px] font-black shadow-lg flex items-center gap-1.5 active:scale-95 transition cursor-pointer"
+              title="الانتقال إلى أحدث الرسائل"
+            >
+              <ChevronDown className="w-3.5 h-3.5" />
+              <span>الأحدث</span>
+              {unreadBelowCount > 0 && (
+                <span className="min-w-[17px] h-[17px] px-1 rounded-full bg-rose-600 text-white text-[9.5px] font-black flex items-center justify-center border border-white/80 tabular-nums">
+                  {unreadBelowCount > 99 ? '99+' : unreadBelowCount}
+                </span>
+              )}
+            </button>
+          )}
+          </div>
+
           {/* Media Upload Progress Strip */}
           {isUploadingMedia && (
             <div className="w-full px-3 py-1.5 bg-[#EAF5FD] border-t border-sky-200 flex items-center gap-2 text-xs text-[#1565C0] font-bold shrink-0">
@@ -2250,16 +2366,16 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
           )}
 
           {/* Bottom Chat Bar: Full-Width Mobile + Emoji/Sticker Drawer + Media Picker */}
-          <div ref={emojiStickerPanelRef} className="relative w-full p-2 sm:p-3 bg-white/98 backdrop-blur-md border-t border-slate-200/90 flex items-center gap-1 sm:gap-2 shrink-0 pb-[calc(env(safe-area-inset-bottom,0px)+10px)] sm:pb-3 shadow-[0_-4px_20px_rgba(0,0,0,0.06)]">
-            {/* Compact Circular Telegram/WhatsApp-Style Emoji & Animated Emoji Picker */}
+          <div ref={emojiStickerPanelRef} className="relative w-full p-2 sm:p-3 bg-white/98 dark:bg-slate-900/98 backdrop-blur-md border-t border-slate-200/90 dark:border-slate-800 flex items-center gap-1 sm:gap-2 shrink-0 pb-[calc(env(safe-area-inset-bottom,0px)+10px)] sm:pb-3 shadow-[0_-4px_20px_rgba(0,0,0,0.06)]">
+            {/* Compact Circular Telegram/WhatsApp-Style Emoji & Animated GIF Stickers Picker */}
             {isEmojiStickerOpen && (
-              <div className="absolute bottom-full left-2 right-2 sm:left-auto sm:right-3 mb-2 sm:w-80 bg-white border border-slate-200 rounded-2xl shadow-2xl p-2.5 z-[100] space-y-2 animate-in slide-in-from-bottom-2">
-                <div className="grid grid-cols-2 gap-1 p-1 bg-slate-100 rounded-xl text-[11px] font-black">
+              <div className="absolute bottom-full left-2 right-2 sm:left-auto sm:right-3 mb-2 sm:w-80 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-2xl shadow-2xl p-2.5 z-[100] space-y-2 animate-in slide-in-from-bottom-2">
+                <div className="grid grid-cols-2 gap-1 p-1 bg-slate-100 dark:bg-slate-800 rounded-xl text-[11px] font-black">
                   <button
                     type="button"
                     onClick={() => setEmojiStickerTab('emojis')}
                     className={`py-1.5 rounded-lg flex items-center justify-center gap-1 transition cursor-pointer ${
-                      emojiStickerTab === 'emojis' ? 'bg-indigo-600 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                      emojiStickerTab === 'emojis' ? 'bg-indigo-600 text-white shadow-xs' : 'text-slate-600 dark:text-slate-300 hover:text-slate-900'
                     }`}
                   >
                     <Smile className="w-3.5 h-3.5" />
@@ -2269,11 +2385,11 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                     type="button"
                     onClick={() => setEmojiStickerTab('animated')}
                     className={`py-1.5 rounded-lg flex items-center justify-center gap-1 transition cursor-pointer ${
-                      emojiStickerTab === 'animated' ? 'bg-amber-500 text-slate-950 shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                      emojiStickerTab === 'animated' ? 'bg-amber-500 text-slate-950 shadow-xs' : 'text-slate-600 dark:text-slate-300 hover:text-slate-900'
                     }`}
                   >
                     <Sticker className="w-3.5 h-3.5" />
-                    <span>إيموجي متحركة ✨</span>
+                    <span>ملصقات متحركة ✨</span>
                   </button>
                 </div>
 
@@ -2281,14 +2397,14 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                   <div className="max-h-48 overflow-y-auto space-y-2 pr-0.5">
                     {CURATED_EMOJIS.map((group) => (
                       <div key={group.label} className="space-y-1">
-                        <span className="text-[10px] font-black text-slate-500 block">{group.label}</span>
+                        <span className="text-[10px] font-black text-slate-500 dark:text-slate-400 block">{group.label}</span>
                         <div className="grid grid-cols-8 gap-1">
                           {group.emojis.map((em, i) => (
                             <button
                               key={`${group.label}_${i}`}
                               type="button"
                               onClick={() => handleInsertEmojiAtCursor(em)}
-                              className="w-8 h-8 rounded-full hover:bg-indigo-50 flex items-center justify-center text-base hover:scale-115 active:scale-95 transition-transform cursor-pointer"
+                              className="w-8 h-8 rounded-full hover:bg-indigo-50 dark:hover:bg-slate-800 flex items-center justify-center text-base hover:scale-115 active:scale-95 transition-transform cursor-pointer"
                             >
                               {em}
                             </button>
@@ -2298,34 +2414,27 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                     ))}
                   </div>
                 ) : (
-                  <div className="max-h-48 overflow-y-auto space-y-2 pr-0.5">
-                    <span className="text-[10px] font-black text-slate-500 block">
-                      اضغط لإدراج إيموجي متحرك داخل رسالتك بنفس حجم النص:
+                  <div className="max-h-52 overflow-y-auto space-y-1.5 pr-0.5">
+                    <span className="text-[10px] font-black text-slate-500 dark:text-slate-400 block">
+                      اضغط لإرسال ملصق GIF متحرك فوراً:
                     </span>
-                    <div className="grid grid-cols-8 gap-1.5">
-                      {ANIMATED_INLINE_EMOJIS.map((item) => (
-                        <button
-                          key={item.id}
-                          type="button"
-                          onClick={() => handleInsertEmojiAtCursor(item.emoji)}
-                          title={item.label}
-                          className="w-8 h-8 rounded-full bg-slate-50 hover:bg-amber-50 border border-slate-200/80 flex items-center justify-center text-base hover:scale-115 active:scale-95 transition-transform cursor-pointer"
-                        >
-                          <span className={`inline-block leading-none ${item.animClass}`}>
-                            {item.emoji}
-                          </span>
-                        </button>
-                      ))}
-                      {STICKERS_CATALOG.map((stk) => (
+                    <div className="grid grid-cols-4 gap-2">
+                      {ANIMATED_GIF_STICKERS.map((stk) => (
                         <button
                           key={stk.id}
                           type="button"
-                          onClick={() => handleInsertEmojiAtCursor(stk.emoji)}
+                          onClick={() => handleSendSticker(stk)}
                           title={stk.label}
-                          className="w-8 h-8 rounded-full bg-slate-50 hover:bg-indigo-50 border border-slate-200/80 flex items-center justify-center text-base hover:scale-115 active:scale-95 transition-transform cursor-pointer"
+                          className="p-1.5 rounded-2xl bg-slate-50 dark:bg-slate-800 hover:bg-sky-50 dark:hover:bg-slate-700 border border-slate-200/80 dark:border-slate-700 flex flex-col items-center justify-center gap-1 hover:scale-105 active:scale-95 transition-transform cursor-pointer"
                         >
-                          <span className={`inline-block leading-none ${stk.animationClass || ''}`}>
-                            {stk.emoji}
+                          <img
+                            src={stk.gifUrl}
+                            alt={stk.label}
+                            className="w-11 h-11 object-contain"
+                            loading="lazy"
+                          />
+                          <span className="text-[9px] font-bold text-slate-600 dark:text-slate-300 truncate max-w-full">
+                            {stk.label}
                           </span>
                         </button>
                       ))}

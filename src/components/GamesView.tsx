@@ -17,18 +17,34 @@ import confetti from 'canvas-confetti';
 import { toast } from '../utils/appToast';
 import { User } from '../types/chat';
 import { TRIVIA_QUESTIONS, isUserAdminOrOwner } from '../data/seedData';
-import { subscribeToLeaderboardUsers } from '../services/firebase';
+import {
+  subscribeToLeaderboardUsers,
+  sendGameChallengeInvite,
+  respondToGameChallenge,
+  subscribeToGameMatch,
+  updateGameMatchState,
+} from '../services/firebase';
 import { realtimeSocket } from '../services/realtimeSocket';
 import { getRankDisplayMeta } from '../utils/userRanks';
 import { AvatarWithFrame } from './AvatarWithFrame';
 import { sounds } from '../utils/soundEffects';
 import { VerifiedBadge } from '../utils/verifiedBadge';
 
+export interface AcceptedExternalChallenge {
+  matchId: string;
+  opponentId: string;
+  opponentName: string;
+  opponentAvatar?: string;
+  wager: number;
+}
+
 interface GamesViewProps {
   currentUser: User;
   allOnlineUsers?: User[];
   onUpdateCoins: (newCoins: number) => void;
   onOpenWallet: () => void;
+  externalAcceptedChallenge?: AcceptedExternalChallenge | null;
+  onConsumeExternalChallenge?: () => void;
 }
 
 type CellValue = 'X' | 'O' | null;
@@ -87,7 +103,9 @@ export const GamesView: React.FC<GamesViewProps> = ({
   currentUser,
   allOnlineUsers = [],
   onUpdateCoins,
-  onOpenWallet
+  onOpenWallet,
+  externalAcceptedChallenge = null,
+  onConsumeExternalChallenge,
 }) => {
   const isStrictOwner = isUserAdminOrOwner(currentUser);
   const [activeSubTab, setActiveSubTab] = useState<'trivia' | 'tictactoe' | 'leaderboard'>('trivia');
@@ -201,6 +219,12 @@ export const GamesView: React.FC<GamesViewProps> = ({
   const [onlineOpponent, setOnlineOpponent] = useState<User | null>(null);
   const [activeMatchId, setActiveMatchId] = useState<string | null>(null);
   const [pendingSentInviteTo, setPendingSentInviteTo] = useState<string | null>(null);
+  const [pendingSentMatch, setPendingSentMatch] = useState<{
+    matchId: string;
+    targetUser: User;
+    wager: number;
+  } | null>(null);
+  const rematchSeqRef = useRef<number>(0);
   const [incomingInvite, setIncomingInvite] = useState<{
     matchId: string;
     fromId: string;
@@ -383,6 +407,118 @@ export const GamesView: React.FC<GamesViewProps> = ({
     return () => unsub();
   }, [currentUser.id, activeMatchId, isStrictOwner, xoWager, onUpdateCoins]);
 
+  // Apply challenge accepted from global banner (App.tsx)
+  useEffect(() => {
+    if (!externalAcceptedChallenge) return;
+    setXoMode('online');
+    setActiveSubTab('tictactoe');
+    setActiveMatchId(externalAcceptedChallenge.matchId);
+    setXoWager(externalAcceptedChallenge.wager);
+    setXoWagerLocked(externalAcceptedChallenge.wager > 0);
+    setXoMySymbol('O');
+    setXoTurn('X');
+    setXoBoard(Array(9).fill(null));
+    settledMatchRef.current = null;
+    rematchSeqRef.current = 0;
+    setOnlineOpponent({
+      id: externalAcceptedChallenge.opponentId,
+      name: externalAcceptedChallenge.opponentName,
+      username: externalAcceptedChallenge.opponentId,
+      avatar: externalAcceptedChallenge.opponentAvatar || '',
+      bio: '',
+      country: 'مصر',
+      countryFlag: '🇪🇬',
+      role: 'member',
+      coins: 0,
+      earningsEgp: 0,
+      earningsUsd: 0,
+      vipBadge: '',
+      frameStyle: '',
+      profileWallpaper: '',
+      fontPreference: 'cairo',
+      isOnline: true,
+      status: 'online',
+      joinedAt: '',
+      gender: 'male',
+      level: 1,
+      likesReceived: 0,
+      giftsReceivedCount: 0,
+    });
+    onConsumeExternalChallenge?.();
+  }, [externalAcceptedChallenge, onConsumeExternalChallenge]);
+
+  // Dedicated Firestore onSnapshot: Challenger waits for opponent acceptance/decline reliably
+  useEffect(() => {
+    if (!pendingSentMatch?.matchId) return;
+    const unsub = subscribeToGameMatch(pendingSentMatch.matchId, (match) => {
+      if (!match) return;
+      if (match.status === 'active') {
+        if (pendingSentMatch.wager > 0 && !isStrictOwner) {
+          if (coinsRef.current < pendingSentMatch.wager) {
+            toast.error('رصيدك غير كافٍ للرهان في هذا التحدي');
+            setPendingSentInviteTo(null);
+            setPendingSentMatch(null);
+            return;
+          }
+          onUpdateCoins(Math.max(0, coinsRef.current - pendingSentMatch.wager));
+        }
+        setPendingSentInviteTo(null);
+        setPendingSentMatch(null);
+        setXoMode('online');
+        setActiveSubTab('tictactoe');
+        setActiveMatchId(match.id);
+        setXoWager(match.wager);
+        setXoWagerLocked(match.wager > 0);
+        setXoMySymbol('X');
+        setXoTurn(match.turn);
+        setXoBoard(match.board);
+        settledMatchRef.current = null;
+        rematchSeqRef.current = match.rematchSeq || 0;
+        setOnlineOpponent(pendingSentMatch.targetUser);
+        sounds.playCoinsReward();
+        toast.success(`بدأ التحدي المباشر ضد ${match.playerOName || pendingSentMatch.targetUser.name}! دورك الآن (X) 🎮`);
+      } else if (match.status === 'declined') {
+        setPendingSentInviteTo(null);
+        setPendingSentMatch(null);
+        toast.info(`اعتذر ${match.playerOName || pendingSentMatch.targetUser.name} عن التحدي حالياً`);
+      }
+    });
+    return () => unsub();
+  }, [pendingSentMatch, isStrictOwner, onUpdateCoins]);
+
+  // Dedicated Firestore onSnapshot: Active Live Tic-Tac-Toe Match State Sync
+  useEffect(() => {
+    if (!activeMatchId) return;
+    const unsub = subscribeToGameMatch(activeMatchId, (match) => {
+      if (!match) return;
+      if (match.status === 'forfeited' && match.forfeitedBy && match.forfeitedBy !== currentUser.id) {
+        if (settledMatchRef.current !== `forfeit_${activeMatchId}`) {
+          settledMatchRef.current = `forfeit_${activeMatchId}`;
+          const prize = xoWager > 0 ? xoWager * 2 : 20;
+          onUpdateCoins(coinsRef.current + prize);
+          setXoStats((s) => ({ ...s, wins: s.wins + 1 }));
+          sounds.playGiftFanfare();
+          toast.success(`انسحب المنافس! فزت بالجولة (+${prize} كوينز) 🏆`);
+        }
+        setActiveMatchId(null);
+        setOnlineOpponent(null);
+        setXoWagerLocked(false);
+        return;
+      }
+      if (match.rematchSeq > rematchSeqRef.current) {
+        rematchSeqRef.current = match.rematchSeq;
+        settledMatchRef.current = null;
+        setXoBoard(match.board);
+        setXoTurn(match.turn);
+        toast.info('بدأت جولة جديدة! 🎯');
+        return;
+      }
+      setXoBoard(match.board);
+      setXoTurn(match.turn);
+    });
+    return () => unsub();
+  }, [activeMatchId, currentUser.id, xoWager, onUpdateCoins]);
+
   // Settle Online Challenge Result
   useEffect(() => {
     if (xoMode !== 'online' || !activeMatchId || !boardResult.winner) return;
@@ -442,8 +578,14 @@ export const GamesView: React.FC<GamesViewProps> = ({
     sounds.playMessageSent();
     const next = [...xoBoard];
     next[idx] = xoMySymbol;
+    const nextTurn = xoMySymbol === 'X' ? 'O' : 'X';
     setXoBoard(next);
-    setXoTurn(xoMySymbol === 'X' ? 'O' : 'X');
+    setXoTurn(nextTurn);
+    updateGameMatchState(activeMatchId, {
+      board: next,
+      turn: nextTurn,
+      status: 'active',
+    }).catch(() => {});
     realtimeSocket.sendTicTacToeSignal(onlineOpponent.id, {
       type: 'move',
       matchId: activeMatchId,
@@ -462,6 +604,14 @@ export const GamesView: React.FC<GamesViewProps> = ({
     }
     const matchId = `xo_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
     setPendingSentInviteTo(target.id);
+    setPendingSentMatch({ matchId, targetUser: target, wager: xoWager });
+    sendGameChallengeInvite({
+      matchId,
+      fromUser: currentUser,
+      targetUserId: target.id,
+      wager: xoWager,
+      gameType: 'tictactoe',
+    }).catch(() => {});
     realtimeSocket.sendTicTacToeSignal(target.id, {
       type: 'invite',
       matchId,
@@ -483,6 +633,12 @@ export const GamesView: React.FC<GamesViewProps> = ({
     if (!isStrictOwner && incomingInvite.wager > 0) {
       onUpdateCoins(Math.max(0, coinsRef.current - incomingInvite.wager));
     }
+    respondToGameChallenge({
+      userId: currentUser.id,
+      matchId: incomingInvite.matchId,
+      acceptorUser: currentUser,
+      status: 'accepted',
+    }).catch(() => {});
     realtimeSocket.sendTicTacToeSignal(incomingInvite.fromId, {
       type: 'accept',
       matchId: incomingInvite.matchId,
@@ -501,6 +657,7 @@ export const GamesView: React.FC<GamesViewProps> = ({
     setXoTurn('X');
     setXoBoard(Array(9).fill(null));
     settledMatchRef.current = null;
+    rematchSeqRef.current = 0;
     setOnlineOpponent({
       id: incomingInvite.fromId,
       name: incomingInvite.fromName,
@@ -531,6 +688,12 @@ export const GamesView: React.FC<GamesViewProps> = ({
 
   const handleDeclineIncomingInvite = () => {
     if (!incomingInvite) return;
+    respondToGameChallenge({
+      userId: currentUser.id,
+      matchId: incomingInvite.matchId,
+      acceptorUser: currentUser,
+      status: 'declined',
+    }).catch(() => {});
     realtimeSocket.sendTicTacToeSignal(incomingInvite.fromId, {
       type: 'decline',
       matchId: incomingInvite.matchId,
@@ -550,9 +713,18 @@ export const GamesView: React.FC<GamesViewProps> = ({
     if (!isStrictOwner && xoWager > 0) {
       onUpdateCoins(Math.max(0, coinsRef.current - xoWager));
     }
-    setXoBoard(Array(9).fill(null));
+    const emptyBoard = Array(9).fill(null);
+    const nextSeq = rematchSeqRef.current + 1;
+    rematchSeqRef.current = nextSeq;
+    setXoBoard(emptyBoard);
     setXoTurn('X');
     settledMatchRef.current = null;
+    updateGameMatchState(activeMatchId, {
+      board: emptyBoard,
+      turn: 'X',
+      status: 'active',
+      rematchSeq: nextSeq,
+    }).catch(() => {});
     realtimeSocket.sendTicTacToeSignal(onlineOpponent.id, {
       type: 'rematch',
       matchId: activeMatchId,
@@ -563,6 +735,10 @@ export const GamesView: React.FC<GamesViewProps> = ({
 
   const handleForfeitOnline = () => {
     if (onlineOpponent && activeMatchId) {
+      updateGameMatchState(activeMatchId, {
+        status: 'forfeited',
+        forfeitedBy: currentUser.id,
+      }).catch(() => {});
       realtimeSocket.sendTicTacToeSignal(onlineOpponent.id, {
         type: 'forfeit',
         matchId: activeMatchId,

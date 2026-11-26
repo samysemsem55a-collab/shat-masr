@@ -28,7 +28,7 @@ import {
   Share2,
   Sticker,
   Unlock,
-  Settings,
+  SlidersHorizontal,
   Search,
   Hand,
   Ban,
@@ -40,13 +40,15 @@ import {
   Crown,
   Trash2,
   Copy,
-  MessageCircle
+  MessageCircle,
+  UserPlus,
+  Bell
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { toast } from '../utils/appToast';
 import { Room, Message, User, SpeakerSeat, GiftItem } from '../types/chat';
 import { isUserAdminOrOwner, LUXURY_GIFTS } from '../data/seedData';
-import { STICKERS_CATALOG } from '../data/stickers';
+import { ANIMATED_GIF_STICKERS } from '../data/stickers';
 import { JoinRequestsManagerModal } from './JoinRequestsManagerModal';
 import { ArabicMusicPlayerModal } from './ArabicMusicPlayerModal';
 import { ChatWallpapersModal } from './ChatWallpapersModal';
@@ -54,7 +56,7 @@ import { AvatarWithFrame } from './AvatarWithFrame';
 import { MessageStatusIcon } from './MessageStatusIcon';
 import { BlurredChatImage } from './BlurredChatImage';
 import { getRankDisplayMeta } from '../utils/userRanks';
-import { ANIMATED_INLINE_EMOJIS, InlineRichText } from './InlineRichText';
+import { InlineRichText } from './InlineRichText';
 import { offlineQueue } from '../services/offlineQueue';
 import { buildSmartAssistantReply } from '../utils/translateMessage';
 import { compressImageFileToBlob } from '../utils/imageCompression';
@@ -106,6 +108,11 @@ interface RoomActiveViewProps {
   onOpenPrivateChatWith?: (user: User) => void;
   onOpenMessagesDrawer?: () => void;
   unreadPrivateCount?: number;
+  pendingFriendRequestsCount?: number;
+  unreadNotificationsCount?: number;
+  onOpenFriendRequests?: () => void;
+  onOpenNotifications?: () => void;
+  isDarkMode?: boolean;
   onSendGiftToUser?: (user: User) => void;
   onOpenOnlineUsers: () => void;
   onUpdateUser?: (user: User) => void;
@@ -179,8 +186,14 @@ export const WELCOME_PHRASES = [
 export const getRoomContainerStyle = (
   roomId: string,
   userWallpaperId?: string,
-  roomBackgroundTheme?: string
+  roomBackgroundTheme?: string,
+  isDarkMode?: boolean
 ): React.CSSProperties => {
+  const effectiveDark =
+    typeof isDarkMode === 'boolean'
+      ? isDarkMode
+      : typeof document !== 'undefined' && document.documentElement.classList.contains('dark');
+
   // 1. Prioritize custom room background chosen by room manager
   if (roomBackgroundTheme && roomBackgroundTheme !== 'default') {
     const themeObj = getRoomBackgroundThemeById(roomBackgroundTheme);
@@ -200,19 +213,23 @@ export const getRoomContainerStyle = (
     }
   }
 
-  // 3. Egypt Room 1 & 2: Clean luminous white-veil over Egyptian wallpaper for crisp inline chat legibility
+  // 3. Egypt Room 1 & 2: Luminous white-veil in day mode, deep slate veil in Night Mode
   if (roomId === 'room_egypt' || roomId === 'room_egypt2') {
     return {
-      backgroundImage: "linear-gradient(to bottom, rgba(255, 255, 255, 0.86), rgba(255, 255, 255, 0.91)), url('/assets/wallpapers/egypt_chat_bg.jpg')",
+      backgroundImage: effectiveDark
+        ? "linear-gradient(to bottom, rgba(15, 23, 42, 0.88), rgba(2, 6, 23, 0.94)), url('/assets/wallpapers/egypt_chat_bg.jpg')"
+        : "linear-gradient(to bottom, rgba(255, 255, 255, 0.86), rgba(255, 255, 255, 0.91)), url('/assets/wallpapers/egypt_chat_bg.jpg')",
       backgroundSize: 'cover',
       backgroundPosition: 'center',
       backgroundRepeat: 'no-repeat',
       backgroundAttachment: 'fixed',
     };
   }
-  // Other Arab Rooms: Clean bright white-veil over subtle doodle pattern
+  // Other Rooms: Bright white-veil in day mode, deep slate veil in Night Mode
   return {
-    backgroundImage: "linear-gradient(to bottom, rgba(255, 255, 255, 0.88), rgba(248, 250, 252, 0.94)), url('/assets/wallpapers/doodle_chat_bg.jpg')",
+    backgroundImage: effectiveDark
+      ? "linear-gradient(to bottom, rgba(15, 23, 42, 0.9), rgba(2, 6, 23, 0.96)), url('/assets/wallpapers/doodle_chat_bg.jpg')"
+      : "linear-gradient(to bottom, rgba(255, 255, 255, 0.88), rgba(248, 250, 252, 0.94)), url('/assets/wallpapers/doodle_chat_bg.jpg')",
     backgroundSize: '340px',
     backgroundRepeat: 'repeat',
   };
@@ -481,25 +498,52 @@ const RoomPublicMessageRow = React.memo<RoomPublicMessageRowProps>(({
             </div>
           </div>
         ) : msg.type === 'sticker' ? (
-          <p className={`text-[13.5px] sm:text-sm leading-relaxed font-bold whitespace-pre-wrap break-words ${
-            isDarkRoomBg ? 'text-white chat-text-outline-dark' : 'text-slate-950 chat-text-outline-light'
-          }`}>
-            {isVipSender && senderStyle.badge && (
-              <span className="ml-0.5 text-xs align-middle select-none">{senderStyle.badge}</span>
-            )}
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                onOpenUserProfile(msg, e);
-              }}
-              className={`font-black cursor-pointer hover:underline rounded inline ${senderStyle.name} ${nameHighlightClass}`}
-            >
-              {msg.senderName}
-            </button>
-            <span className={`font-black mx-1 ${isDarkRoomBg ? 'text-slate-100 chat-text-outline-dark' : 'text-slate-950 chat-text-outline-light'}`}>:</span>
-            <InlineRichText text={`${msg.stickerEmoji || msg.content || '✨'}${msg.stickerLabel ? ` ${msg.stickerLabel}` : ''}`} />
-          </p>
+          msg.stickerUrl ? (
+            <div className="space-y-1 py-0.5">
+              <div className="flex items-center flex-wrap gap-1">
+                {isVipSender && senderStyle.badge && (
+                  <span className="ml-0.5 text-xs align-middle select-none">{senderStyle.badge}</span>
+                )}
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onOpenUserProfile(msg, e);
+                  }}
+                  className={`text-[13px] sm:text-sm font-black cursor-pointer hover:underline rounded ${senderStyle.name} ${nameHighlightClass}`}
+                >
+                  {msg.senderName}
+                </button>
+                <span className={`font-black mx-0.5 ${isDarkRoomBg ? 'text-slate-100 chat-text-outline-dark' : 'text-slate-950 chat-text-outline-light'}`}>:</span>
+              </div>
+              <img
+                src={msg.stickerUrl}
+                alt={msg.stickerLabel || 'ملصق متحرك'}
+                className="w-16 h-16 sm:w-20 sm:h-20 object-contain rounded-xl drop-shadow-sm select-none"
+                loading="lazy"
+              />
+            </div>
+          ) : (
+            <p className={`text-[13.5px] sm:text-sm leading-relaxed font-bold whitespace-pre-wrap break-words ${
+              isDarkRoomBg ? 'text-white chat-text-outline-dark' : 'text-slate-950 chat-text-outline-light'
+            }`}>
+              {isVipSender && senderStyle.badge && (
+                <span className="ml-0.5 text-xs align-middle select-none">{senderStyle.badge}</span>
+              )}
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onOpenUserProfile(msg, e);
+                }}
+                className={`font-black cursor-pointer hover:underline rounded inline ${senderStyle.name} ${nameHighlightClass}`}
+              >
+                {msg.senderName}
+              </button>
+              <span className={`font-black mx-1 ${isDarkRoomBg ? 'text-slate-100 chat-text-outline-dark' : 'text-slate-950 chat-text-outline-light'}`}>:</span>
+              <InlineRichText text={`${msg.stickerEmoji || msg.content || '✨'}${msg.stickerLabel ? ` ${msg.stickerLabel}` : ''}`} />
+            </p>
+          )
         ) : msg.type === 'voice' ? (
           <div className="flex items-center flex-wrap gap-1.5 py-0.5">
             {isVipSender && senderStyle.badge && (
@@ -729,6 +773,11 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
   onOpenPrivateChatWith,
   onOpenMessagesDrawer,
   unreadPrivateCount = 0,
+  pendingFriendRequestsCount = 0,
+  unreadNotificationsCount = 0,
+  onOpenFriendRequests,
+  onOpenNotifications,
+  isDarkMode,
   onSendGiftToUser,
   onOpenOnlineUsers,
   onUpdateUser,
@@ -1170,11 +1219,13 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
   const hasInitialScrolledRef = useRef<boolean>(false);
   const loadingOlderGuardRef = useRef<boolean>(false);
   const [showScrollDownBtn, setShowScrollDownBtn] = useState<boolean>(false);
+  const [unreadBelowCount, setUnreadBelowCount] = useState<number>(0);
 
   useEffect(() => {
     hasInitialScrolledRef.current = false;
     isNearBottomRef.current = true;
     setShowScrollDownBtn(false);
+    setUnreadBelowCount(0);
   }, [room.id]);
 
   useEffect(() => {
@@ -1393,6 +1444,9 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
     const nearBottom = distanceFromBottom <= 100;
     isNearBottomRef.current = nearBottom;
     setShowScrollDownBtn(!nearBottom);
+    if (nearBottom) {
+      setUnreadBelowCount(0);
+    }
     if (el.scrollTop < 48 && hasMoreOlderMessages && !isLoadingOlderMessages && onLoadOlderMessages) {
       triggerLoadOlderMessages();
     }
@@ -1413,6 +1467,9 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
         (typeof latestMsg.timestamp === 'number' && Date.now() - latestMsg.timestamp < 15000);
 
       if (latestMsg.senderId !== currentUser.id && isFreshMessage) {
+        if (!isNearBottomRef.current) {
+          setUnreadBelowCount((prev) => prev + 1);
+        }
         setTypingUsers((prev) =>
           prev.some((u) => u.id === latestMsg.senderId)
             ? prev.filter((u) => u.id !== latestMsg.senderId)
@@ -1443,6 +1500,7 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
     if (!hasInitialScrolledRef.current && uniqueMessages.length > 0) {
       hasInitialScrolledRef.current = true;
       isNearBottomRef.current = true;
+      setUnreadBelowCount(0);
       requestAnimationFrame(() => {
         const el = messagesScrollRef.current;
         if (el) {
@@ -1450,6 +1508,7 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
         }
       });
     } else if (isNewTailMessage && (isNearBottomRef.current || latestMsg?.senderId === currentUser.id)) {
+      setUnreadBelowCount(0);
       requestAnimationFrame(() => {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
       });
@@ -1677,6 +1736,45 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
       handleInputChange(inputText + emoji);
       inputRef.current?.focus();
     }
+  };
+
+  const handleSendSticker = (stk: { id: string; gifUrl: string; label: string; emoji: string }) => {
+    if (isUserBannedNow || currentUser.isMuted) {
+      toast.warning('غير مسموح بإرسال الملصقات أثناء الكتم أو الحظر');
+      return;
+    }
+    sounds.playMessageSent();
+    const now = Date.now();
+    const tempId = `room_stk_${now}_${Math.random().toString(36).slice(2, 7)}`;
+    onSendMessage({
+      id: tempId,
+      tempId,
+      clientId: tempId,
+      roomId: room.id,
+      senderId: currentUser.id,
+      senderName: currentUser.name,
+      senderAvatar: currentUser.avatar,
+      senderRole: currentUser.role,
+      senderVipBadge: currentUser.vipBadge,
+      badges: currentUser.badges || ['عضو نشط'],
+      type: 'sticker',
+      stickerUrl: stk.gifUrl,
+      stickerLabel: stk.label,
+      stickerEmoji: stk.emoji,
+      content: stk.label,
+      text: stk.label,
+      replyTo: replyingTo ? {
+        id: replyingTo.id,
+        senderName: replyingTo.senderName,
+        content: replyingTo.content || replyingTo.text || '',
+        type: replyingTo.type
+      } : undefined,
+      createdAt: now,
+      timestamp: now,
+      status: navigator.onLine === false ? 'pending_offline' : 'sent'
+    });
+    updateReplyingTo(null);
+    setIsEmojiPickerOpen(false);
   };
 
   // Instant Welcoming Phrase Sender (الجمل الترحيبية)
@@ -2110,39 +2208,46 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
     ? liveRoomBackgroundTheme
     : (room.backgroundTheme || 'default');
   const activeRoomBgThemeObj = getRoomBackgroundThemeById(effectiveRoomBackground);
+  const effectiveDarkMode =
+    typeof isDarkMode === 'boolean'
+      ? isDarkMode
+      : typeof document !== 'undefined' && document.documentElement.classList.contains('dark');
   const isDarkRoomBg =
     Boolean(activeRoomBgThemeObj?.isDark) ||
-    (effectiveRoomBackground === 'default' && Boolean(currentUser.chatWallpaper && DARK_PERSONAL_WALLPAPERS.has(currentUser.chatWallpaper)));
+    (effectiveRoomBackground === 'default' &&
+      (currentUser.chatWallpaper
+        ? DARK_PERSONAL_WALLPAPERS.has(currentUser.chatWallpaper)
+        : effectiveDarkMode));
 
   return (
-    <div style={getRoomContainerStyle(room.id, currentUser.chatWallpaper, effectiveRoomBackground)} className={`relative flex flex-col h-full w-full bg-[#f6f8fc] overflow-hidden overscroll-none select-none transition-all duration-500 ${isDarkRoomBg ? 'text-white' : 'text-slate-900'}`}>
+    <div style={getRoomContainerStyle(room.id, currentUser.chatWallpaper, effectiveRoomBackground, effectiveDarkMode)} className={`relative flex flex-col h-full w-full bg-[#f6f8fc] dark:bg-slate-950 overflow-hidden overscroll-none select-none transition-all duration-500 ${isDarkRoomBg ? 'text-white' : 'text-slate-900'}`}>
       
-      {/* 1. CALM LIGHT SKY-BLUE PINNED ROOM HEADER */}
-      <header className="relative backdrop-blur-md border-b px-2 sm:px-3 py-1.5 pt-[calc(env(safe-area-inset-top,0px)+0.35rem)] flex items-center justify-between gap-2 shrink-0 shadow-xs z-30 bg-[#EAF5FD]/95 dark:bg-slate-900/95 border-sky-200/80 dark:border-slate-800">
-        {/* Right (RTL): Back + Room Avatar + Full Title + Compact Online Pill */}
-        <div className="flex items-center gap-1.5 min-w-0 flex-1">
+      {/* 1. COMPACT CALM LIGHT SKY-BLUE PINNED ROOM HEADER */}
+      <header className="relative backdrop-blur-md border-b px-2 sm:px-3 py-1 pt-[calc(env(safe-area-inset-top,0px)+0.25rem)] flex items-center justify-between gap-1.5 shrink-0 shadow-xs z-30 bg-[#EAF5FD]/95 dark:bg-slate-900/95 border-sky-200/80 dark:border-slate-800">
+        {/* Right (RTL): Back + Room Avatar + Slightly Right-Aligned Title & Online Pill */}
+        <div className="flex items-center gap-1.5 pr-0.5 pl-2 sm:pl-3 min-w-0 flex-1">
           <button
             type="button"
             onClick={onBack}
-            className="w-7.5 h-7.5 sm:w-8 sm:h-8 rounded-xl bg-white/80 hover:bg-white text-slate-700 active:scale-95 transition-all shrink-0 flex items-center justify-center cursor-pointer"
+            className="w-7 h-7 sm:w-7.5 sm:h-7.5 rounded-xl bg-white/80 dark:bg-slate-800 hover:bg-white text-slate-700 dark:text-slate-200 active:scale-95 transition-all shrink-0 flex items-center justify-center cursor-pointer"
             title="الرجوع للغرف"
           >
-            <ArrowRight className="w-4 h-4" />
+            <ArrowRight className="w-3.5 h-3.5" />
           </button>
 
-          <span className={`w-7.5 h-7.5 sm:w-8 sm:h-8 rounded-full bg-gradient-to-br ${
+          <span className={`w-7 h-7 sm:w-7.5 sm:h-7.5 rounded-full bg-gradient-to-br ${
             room.id === 'room_egypt'
               ? 'from-amber-500 via-orange-600 to-rose-700'
               : room.id === 'room_egypt2'
               ? 'from-sky-500 via-blue-600 to-teal-600'
               : room.iconBg || 'from-emerald-600 to-teal-700'
-          } border-2 border-white shadow-sm flex items-center justify-center text-sm sm:text-base shrink-0`}>
+          } border-2 border-white shadow-sm flex items-center justify-center text-xs sm:text-sm shrink-0`}>
             {room.icon}
           </span>
 
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1 min-w-0">
-              <h2 className="text-[12.5px] sm:text-sm font-black text-slate-900 dark:text-slate-100 truncate leading-tight">
+              <h2 className="text-[12px] sm:text-[13px] font-black text-slate-900 dark:text-slate-100 truncate leading-tight">
                 {room.title}
               </h2>
               {liveIsLocked ? (
@@ -2163,15 +2268,15 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
               <button
                 type="button"
                 onClick={onOpenOnlineUsers}
-                className="px-1.5 py-0.2 rounded bg-emerald-50 border border-emerald-200 text-emerald-800 text-[9.5px] font-black flex items-center gap-1 active:scale-95 shrink-0 tabular-nums cursor-pointer"
+                className="px-1.5 py-0.2 rounded bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300 text-[9px] font-black flex items-center gap-1 active:scale-95 shrink-0 tabular-nums cursor-pointer"
                 title="المتصلون الآن"
               >
-                <Users className="w-2.5 h-2.5 text-emerald-600" />
+                <Users className="w-2.5 h-2.5 text-emerald-600 dark:text-emerald-400" />
                 <span>{Math.max(1, room.activeUsers || 1)} متصل</span>
               </button>
 
               <span
-                className="hidden sm:inline-flex px-1.5 py-0.2 rounded bg-white/80 border border-sky-200 text-sky-900 text-[9px] font-black items-center gap-0.5 shrink-0 tabular-nums"
+                className="hidden sm:inline-flex px-1.5 py-0.2 rounded bg-white/80 dark:bg-slate-800 border border-sky-200 dark:border-slate-700 text-sky-900 dark:text-sky-300 text-[9px] font-black items-center gap-0.5 shrink-0 tabular-nums"
                 title="زوار المنصة"
               >
                 <Eye className="w-2.5 h-2.5 text-[#1E96E8]" />
@@ -2256,7 +2361,7 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
                 }`}
                 title="إعدادات الغرفة ولوحة المشرف"
               >
-                <Settings className={`w-3.5 h-3.5 ${liveIsLocked ? 'text-rose-600' : 'text-amber-600'}`} />
+                <SlidersHorizontal className={`w-3.5 h-3.5 ${liveIsLocked ? 'text-rose-600' : 'text-amber-600'}`} />
                 <span className="hidden lg:inline">الإعدادات</span>
               </button>
             )}
@@ -2273,20 +2378,56 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
             )}
           </div>
 
-          {/* Visible Private Chats & Friends Button on ALL Viewports */}
+          {/* Visible Private Chats Button on ALL Viewports */}
           {onOpenMessagesDrawer && (
             <button
               type="button"
               onClick={onOpenMessagesDrawer}
-              className="relative h-7.5 w-7.5 sm:h-8 sm:w-auto sm:px-2 rounded-xl bg-[#E1F1FD] hover:bg-[#D0E9FC] border border-sky-300 text-[#1565C0] text-[10.5px] font-black flex items-center justify-center gap-1 active:scale-95 shrink-0 cursor-pointer"
-              title="الرسائل الخاصة والأصدقاء"
-              aria-label="الرسائل الخاصة والأصدقاء"
+              className="relative h-7.5 w-7.5 sm:h-8 sm:w-auto sm:px-2 rounded-xl bg-[#E1F1FD] dark:bg-sky-950/60 hover:bg-[#D0E9FC] border border-sky-300 dark:border-sky-800 text-[#1565C0] dark:text-sky-300 text-[10.5px] font-black flex items-center justify-center gap-1 active:scale-95 shrink-0 cursor-pointer"
+              title="الرسائل الخاصة"
+              aria-label="الرسائل الخاصة"
             >
               <MessageCircle className="w-3.5 h-3.5" />
               <span className="hidden md:inline">الخاص</span>
               {unreadPrivateCount > 0 && (
                 <span className="absolute -top-1 -right-1 min-w-[15px] h-[15px] px-1 rounded-full bg-[#1E96E8] text-white text-[9px] font-black flex items-center justify-center border border-white tabular-nums">
                   {unreadPrivateCount > 99 ? '99+' : unreadPrivateCount}
+                </span>
+              )}
+            </button>
+          )}
+
+          {/* Friend Requests Button Inside Public Room */}
+          {onOpenFriendRequests && (
+            <button
+              type="button"
+              onClick={onOpenFriendRequests}
+              className="relative h-7.5 w-7.5 sm:h-8 sm:w-8 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 hover:bg-indigo-100 border border-indigo-200 dark:border-indigo-800 text-indigo-600 dark:text-indigo-300 flex items-center justify-center active:scale-95 shrink-0 cursor-pointer"
+              title="طلبات الصداقة"
+              aria-label="طلبات الصداقة"
+            >
+              <UserPlus className="w-3.5 h-3.5" />
+              {pendingFriendRequestsCount > 0 && (
+                <span className="absolute -top-1 -right-1 min-w-[15px] h-[15px] px-1 rounded-full bg-rose-600 text-white text-[9px] font-black flex items-center justify-center border border-white tabular-nums">
+                  {pendingFriendRequestsCount > 99 ? '99+' : pendingFriendRequestsCount}
+                </span>
+              )}
+            </button>
+          )}
+
+          {/* Notifications Bell Button Inside Public Room */}
+          {onOpenNotifications && (
+            <button
+              type="button"
+              onClick={onOpenNotifications}
+              className="relative h-7.5 w-7.5 sm:h-8 sm:w-8 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 flex items-center justify-center active:scale-95 shrink-0 cursor-pointer"
+              title="الإشعارات"
+              aria-label="الإشعارات"
+            >
+              <Bell className="w-3.5 h-3.5" />
+              {unreadNotificationsCount > 0 && (
+                <span className="absolute -top-1 -right-1 min-w-[15px] h-[15px] px-1 rounded-full bg-rose-600 text-white text-[9px] font-black flex items-center justify-center border border-white tabular-nums">
+                  {unreadNotificationsCount > 99 ? '99+' : unreadNotificationsCount}
                 </span>
               )}
             </button>
@@ -2504,7 +2645,7 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
                       className="w-full px-2.5 py-2 rounded-xl bg-amber-50/70 hover:bg-amber-100 text-amber-900 text-xs font-black flex items-center justify-between gap-2 cursor-pointer"
                     >
                       <span className="flex items-center gap-2">
-                        <Settings className={`w-4 h-4 ${liveIsLocked ? 'text-rose-600' : 'text-amber-600'}`} />
+                        <SlidersHorizontal className={`w-4 h-4 ${liveIsLocked ? 'text-rose-600' : 'text-amber-600'}`} />
                         <span>إعدادات الغرفة</span>
                       </span>
                       {liveIsLocked && (
@@ -2762,7 +2903,7 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
                 }, 4000);
               }
             }}
-            className="pointer-events-auto cursor-pointer px-3 py-1 rounded-full bg-slate-200/90 hover:bg-indigo-100/95 backdrop-blur-sm border border-slate-300/80 hover:border-indigo-300 text-slate-800 text-[11px] font-bold shadow-xs truncate max-w-[90vw] transition"
+            className="pointer-events-auto cursor-pointer px-3.5 py-1.5 rounded-2xl bg-slate-200/95 dark:bg-slate-800/95 hover:bg-indigo-100/95 dark:hover:bg-indigo-900/70 backdrop-blur-sm border border-slate-300/80 dark:border-slate-700 hover:border-indigo-300 text-slate-800 dark:text-slate-100 text-[11px] font-bold shadow-xs whitespace-normal break-words text-center leading-snug max-w-[92vw] transition"
             title="اضغط للتفاعل مع العضو"
           >
             انضم {activeJoinNotice.name} إلى الغرفة {room.title}
@@ -2895,7 +3036,7 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
                   '--notif-shimmer-color': notifBgPreset.shimmerColor,
                 } as React.CSSProperties
               }
-              className="pointer-events-auto notif-bubble-shimmer inline-flex items-center justify-between gap-2 max-w-[94%] sm:max-w-lg px-3.5 py-1.5 rounded-full border shadow-sm"
+              className="pointer-events-auto notif-bubble-shimmer inline-flex items-center justify-between gap-2 max-w-[94%] sm:max-w-lg px-3 py-1.5 rounded-2xl sm:rounded-full border shadow-sm"
             >
               <span aria-hidden="true" className="notif-bubble-shimmer-glaze" />
               <div className="relative z-10 flex items-center gap-2 min-w-0">
@@ -2903,9 +3044,9 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
                   className="w-5 h-5 rounded-full bg-white/75 border border-black/10 flex items-center justify-center shrink-0"
                   style={{ color: notifBgPreset.dotColor }}
                 >
-                  <ShieldAlert className="w-3 h-3" />
+                  <Sparkles className="w-3 h-3" />
                 </span>
-                <p className="text-[11px] sm:text-xs font-black leading-snug truncate">
+                <p className="text-[10.5px] sm:text-[11.5px] font-black leading-[1.45] whitespace-normal break-words">
                   {welcomeBannerStage === 'welcome'
                     ? `أهلاً بك في ${room.title}`
                     : 'يرجى احترام قوانين الغرفة وعدم الإساءة للآخرين'}
@@ -3030,14 +3171,14 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
                       '--notif-shimmer-color': notifBgPreset.shimmerColor,
                     } as React.CSSProperties
                   }
-                  className="notif-bubble-shimmer max-w-[92%] sm:max-w-md px-4 sm:px-5 py-2 rounded-full border text-xs sm:text-[13px] font-black flex items-center justify-center gap-2 shadow-sm backdrop-blur-xs"
+                  className="notif-bubble-shimmer max-w-[92%] sm:max-w-md px-3.5 sm:px-4 py-1.5 rounded-2xl sm:rounded-full border text-[11px] sm:text-xs font-black leading-[1.45] flex items-center justify-center gap-2 shadow-sm backdrop-blur-xs"
                 >
                   <span aria-hidden="true" className="notif-bubble-shimmer-glaze" />
                   <span
                     className="relative z-10 w-2 h-2 rounded-full shrink-0"
                     style={{ backgroundColor: notifBgPreset.dotColor }}
                   />
-                  <span className="relative z-10 truncate">{msg.content}</span>
+                  <span className="relative z-10 whitespace-normal break-words text-center">{msg.content}</span>
                 </div>
               </motion.div>
             );
@@ -3077,9 +3218,9 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
                     <div className="flex-1 min-w-0 text-right space-y-1.5">
                       {/* Header: Gift Label & Coins Badge */}
                       <div className="flex items-center justify-between gap-2 flex-wrap">
-                        <div className="inline-flex items-center gap-1 text-[11px] font-black text-amber-800 min-w-0">
-                          <Crown className="w-3.5 h-3.5 text-amber-500 shrink-0" />
-                          <span className="truncate">هدية فاخرة: {msg.gift.name}</span>
+                        <div className="inline-flex items-center gap-1 text-[10.5px] sm:text-[11px] font-black text-amber-800 min-w-0 leading-[1.4]">
+                          <Gift className="w-3.5 h-3.5 text-rose-500 shrink-0" />
+                          <span className="whitespace-normal break-words">هدية فاخرة: {msg.gift.name}</span>
                         </div>
                         <span className="px-2 py-0.5 rounded-full bg-amber-100/90 border border-amber-200 text-amber-900 text-[10px] font-black tabular-nums shrink-0">
                           🪙 {msg.gift.cost.toLocaleString()} كوينز
@@ -3168,13 +3309,19 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
             onClick={() => {
               isNearBottomRef.current = true;
               setShowScrollDownBtn(false);
+              setUnreadBelowCount(0);
               messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
             }}
-            className="absolute bottom-3 left-3 z-20 px-2.5 py-1.5 rounded-full bg-[#1E96E8] hover:bg-[#1982CC] text-white text-[11px] font-black shadow-lg flex items-center gap-1 active:scale-95 transition cursor-pointer"
+            className="absolute bottom-3 left-3 z-20 px-2.5 py-1.5 rounded-full bg-[#1E96E8] hover:bg-[#1982CC] text-white text-[11px] font-black shadow-lg flex items-center gap-1.5 active:scale-95 transition cursor-pointer"
             title="الانتقال إلى أحدث الرسائل"
           >
             <ChevronDown className="w-3.5 h-3.5" />
             <span>الأحدث</span>
+            {unreadBelowCount > 0 && (
+              <span className="min-w-[17px] h-[17px] px-1 rounded-full bg-rose-600 text-white text-[9.5px] font-black flex items-center justify-center border border-white/80 tabular-nums">
+                {unreadBelowCount > 99 ? '99+' : unreadBelowCount}
+              </span>
+            )}
           </button>
         )}
 
@@ -3445,31 +3592,28 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
               </div>
 
               {activeEmojiTab === 'stickers' ? (
-                <div className="space-y-1.5 max-h-48 overflow-y-auto p-1 scrollbar-none">
-                  <span className="text-[10px] font-black text-slate-500 block">
-                    اضغط لإدراج إيموجي متحرك داخل رسالتك بنفس حجم النص:
+                <div className="space-y-1.5 max-h-52 overflow-y-auto p-1 scrollbar-none">
+                  <span className="text-[10px] font-black text-slate-500 dark:text-slate-400 block">
+                    اضغط لإرسال ملصق GIF متحرك في الغرفة:
                   </span>
-                  <div className="grid grid-cols-7 sm:grid-cols-8 gap-1.5">
-                    {ANIMATED_INLINE_EMOJIS.map((item) => (
-                      <button
-                        key={item.id}
-                        type="button"
-                        onClick={() => handleInsertEmoji(item.emoji)}
-                        title={item.label}
-                        className="w-8 h-8 rounded-full bg-slate-50 hover:bg-amber-50 border border-slate-200/80 flex items-center justify-center text-base hover:scale-115 active:scale-95 transition-transform cursor-pointer"
-                      >
-                        <span className={`inline-block leading-none ${item.animClass}`}>{item.emoji}</span>
-                      </button>
-                    ))}
-                    {STICKERS_CATALOG.map((stk) => (
+                  <div className="grid grid-cols-4 gap-2">
+                    {ANIMATED_GIF_STICKERS.map((stk) => (
                       <button
                         key={stk.id}
                         type="button"
-                        onClick={() => handleInsertEmoji(stk.emoji)}
+                        onClick={() => handleSendSticker(stk)}
                         title={stk.label}
-                        className="w-8 h-8 rounded-full bg-slate-50 hover:bg-sky-50 border border-slate-200/80 flex items-center justify-center text-base hover:scale-115 active:scale-95 transition-transform cursor-pointer"
+                        className="p-1.5 rounded-2xl bg-slate-50 dark:bg-slate-800 hover:bg-sky-50 dark:hover:bg-slate-700 border border-slate-200/80 dark:border-slate-700 flex flex-col items-center justify-center gap-1 hover:scale-105 active:scale-95 transition-transform cursor-pointer"
                       >
-                        <span className={`inline-block leading-none ${stk.animationClass || ''}`}>{stk.emoji}</span>
+                        <img
+                          src={stk.gifUrl}
+                          alt={stk.label}
+                          className="w-11 h-11 object-contain"
+                          loading="lazy"
+                        />
+                        <span className="text-[9px] font-bold text-slate-600 dark:text-slate-300 truncate max-w-full">
+                          {stk.label}
+                        </span>
                       </button>
                     ))}
                   </div>
@@ -3552,7 +3696,7 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
             <div className="flex items-center justify-between border-b border-slate-200 pb-2.5">
               <div className="flex items-center gap-2">
                 <div className="w-7 h-7 rounded-lg bg-amber-100 text-amber-700 flex items-center justify-center">
-                  <Settings className="w-4 h-4" />
+                  <SlidersHorizontal className="w-4 h-4" />
                 </div>
                 <div>
                   <h3 className="text-xs font-black text-slate-900">إعدادات الغرفة والمشرفين</h3>

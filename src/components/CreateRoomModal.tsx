@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   X, 
   Sparkles, 
@@ -32,10 +32,18 @@ export const CreateRoomModal: React.FC<CreateRoomModalProps> = ({
   const [description, setDescription] = useState('');
   const [icon, setIcon] = useState('🇪🇬');
   const [roomMode, setRoomMode] = useState<'text_only' | 'live_audio'>(
-    defaultRoomType === 'live_audio' ? 'live_audio' : 'text_only'
+    defaultRoomType === 'live_audio' || defaultRoomType === 'voice' ? 'live_audio' : 'text_only'
   );
   const [isPrivate, setIsPrivate] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setRoomMode(
+      defaultRoomType === 'live_audio' || defaultRoomType === 'voice' ? 'live_audio' : 'text_only'
+    );
+    setErrorMsg(null);
+  }, [isOpen, defaultRoomType]);
 
   if (!isOpen) return null;
 
@@ -122,20 +130,20 @@ export const CreateRoomModal: React.FC<CreateRoomModalProps> = ({
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="w-full sm:max-w-md bg-white border border-slate-200 rounded-t-3xl sm:rounded-3xl overflow-hidden shadow-2xl"
+        className="w-full sm:max-w-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-t-3xl sm:rounded-3xl overflow-hidden shadow-2xl"
       >
         
         {/* Header */}
-        <div className="p-3.5 bg-gradient-to-r from-purple-50 to-indigo-50 border-b border-slate-200 flex items-center justify-between">
+        <div className="p-3.5 bg-gradient-to-r from-purple-50 to-indigo-50 dark:from-slate-900 dark:to-slate-800 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-xl bg-purple-100 border border-purple-200 flex items-center justify-center text-lg">
+            <div className="w-8 h-8 rounded-xl bg-purple-100 dark:bg-purple-950/60 border border-purple-200 dark:border-purple-800 flex items-center justify-center text-lg">
               {roomMode === 'live_audio' ? '🎙️' : '✨'}
             </div>
             <div>
-              <h3 className="text-sm font-black text-slate-900 flex items-center gap-1.5">
+              <h3 className="text-sm font-black text-slate-900 dark:text-white flex items-center gap-1.5">
                 {roomMode === 'live_audio' ? 'إنشاء غرفة صوتية مباشرة 🎙️' : 'إنشاء غرفة دردشة جديدة'}
               </h3>
-              <p className="text-[11px] text-slate-500">
+              <p className="text-[11px] text-slate-500 dark:text-slate-400">
                 {roomMode === 'live_audio'
                   ? 'مسرح متحدثين + طلب المايك (رفع اليد) + دردشة كتابية'
                   : 'دردشة سريعة ومريحة بالرسائل النصية'}
@@ -143,7 +151,7 @@ export const CreateRoomModal: React.FC<CreateRoomModalProps> = ({
             </div>
           </div>
 
-          <button onClick={onClose} className="p-1.5 rounded-full text-slate-500 hover:text-slate-900 bg-white border border-slate-200">
+          <button onClick={onClose} className="p-1.5 rounded-full text-slate-500 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 cursor-pointer">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -151,14 +159,14 @@ export const CreateRoomModal: React.FC<CreateRoomModalProps> = ({
         {/* Form Body */}
         <form onSubmit={handleSubmit} className="p-3.5 space-y-3">
           {/* Room Type Mode Selector */}
-          <div className="grid grid-cols-2 gap-1.5 p-1 rounded-xl bg-slate-100 border border-slate-200">
+          <div className="grid grid-cols-2 gap-1.5 p-1 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
             <button
               type="button"
               onClick={() => setRoomMode('text_only')}
               className={`py-2 px-2 rounded-lg text-xs font-black flex items-center justify-center gap-1.5 transition cursor-pointer ${
                 roomMode === 'text_only'
                   ? 'bg-indigo-600 text-white shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
+                  : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
               }`}
             >
               <MessageSquare className="w-3.5 h-3.5" />
@@ -170,7 +178,7 @@ export const CreateRoomModal: React.FC<CreateRoomModalProps> = ({
               className={`py-2 px-2 rounded-lg text-xs font-black flex items-center justify-center gap-1.5 transition cursor-pointer ${
                 roomMode === 'live_audio'
                   ? 'bg-purple-600 text-white shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
+                  : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
               }`}
             >
               <Radio className="w-3.5 h-3.5" />
@@ -186,33 +194,33 @@ export const CreateRoomModal: React.FC<CreateRoomModalProps> = ({
 
           {/* Room Title */}
           <div>
-            <label className="text-[11px] font-bold text-slate-700 block mb-1">اسم الغرفة:</label>
+            <label className="text-[11px] font-bold text-slate-700 dark:text-slate-200 block mb-1">اسم الغرفة:</label>
             <input
               type="text"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               placeholder="مثال: شات الصداقة والمحبة، سوالف ولاد البلد، قهوة مصر..."
-              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-indigo-500"
+              className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-1.5 text-xs text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:border-indigo-500"
               required
             />
           </div>
 
           {/* Description */}
           <div>
-            <label className="text-[11px] font-bold text-slate-700 block mb-1">نبذة وموضوع المحادثة:</label>
+            <label className="text-[11px] font-bold text-slate-700 dark:text-slate-200 block mb-1">نبذة وموضوع المحادثة:</label>
             <input
               type="text"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               placeholder="وصف مختصر لموضوع المجلس..."
-              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-indigo-500"
+              className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-1.5 text-xs text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:border-indigo-500"
             />
           </div>
 
           {/* Icon / Flag selection */}
           <div>
-            <label className="text-[11px] font-bold text-slate-700 block mb-1">علم الدولة أو الأيقونة:</label>
-            <div className="grid grid-cols-5 gap-1.5 max-h-28 overflow-y-auto p-1 bg-slate-50 rounded-xl border border-slate-200">
+            <label className="text-[11px] font-bold text-slate-700 dark:text-slate-200 block mb-1">علم الدولة أو الأيقونة:</label>
+            <div className="grid grid-cols-5 gap-1.5 max-h-28 overflow-y-auto p-1 bg-slate-50 dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700">
               {flagOptions.map((item, idx) => (
                 <button
                   key={idx}
@@ -220,8 +228,8 @@ export const CreateRoomModal: React.FC<CreateRoomModalProps> = ({
                   onClick={() => setIcon(item.flag)}
                   className={`p-1.5 rounded-lg text-lg border transition-all flex items-center justify-center ${
                     icon === item.flag
-                      ? 'border-indigo-500 bg-indigo-50 scale-105 shadow-sm'
-                      : 'border-slate-200 bg-white hover:bg-slate-100'
+                      ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-950/60 scale-105 shadow-sm'
+                      : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-700'
                   }`}
                   title={item.name}
                 >
@@ -234,17 +242,17 @@ export const CreateRoomModal: React.FC<CreateRoomModalProps> = ({
           {/* Options: Low Cost Private Room Option */}
           <div className="space-y-2 pt-1">
             {/* Private Room - Low Cost (50 coins) */}
-            <label className="flex items-center justify-between p-2.5 rounded-xl bg-slate-50 border border-slate-200 cursor-pointer">
+            <label className="flex items-center justify-between p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 cursor-pointer">
               <div className="flex items-center gap-2">
                 <Lock className="w-4 h-4 text-amber-500" />
                 <div>
                   <div className="flex items-center gap-1.5">
-                    <span className="text-xs font-bold text-slate-900">غرفة خاصة مشفرة</span>
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 font-black">
+                    <span className="text-xs font-bold text-slate-900 dark:text-white">غرفة خاصة مشفرة</span>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 font-black">
                       50 كوينز فقط 🔒
                     </span>
                   </div>
-                  <span className="text-[10px] text-slate-500">دخول الغرفة بدعوة خاصة للمقربين</span>
+                  <span className="text-[10px] text-slate-500 dark:text-slate-400">دخول الغرفة بدعوة خاصة للمقربين</span>
                 </div>
               </div>
               <input
