@@ -65,7 +65,7 @@ import {
   signInWithPopup,
   signOut
 } from 'firebase/auth';
-import { Message, User, FriendRequest, Friend, ForumPost, ForumComment, ForumLikeUserSummary, SharedRoomMission, UserReport, StoryItem, StoryComment, BackupSnapshot } from '../types/chat';
+import { Message, Room, User, FriendRequest, Friend, ForumPost, ForumComment, ForumLikeUserSummary, SharedRoomMission, UserReport, StoryItem, StoryComment, BackupSnapshot } from '../types/chat';
 import { PRIMARY_OWNER_EMAIL } from '../data/seedData';
 import {
   PRESENCE_HEARTBEAT_MS,
@@ -5365,7 +5365,8 @@ export async function toggleStoryLike(
         const snap = await tx.get(storyRef);
         if (!snap.exists()) return;
         const data = snap.data() as any;
-        if (data.userId) resolvedOwnerId = String(data.userId);
+        const ownerCandidate = data.userId || data.ownerId || data.authorId;
+        if (ownerCandidate) resolvedOwnerId = String(ownerCandidate);
         const prevLiked: string[] = Array.isArray(data.likedBy) ? data.likedBy : [];
         const hasLiked = prevLiked.includes(user.id);
         addedLike = !hasLiked;
@@ -5500,7 +5501,8 @@ export async function addStoryComment(
         const storySnap = await getDoc(doc(db, 'stories', storyId)).catch(() => null);
         if (storySnap?.exists()) {
           const data = storySnap.data() as any;
-          if (data?.userId) resolvedOwnerId = String(data.userId);
+          const ownerCandidate = data?.userId || data?.ownerId || data?.authorId;
+          if (ownerCandidate) resolvedOwnerId = String(ownerCandidate);
         }
       }
       await setDoc(doc(db, 'stories', storyId, 'comments', id), comment);
@@ -6511,7 +6513,8 @@ export async function toggleForumPostLike(
         const postSnap = await getDoc(doc(db, 'forum_posts', postId)).catch(() => null);
         if (postSnap?.exists()) {
           const pData = postSnap.data() as any;
-          if (pData?.authorId) resolvedAuthorId = String(pData.authorId);
+          const authorCandidate = pData?.authorId || pData?.userId || pData?.ownerId;
+          if (authorCandidate) resolvedAuthorId = String(authorCandidate);
         }
       }
       const updatePayload: Record<string, any> = {
@@ -6620,7 +6623,8 @@ export async function addForumComment(
         const postSnap = await getDoc(doc(db, 'forum_posts', postId)).catch(() => null);
         if (postSnap?.exists()) {
           const pData = postSnap.data() as any;
-          if (pData?.authorId) resolvedAuthorId = String(pData.authorId);
+          const authorCandidate = pData?.authorId || pData?.userId || pData?.ownerId;
+          if (authorCandidate) resolvedAuthorId = String(authorCandidate);
         }
       }
       await setDoc(doc(db, 'forum_posts', postId, 'comments', id), comment);
@@ -7537,6 +7541,82 @@ export function subscribeToAllRoomLocks(
   };
 }
 
+export const OFFICIAL_PUBLIC_ROOM_IDS = new Set(['room_egypt', 'room_egypt2']);
+
+export async function saveCreatedRoomToFirestore(room: Room): Promise<void> {
+  if (!room?.id || OFFICIAL_PUBLIC_ROOM_IDS.has(room.id)) return;
+  const now = Date.now();
+  const payload = {
+    ...room,
+    isCustomRoom: true,
+    isClosed: false,
+    createdAt: room.createdAt || now,
+    updatedAt: now,
+  };
+  if (db) {
+    try {
+      await setDoc(doc(db, 'rooms', room.id), payload, { merge: true });
+    } catch (err) {
+      handleFirestoreError(err, OperationType.CREATE, `rooms/${room.id}`);
+    }
+  }
+  liveChatBus?.postMessage({ type: 'CREATED_ROOM_UPSERT', room: payload });
+}
+
+export async function closeRoomInDB(roomId: string, closedBy = 'creator'): Promise<void> {
+  if (!roomId || OFFICIAL_PUBLIC_ROOM_IDS.has(roomId)) return;
+  const now = Date.now();
+  if (db) {
+    try {
+      await setDoc(
+        doc(db, 'rooms', roomId),
+        {
+          isClosed: true,
+          closedAt: now,
+          closedBy,
+          activeUsers: 0,
+        },
+        { merge: true }
+      );
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `rooms/${roomId}`);
+    }
+  }
+  if (rtdb) {
+    try {
+      await set(ref(rtdb, `room_join_requests/${roomId}`), null).catch(() => {});
+      await set(ref(rtdb, `room_presence/${roomId}`), null).catch(() => {});
+    } catch {}
+  }
+  liveChatBus?.postMessage({ type: 'PRIVATE_ROOM_DELETED', payload: { roomId } });
+}
+
+export function subscribeToCreatedRooms(
+  onRoomsChange: (createdRooms: Room[], closedRoomIds: Set<string>) => void
+): () => void {
+  const unsubShared = subscribeSharedFirestoreRooms((docsById) => {
+    const created: Room[] = [];
+    const closedIds = new Set<string>();
+    docsById.forEach((data, id) => {
+      if (OFFICIAL_PUBLIC_ROOM_IDS.has(id)) return;
+      if (data?.isClosed === true) {
+        closedIds.add(id);
+        return;
+      }
+      if (data?.isCustomRoom === true && data?.title) {
+        created.push({
+          ...(data as any),
+          id,
+          createdAt: resolveTimestampMs(data.createdAt) ?? (Number(data.createdAt) || Date.now()),
+        } as Room);
+      }
+    });
+    created.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    onRoomsChange(created, closedIds);
+  });
+  return () => unsubShared();
+}
+
 // ==========================================
 // 26. REALTIME HEALTH MONITOR & TOP 10 LEADERBOARD
 // ==========================================
@@ -8241,13 +8321,17 @@ export function subscribeToFirestoreCallSignals(
 export interface RealtimeUserNotification {
   id: string;
   targetUserId: string;
+  recipientId?: string;
+  ownerId?: string;
   actorId: string;
   actorName: string;
   actorAvatar?: string;
   kind: 'forum_like' | 'forum_comment' | 'story_like' | 'story_comment' | 'app_update' | 'info';
+  type?: string;
   message: string;
   refId?: string;
   isRead?: boolean;
+  read?: boolean;
   createdAt: number;
 }
 
@@ -8260,12 +8344,17 @@ const ALLOWED_BELL_NOTIFICATION_KINDS = new Set<string>([
   'info',
 ]);
 
-const LOCAL_NOTIFS_PREFIX = 'shat_masr_user_notifications_';
+const FORUM_NOTIFICATION_KINDS = new Set<string>(['forum_like', 'forum_comment']);
+const STORY_NOTIFICATION_KINDS = new Set<string>(['story_like', 'story_comment']);
 
-function readLocalUserNotifications(userId: string): RealtimeUserNotification[] {
+const LOCAL_NOTIFS_PREFIX = 'shat_masr_user_notifications_';
+const LOCAL_FORUM_NOTIFS_PREFIX = 'shat_masr_forum_notifications_';
+const LOCAL_STORY_NOTIFS_PREFIX = 'shat_masr_story_notifications_';
+
+function readLocalNotifCache(prefix: string, userId: string): RealtimeUserNotification[] {
   if (!userId || typeof window === 'undefined') return [];
   try {
-    const raw = localStorage.getItem(`${LOCAL_NOTIFS_PREFIX}${userId}`);
+    const raw = localStorage.getItem(`${prefix}${userId}`);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed : [];
@@ -8274,11 +8363,25 @@ function readLocalUserNotifications(userId: string): RealtimeUserNotification[] 
   }
 }
 
-function writeLocalUserNotifications(userId: string, list: RealtimeUserNotification[]): void {
+function writeLocalNotifCache(prefix: string, userId: string, list: RealtimeUserNotification[]): void {
   if (!userId || typeof window === 'undefined') return;
   try {
-    localStorage.setItem(`${LOCAL_NOTIFS_PREFIX}${userId}`, JSON.stringify(list.slice(0, 30)));
+    localStorage.setItem(`${prefix}${userId}`, JSON.stringify(list.slice(0, 30)));
   } catch {}
+}
+
+function readLocalUserNotifications(userId: string): RealtimeUserNotification[] {
+  return readLocalNotifCache(LOCAL_NOTIFS_PREFIX, userId);
+}
+
+function writeLocalUserNotifications(userId: string, list: RealtimeUserNotification[]): void {
+  writeLocalNotifCache(LOCAL_NOTIFS_PREFIX, userId, list);
+}
+
+function getCollectionNameForKind(kind: RealtimeUserNotification['kind']): 'forum_notifications' | 'story_notifications' | 'notifications' {
+  if (FORUM_NOTIFICATION_KINDS.has(kind)) return 'forum_notifications';
+  if (STORY_NOTIFICATION_KINDS.has(kind)) return 'story_notifications';
+  return 'notifications';
 }
 
 export async function sendUserRealtimeNotification(params: {
@@ -8298,33 +8401,59 @@ export async function sendUserRealtimeNotification(params: {
   const item: RealtimeUserNotification = {
     id,
     targetUserId,
+    recipientId: targetUserId,
+    ownerId: targetUserId,
     actorId,
     actorName,
     actorAvatar,
     kind,
+    type: kind,
     message: message.trim(),
     refId,
     isRead: false,
+    read: false,
     createdAt: nowMs
   };
 
-  const existingLocal = readLocalUserNotifications(targetUserId).filter((n) => n.id !== id);
-  writeLocalUserNotifications(targetUserId, [item, ...existingLocal]);
+  const subcollection = getCollectionNameForKind(kind);
+  const localPrefix =
+    subcollection === 'forum_notifications'
+      ? LOCAL_FORUM_NOTIFS_PREFIX
+      : subcollection === 'story_notifications'
+      ? LOCAL_STORY_NOTIFS_PREFIX
+      : LOCAL_NOTIFS_PREFIX;
+
+  const existingLocal = readLocalNotifCache(localPrefix, targetUserId).filter((n) => n.id !== id);
+  writeLocalNotifCache(localPrefix, targetUserId, [item, ...existingLocal]);
   realtimeSocket.sendUserNotification(item);
-  liveChatBus?.postMessage({ type: 'USER_REALTIME_NOTIFICATION', notification: item });
+
+  const busType =
+    subcollection === 'forum_notifications'
+      ? 'USER_FORUM_NOTIFICATION'
+      : subcollection === 'story_notifications'
+      ? 'USER_STORY_NOTIFICATION'
+      : 'USER_REALTIME_NOTIFICATION';
+  liveChatBus?.postMessage({ type: busType, notification: item });
+
   if (typeof window !== 'undefined') {
-    window.dispatchEvent(new CustomEvent('shatmasr:user_notification', { detail: item }));
+    const winEvent =
+      subcollection === 'forum_notifications'
+        ? 'shatmasr:forum_notification'
+        : subcollection === 'story_notifications'
+        ? 'shatmasr:story_notification'
+        : 'shatmasr:user_notification';
+    window.dispatchEvent(new CustomEvent(winEvent, { detail: item }));
   }
 
   if (db) {
     try {
-      await setDoc(doc(db, 'users', targetUserId, 'notifications', id), {
+      await setDoc(doc(db, 'users', targetUserId, subcollection, id), {
         ...item,
         createdAt: serverTimestamp(),
         createdAtMs: nowMs
       });
     } catch (err) {
-      handleFirestoreError(err, OperationType.CREATE, `users/${targetUserId}/notifications/${id}`);
+      handleFirestoreError(err, OperationType.CREATE, `users/${targetUserId}/${subcollection}/${id}`);
     }
   }
 }
@@ -8335,11 +8464,13 @@ export async function markUserNotificationsRead(
 ): Promise<void> {
   if (!userId || !notificationIds || notificationIds.length === 0) return;
   const idSet = new Set(notificationIds);
-  const localList = readLocalUserNotifications(userId);
-  if (localList.length > 0) {
-    const updated = localList.map((n) => (idSet.has(n.id) ? { ...n, isRead: true } : n));
-    writeLocalUserNotifications(userId, updated);
-  }
+  [LOCAL_NOTIFS_PREFIX, LOCAL_FORUM_NOTIFS_PREFIX, LOCAL_STORY_NOTIFS_PREFIX].forEach((prefix) => {
+    const localList = readLocalNotifCache(prefix, userId);
+    if (localList.length > 0) {
+      const updated = localList.map((n) => (idSet.has(n.id) ? { ...n, isRead: true, read: true } : n));
+      writeLocalNotifCache(prefix, userId, updated);
+    }
+  });
   liveChatBus?.postMessage({
     type: 'USER_NOTIFICATIONS_MARKED_READ',
     userId,
@@ -8355,9 +8486,12 @@ export async function markUserNotificationsRead(
 
   const firestore = db;
   if (!firestore) return;
+  const subcollections = ['notifications', 'forum_notifications', 'story_notifications'] as const;
   await Promise.allSettled(
-    notificationIds.slice(0, 30).map((nid) =>
-      setDoc(doc(firestore, 'users', userId, 'notifications', nid), { isRead: true }, { merge: true }).catch(() => {})
+    notificationIds.slice(0, 30).flatMap((nid) =>
+      subcollections.map((col) =>
+        updateDoc(doc(firestore, 'users', userId, col, nid), { isRead: true, read: true }).catch(() => {})
+      )
     )
   );
 }
@@ -8368,8 +8502,10 @@ export async function deleteUserNotification(
 ): Promise<void> {
   if (!userId || !notificationId) return;
   persistDeletedIdStorage(`shat_masr_deleted_notifs_${userId}`, notificationId, 150);
-  const nextLocal = readLocalUserNotifications(userId).filter((n) => n.id !== notificationId);
-  writeLocalUserNotifications(userId, nextLocal);
+  [LOCAL_NOTIFS_PREFIX, LOCAL_FORUM_NOTIFS_PREFIX, LOCAL_STORY_NOTIFS_PREFIX].forEach((prefix) => {
+    const nextLocal = readLocalNotifCache(prefix, userId).filter((n) => n.id !== notificationId);
+    writeLocalNotifCache(prefix, userId, nextLocal);
+  });
 
   liveChatBus?.postMessage({
     type: 'USER_NOTIFICATION_DELETED',
@@ -8385,18 +8521,23 @@ export async function deleteUserNotification(
   }
 
   if (db) {
-    deleteDoc(doc(db, 'users', userId, 'notifications', notificationId)).catch(() => {});
+    const firestore = db;
+    (['notifications', 'forum_notifications', 'story_notifications'] as const).forEach((col) => {
+      deleteDoc(doc(firestore, 'users', userId, col, notificationId)).catch(() => {});
+    });
   }
 }
 
 export async function clearAllUserNotifications(userId: string): Promise<void> {
   if (!userId) return;
-  const localList = readLocalUserNotifications(userId);
   const delKey = `shat_masr_deleted_notifs_${userId}`;
-  localList.forEach((n) => {
-    if (n?.id) persistDeletedIdStorage(delKey, n.id, 150);
+  [LOCAL_NOTIFS_PREFIX, LOCAL_FORUM_NOTIFS_PREFIX, LOCAL_STORY_NOTIFS_PREFIX].forEach((prefix) => {
+    const localList = readLocalNotifCache(prefix, userId);
+    localList.forEach((n) => {
+      if (n?.id) persistDeletedIdStorage(delKey, n.id, 150);
+    });
+    writeLocalNotifCache(prefix, userId, []);
   });
-  writeLocalUserNotifications(userId, []);
 
   liveChatBus?.postMessage({ type: 'USER_NOTIFICATIONS_CLEARED', userId });
   if (typeof window !== 'undefined') {
@@ -8406,19 +8547,30 @@ export async function clearAllUserNotifications(userId: string): Promise<void> {
   }
 
   if (db) {
+    const firestore = db;
     try {
-      const snap = await getDocs(collection(db, 'users', userId, 'notifications')).catch(() => null);
-      if (snap && !snap.empty) {
-        await Promise.all(snap.docs.map((d) => deleteDoc(d.ref).catch(() => {})));
-      }
+      await Promise.all(
+        (['notifications', 'forum_notifications', 'story_notifications'] as const).map(async (col) => {
+          const snap = await getDocs(collection(firestore, 'users', userId, col)).catch(() => null);
+          if (snap && !snap.empty) {
+            await Promise.all(snap.docs.map((d) => deleteDoc(d.ref).catch(() => {})));
+          }
+        })
+      );
     } catch {}
   }
 }
 
-export function subscribeToUserNotifications(
-  userId: string,
-  onUpdate: (notifications: RealtimeUserNotification[]) => void
-): () => void {
+function createIsolatedNotificationSubscription(params: {
+  userId: string;
+  subcollection: 'notifications' | 'forum_notifications' | 'story_notifications';
+  localPrefix: string;
+  allowedKinds: Set<string>;
+  busType: string;
+  windowEvent: string;
+  onUpdate: (notifications: RealtimeUserNotification[]) => void;
+}): () => void {
+  const { userId, subcollection, localPrefix, allowedKinds, busType, windowEvent, onUpdate } = params;
   if (!userId) return () => {};
   const listById = new Map<string, RealtimeUserNotification>();
   const locallyReadIds = new Set<string>();
@@ -8427,18 +8579,18 @@ export function subscribeToUserNotifications(
 
   const emitSorted = (persistLocal = false) => {
     const sorted = Array.from(listById.values())
-      .filter((n) => n?.id && !deletedIds.has(n.id) && ALLOWED_BELL_NOTIFICATION_KINDS.has(n.kind))
+      .filter((n) => n?.id && !deletedIds.has(n.id) && allowedKinds.has(n.kind))
       .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
-      .slice(0, 20);
+      .slice(0, 25);
     if (persistLocal) {
-      writeLocalUserNotifications(userId, sorted);
+      writeLocalNotifCache(localPrefix, userId, sorted);
     }
     onUpdate(sorted);
   };
 
-  readLocalUserNotifications(userId).forEach((n) => {
-    if (n?.id && !deletedIds.has(n.id) && ALLOWED_BELL_NOTIFICATION_KINDS.has(n.kind)) {
-      if (n.isRead) locallyReadIds.add(n.id);
+  readLocalNotifCache(localPrefix, userId).forEach((n) => {
+    if (n?.id && !deletedIds.has(n.id) && allowedKinds.has(n.kind)) {
+      if (n.isRead || n.read) locallyReadIds.add(n.id);
       listById.set(n.id, n);
     }
   });
@@ -8450,59 +8602,73 @@ export function subscribeToUserNotifications(
   if (db) {
     try {
       const q = query(
-        collection(db, 'users', userId, 'notifications'),
+        collection(db, 'users', userId, subcollection),
         orderBy('createdAt', 'desc'),
-        limit(20)
+        limit(25)
       );
       unsubFirestore = onSnapshot(
         q,
         (snap) => {
           snap.docs.forEach((d) => {
             const data = d.data() as any;
-            const kind = String(data.kind || 'info');
-            if (!ALLOWED_BELL_NOTIFICATION_KINDS.has(kind)) return;
+            const kind = String(data.kind || data.type || 'info');
+            if (!allowedKinds.has(kind)) return;
+            const recipient = String(data.recipientId || data.ownerId || data.targetUserId || userId);
+            if (recipient !== userId) return;
+            const actorId = String(data.actorId || '');
+            if (actorId && actorId === recipient) return;
             const id = data.id || d.id;
             if (deletedIds.has(id)) return;
             const resolvedTs = resolveTimestampMs(data.createdAt) ?? (Number(data.createdAtMs) || Date.now());
             const existing = listById.get(id);
-            const isRead = Boolean(data.isRead || existing?.isRead || locallyReadIds.has(id));
+            const isRead = Boolean(data.isRead || data.read || existing?.isRead || locallyReadIds.has(id));
             if (isRead) locallyReadIds.add(id);
             listById.set(id, {
               id,
-              targetUserId: data.targetUserId || userId,
-              actorId: data.actorId || '',
+              targetUserId: recipient,
+              recipientId: recipient,
+              ownerId: recipient,
+              actorId,
               actorName: data.actorName || 'عضو شات مصر',
               actorAvatar: data.actorAvatar || '',
               kind: kind as RealtimeUserNotification['kind'],
+              type: kind,
               message: data.message || '',
               refId: data.refId || '',
               isRead,
+              read: isRead,
               createdAt: resolvedTs
             });
           });
           emitSorted(true);
         },
         (err) => {
-          handleFirestoreError(err, OperationType.LIST, `users/${userId}/notifications`);
+          handleFirestoreError(err, OperationType.LIST, `users/${userId}/${subcollection}`);
         }
       );
     } catch {}
   }
 
   const ingestNotification = (notif: RealtimeUserNotification | undefined) => {
+    const recipient = notif?.recipientId || notif?.ownerId || notif?.targetUserId;
     if (
       notif &&
       notif.id &&
       !deletedIds.has(notif.id) &&
-      notif.targetUserId === userId &&
-      ALLOWED_BELL_NOTIFICATION_KINDS.has(notif.kind)
+      recipient === userId &&
+      notif.actorId !== userId &&
+      allowedKinds.has(notif.kind)
     ) {
       const existing = listById.get(notif.id);
-      const isRead = Boolean(notif.isRead || existing?.isRead || locallyReadIds.has(notif.id));
+      const isRead = Boolean(notif.isRead || notif.read || existing?.isRead || locallyReadIds.has(notif.id));
       if (isRead) locallyReadIds.add(notif.id);
       listById.set(notif.id, {
         ...notif,
+        targetUserId: userId,
+        recipientId: userId,
+        ownerId: userId,
         isRead,
+        read: isRead,
       });
       emitSorted(true);
     }
@@ -8516,7 +8682,7 @@ export function subscribeToUserNotifications(
       locallyReadIds.add(id);
       const existing = listById.get(id);
       if (existing && !existing.isRead) {
-        listById.set(id, { ...existing, isRead: true });
+        listById.set(id, { ...existing, isRead: true, read: true });
         changed = true;
       }
     });
@@ -8549,7 +8715,7 @@ export function subscribeToUserNotifications(
   });
 
   const handleBus = (e: MessageEvent) => {
-    if (e.data?.type === 'USER_REALTIME_NOTIFICATION') {
+    if (e.data?.type === busType) {
       ingestNotification(e.data?.notification as RealtimeUserNotification | undefined);
     } else if (e.data?.type === 'USER_NOTIFICATIONS_MARKED_READ') {
       applyMarkedRead(e.data?.userId, e.data?.ids);
@@ -8576,7 +8742,7 @@ export function subscribeToUserNotifications(
   };
   liveChatBus?.addEventListener('message', handleBus);
   if (typeof window !== 'undefined') {
-    window.addEventListener('shatmasr:user_notification', handleWindowEvent);
+    window.addEventListener(windowEvent, handleWindowEvent);
     window.addEventListener('shatmasr:user_notifications_marked_read', handleWindowMarkedRead);
     window.addEventListener('shatmasr:user_notification_deleted', handleWindowDeleted);
     window.addEventListener('shatmasr:user_notifications_cleared', handleWindowCleared);
@@ -8587,12 +8753,60 @@ export function subscribeToUserNotifications(
     unsubSocket();
     liveChatBus?.removeEventListener('message', handleBus);
     if (typeof window !== 'undefined') {
-      window.removeEventListener('shatmasr:user_notification', handleWindowEvent);
+      window.removeEventListener(windowEvent, handleWindowEvent);
       window.removeEventListener('shatmasr:user_notifications_marked_read', handleWindowMarkedRead);
       window.removeEventListener('shatmasr:user_notification_deleted', handleWindowDeleted);
       window.removeEventListener('shatmasr:user_notifications_cleared', handleWindowCleared);
     }
   };
+}
+
+// Dedicated, isolated onSnapshot listener for Forum like & comment notifications
+export function subscribeToForumNotifications(
+  userId: string,
+  onUpdate: (notifications: RealtimeUserNotification[]) => void
+): () => void {
+  return createIsolatedNotificationSubscription({
+    userId,
+    subcollection: 'forum_notifications',
+    localPrefix: LOCAL_FORUM_NOTIFS_PREFIX,
+    allowedKinds: FORUM_NOTIFICATION_KINDS,
+    busType: 'USER_FORUM_NOTIFICATION',
+    windowEvent: 'shatmasr:forum_notification',
+    onUpdate,
+  });
+}
+
+// Dedicated, isolated onSnapshot listener for Story like & comment notifications
+export function subscribeToStoryNotifications(
+  userId: string,
+  onUpdate: (notifications: RealtimeUserNotification[]) => void
+): () => void {
+  return createIsolatedNotificationSubscription({
+    userId,
+    subcollection: 'story_notifications',
+    localPrefix: LOCAL_STORY_NOTIFS_PREFIX,
+    allowedKinds: STORY_NOTIFICATION_KINDS,
+    busType: 'USER_STORY_NOTIFICATION',
+    windowEvent: 'shatmasr:story_notification',
+    onUpdate,
+  });
+}
+
+// General user notifications listener (app updates, info & legacy entries)
+export function subscribeToUserNotifications(
+  userId: string,
+  onUpdate: (notifications: RealtimeUserNotification[]) => void
+): () => void {
+  return createIsolatedNotificationSubscription({
+    userId,
+    subcollection: 'notifications',
+    localPrefix: LOCAL_NOTIFS_PREFIX,
+    allowedKinds: ALLOWED_BELL_NOTIFICATION_KINDS,
+    busType: 'USER_REALTIME_NOTIFICATION',
+    windowEvent: 'shatmasr:user_notification',
+    onUpdate,
+  });
 }
 
 // ==========================================

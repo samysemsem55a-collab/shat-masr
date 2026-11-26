@@ -347,7 +347,7 @@ export const StoriesBar: React.FC<StoriesBarProps> = ({
   const handleLikeActiveStory = async () => {
     if (!activeStory) return;
     const targetId = activeStory.id;
-    const targetOwnerId = activeStory.userId;
+    const targetOwnerId = activeStory.userId || (activeStory as any).ownerId || '';
     const wasLiked = Boolean(activeStory.likedBy?.includes(currentUser.id));
     setStories((prev) =>
       prev.map((s) => {
@@ -371,9 +371,10 @@ export const StoriesBar: React.FC<StoriesBarProps> = ({
     e.preventDefault();
     if (!activeStory || !commentText.trim() || isSendingComment) return;
     const trimmed = commentText.trim();
+    const targetOwnerId = activeStory.userId || (activeStory as any).ownerId || '';
     setIsSendingComment(true);
     try {
-      const saved = await addStoryComment(activeStory.id, currentUser, trimmed, activeStory.userId);
+      const saved = await addStoryComment(activeStory.id, currentUser, trimmed, targetOwnerId);
       setCommentText('');
       if (saved) {
         setStoryComments((prev) => (prev.some((c) => c.id === saved.id) ? prev : [...prev, saved]));

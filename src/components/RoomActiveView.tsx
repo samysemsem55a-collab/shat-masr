@@ -121,6 +121,7 @@ interface RoomActiveViewProps {
   onLoadOlderMessages?: () => Promise<number>;
   hasMoreOlderMessages?: boolean;
   isLoadingOlderMessages?: boolean;
+  onCloseRoom?: (roomId: string) => void;
 }
 
 const PUBLIC_REACTION_EMOJIS = ['❤️', '👍', '😂', '🔥'] as const;
@@ -786,6 +787,7 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
   onLoadOlderMessages,
   hasMoreOlderMessages = false,
   isLoadingOlderMessages = false,
+  onCloseRoom,
 }) => {
   // Chat Wallpapers Modal State (Select & Purchase) + Image Upload & Lightbox
   const [isWallpapersModalOpen, setIsWallpapersModalOpen] = useState(false);
@@ -2366,6 +2368,21 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
               </button>
             )}
 
+            {onCloseRoom &&
+              room.id !== 'room_egypt' &&
+              room.id !== 'room_egypt2' &&
+              (room.ownerId === currentUser.id || room.hostId === currentUser.id) && (
+                <button
+                  type="button"
+                  onClick={() => onCloseRoom(room.id)}
+                  className="h-8 px-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-[10.5px] font-black flex items-center justify-center gap-1 active:scale-95 shrink-0 cursor-pointer shadow-xs"
+                  title="إغلاق الغرفة وحذفها"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>إغلاق الغرفة</span>
+                </button>
+              )}
+
             {room.category === 'religious' && (
               <button
                 type="button"
@@ -2653,6 +2670,25 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
                       )}
                     </button>
                   )}
+
+                  {onCloseRoom &&
+                    room.id !== 'room_egypt' &&
+                    room.id !== 'room_egypt2' &&
+                    (room.ownerId === currentUser.id || room.hostId === currentUser.id) && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsHeaderToolsOpen(false);
+                          onCloseRoom(room.id);
+                        }}
+                        className="w-full px-2.5 py-2 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-black flex items-center justify-between gap-2 cursor-pointer"
+                      >
+                        <span className="flex items-center gap-2">
+                          <Trash2 className="w-4 h-4 text-rose-600" />
+                          <span>إغلاق الغرفة</span>
+                        </span>
+                      </button>
+                    )}
                 </motion.div>
               )}
             </AnimatePresence>

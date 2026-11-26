@@ -78,6 +78,7 @@ interface RoomsViewProps {
   onOpenCreateTextRoom?: () => void;
   onOpenCreateVoiceRoom?: () => void;
   onRequestJoinRoom?: (room: Room) => void;
+  onCloseRoom?: (roomId: string) => void;
 }
 
 function formatRelativeArabicTime(ts: number): string {
@@ -681,6 +682,7 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
   onOpenCreateTextRoom,
   onOpenCreateVoiceRoom,
   onRequestJoinRoom,
+  onCloseRoom,
 }) => {
   const [forumPosts, setForumPosts] = useState<ForumPost[]>([]);
   const [forumLimit, setForumLimit] = useState<number>(20);
@@ -1434,19 +1436,40 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
                   </span>
 
                   <div className="flex items-center gap-1.5 shrink-0">
-                    {onRequestJoinRoom && room.ownerId !== currentUser.id && room.hostId !== currentUser.id && (
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onRequestJoinRoom(room);
-                        }}
-                        className="px-2.5 py-1.5 rounded-xl bg-black/35 hover:bg-black/50 border border-white/30 text-white font-black text-[10.5px] shrink-0 transition cursor-pointer"
-                        title="إرسال طلب انضمام لمالك الغرفة"
-                      >
-                        طلب انضمام
-                      </button>
-                    )}
+                    {onCloseRoom &&
+                      room.id !== 'room_egypt' &&
+                      room.id !== 'room_egypt2' &&
+                      (room.ownerId === currentUser.id || room.hostId === currentUser.id) && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onCloseRoom(room.id);
+                          }}
+                          className="px-2.5 py-1.5 rounded-xl bg-rose-600/90 hover:bg-rose-700 border border-rose-200/50 text-white font-black text-[10.5px] flex items-center gap-1 shrink-0 transition cursor-pointer shadow-xs"
+                          title="إغلاق الغرفة وحذفها"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                          <span>إغلاق الغرفة</span>
+                        </button>
+                      )}
+
+                    {onRequestJoinRoom &&
+                      Boolean(room.isPrivate) &&
+                      room.ownerId !== currentUser.id &&
+                      room.hostId !== currentUser.id && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onRequestJoinRoom(room);
+                          }}
+                          className="px-2.5 py-1.5 rounded-xl bg-black/35 hover:bg-black/50 border border-white/30 text-white font-black text-[10.5px] shrink-0 transition cursor-pointer"
+                          title="إرسال طلب انضمام لمالك الغرفة"
+                        >
+                          طلب انضمام
+                        </button>
+                      )}
 
                     <button
                       type="button"
@@ -1530,44 +1553,57 @@ export const RoomsView: React.FC<RoomsViewProps> = React.memo(({
         
         {/* Main Column: منتدى التعارف والتواصل الاجتماعي */}
         <div className="lg:col-span-8 space-y-3">
-          {/* Forum Header & Composer with Distinct Pink / Rose Theme */}
-          <div className="bg-rose-50/45 dark:bg-slate-900 border border-rose-200 dark:border-rose-900/60 rounded-2xl overflow-hidden shadow-sm">
-            {/* Compact Distinct Pink/Rose Forum Cover Banner */}
-            <div className="relative overflow-hidden bg-gradient-to-br from-[#9d174d] via-[#be185d] to-[#db2777] px-3.5 py-3 text-white border-b border-rose-300/40">
+          {/* Forum Header & Composer with Rich Full Pink / Rose Cover Theme */}
+          <div className="bg-gradient-to-b from-rose-100/85 via-pink-50/70 to-white dark:from-[#2b1020] dark:via-[#1e0f1c] dark:to-slate-900 border border-rose-300/80 dark:border-rose-800/70 rounded-2xl overflow-hidden shadow-md">
+            {/* Rich Full-Color Pink/Rose Forum Cover Banner Matching Room Cards */}
+            <div
+              style={{
+                background: 'linear-gradient(135deg, #831843 0%, #be185d 45%, #db2777 80%, #ec4899 100%)',
+              }}
+              className="relative overflow-hidden bg-gradient-to-br from-[#831843] via-[#be185d] to-[#ec4899] px-3.5 py-3.5 text-white border-b border-rose-300/40"
+            >
               <div
                 aria-hidden="true"
-                className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.22),transparent_55%)] pointer-events-none"
+                className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.28),transparent_55%)] pointer-events-none"
               />
-              <div className="relative z-10 flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <h1 className="text-xs sm:text-sm font-black text-white flex items-center gap-1.5 drop-shadow-xs">
-                    <Sparkles className="w-4 h-4 text-rose-100" />
-                    <span>منتدى التعارف والتواصل الاجتماعي الراقي</span>
-                  </h1>
-                  <p className="text-[10.5px] text-rose-100/95 mt-0.5">
-                    شارك خاطرة تعارف، صورة لطيفة، أو ابدأ محادثة خاصة فورية 🌸
-                  </p>
+              <div
+                aria-hidden="true"
+                className="absolute inset-0 bg-gradient-to-t from-black/35 via-transparent to-white/10 pointer-events-none"
+              />
+              <div className="relative z-10 flex flex-wrap items-center justify-between gap-2.5">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-white/20 backdrop-blur-sm border border-white/40 flex items-center justify-center shrink-0 shadow-sm">
+                    <Sparkles className="w-4 h-4 sm:w-5 sm:h-5 text-white" />
+                  </div>
+                  <div className="min-w-0">
+                    <h1 className="text-xs sm:text-sm font-black text-white flex items-center gap-1.5 drop-shadow-xs">
+                      <span>منتدى التعارف والتواصل الاجتماعي الراقي</span>
+                    </h1>
+                    <p className="text-[10.5px] text-rose-50/95 mt-0.5 font-medium">
+                      شارك خاطرة تعارف، صورة لطيفة، أو ابدأ محادثة خاصة فورية 🌸
+                    </p>
+                  </div>
                 </div>
                 <div className="flex items-center gap-1.5">
                   {unreadForumNotifsCount > 0 && (
                     <button
                       type="button"
                       onClick={() => onOpenNotifications?.()}
-                      className="px-2 py-0.5 rounded-full bg-white text-[#be185d] hover:bg-rose-50 text-[10px] font-black flex items-center gap-1 shadow-xs tabular-nums cursor-pointer transition"
+                      className="px-2.5 py-1 rounded-full bg-white text-[#be185d] hover:bg-rose-50 text-[10px] font-black flex items-center gap-1 shadow-xs tabular-nums cursor-pointer transition"
                       title="عرض إشعارات المنتدى غير المقروءة"
                     >
                       <span>🔔</span>
                       <span>{unreadForumNotifsCount > 99 ? '99+' : unreadForumNotifsCount}</span>
                     </button>
                   )}
-                  <span className="px-2.5 py-0.5 rounded-full bg-black/25 border border-white/30 text-white text-[10px] font-black">
+                  <span className="px-2.5 py-1 rounded-full bg-black/30 backdrop-blur-xs border border-white/30 text-white text-[10px] font-black">
                     {filteredPosts.length} مشاركة
                   </span>
                 </div>
               </div>
             </div>
 
-            <div className="p-3 sm:p-3.5 space-y-2.5 bg-white/85 dark:bg-slate-900">
+            <div className="p-3 sm:p-3.5 space-y-2.5 bg-gradient-to-b from-rose-50/75 to-white/95 dark:from-rose-950/20 dark:to-slate-900">
               {/* Hidden image input for forum posts */}
               <input
                 ref={forumImageInputRef}
