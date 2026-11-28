@@ -88,9 +88,11 @@ import {
   submitUserReport,
   adminUpdateUser,
   sendFriendRequest,
-  uploadPrivateChatMedia
+  uploadPrivateChatMedia,
+  sendRoomInvitation
 } from '../services/firebase';
 import { realtimeSocket } from '../services/realtimeSocket';
+import { formatArabicTime } from '../utils/dateFormat';
 import { sounds } from '../utils/soundEffects';
 import { filterInappropriateText } from '../services/contentFilter';
 
@@ -122,9 +124,10 @@ interface RoomActiveViewProps {
   hasMoreOlderMessages?: boolean;
   isLoadingOlderMessages?: boolean;
   onCloseRoom?: (roomId: string) => void;
+  onlineUsersList?: User[];
 }
 
-const PUBLIC_REACTION_EMOJIS = ['❤️', '👍', '😂', '🔥'] as const;
+const PUBLIC_REACTION_EMOJIS = ['❤️', '👍', '😂'] as const;
 
 type HighlightPaletteKey = 'sky' | 'amber' | 'rose' | 'emerald';
 
@@ -356,13 +359,7 @@ const RoomPublicMessageRow = React.memo<RoomPublicMessageRowProps>(({
   const localLastTapRef = useRef<number>(0);
 
   const senderStyle = getSenderChatStyle(msg.senderId, msg.senderRole, msg.senderVipBadge, isDarkRoomBg);
-  const isVipSender = senderStyle.isPrivileged;
   const msgTextOutlineClass = isDarkRoomBg ? 'chat-text-outline-strong-dark' : 'chat-text-outline-strong';
-  const nameHighlightClass = isVipSender
-    ? isDarkRoomBg
-      ? senderStyle.rankMeta.namePillDarkClass
-      : senderStyle.rankMeta.namePillClass
-    : '';
 
   const highlightOpt = msg.isHighlighted
     ? HIGHLIGHT_OPTIONS.find((h) => h.key === (msg.highlightColor || 'sky')) || HIGHLIGHT_OPTIONS[0]
@@ -472,16 +469,13 @@ const RoomPublicMessageRow = React.memo<RoomPublicMessageRowProps>(({
         {msg.type === 'image' && (msg.mediaUrl || msg.imageUrl) ? (
           <div className="space-y-1.5">
             <div className="flex items-center gap-1 text-[13px] font-black">
-              {isVipSender && senderStyle.badge && (
-                <span className="ml-0.5 text-xs align-middle select-none">{senderStyle.badge}</span>
-              )}
               <button
                 type="button"
                 onClick={(e) => {
                   e.stopPropagation();
                   onOpenUserProfile(msg, e);
                 }}
-                className={`font-black cursor-pointer hover:underline rounded inline ${senderStyle.name} ${nameHighlightClass}`}
+                className={`font-black cursor-pointer hover:underline rounded inline ${senderStyle.name}`}
               >
                 {msg.senderName}
               </button>
@@ -502,16 +496,13 @@ const RoomPublicMessageRow = React.memo<RoomPublicMessageRowProps>(({
           msg.stickerUrl ? (
             <div className="space-y-1 py-0.5">
               <div className="flex items-center flex-wrap gap-1">
-                {isVipSender && senderStyle.badge && (
-                  <span className="ml-0.5 text-xs align-middle select-none">{senderStyle.badge}</span>
-                )}
                 <button
                   type="button"
                   onClick={(e) => {
                     e.stopPropagation();
                     onOpenUserProfile(msg, e);
                   }}
-                  className={`text-[13px] sm:text-sm font-black cursor-pointer hover:underline rounded ${senderStyle.name} ${nameHighlightClass}`}
+                  className={`text-[13px] sm:text-sm font-black cursor-pointer hover:underline rounded ${senderStyle.name}`}
                 >
                   {msg.senderName}
                 </button>
@@ -519,7 +510,7 @@ const RoomPublicMessageRow = React.memo<RoomPublicMessageRowProps>(({
               </div>
               <img
                 src={msg.stickerUrl}
-                alt={msg.stickerLabel || 'ملصق متحرك'}
+                alt=""
                 className="w-16 h-16 sm:w-20 sm:h-20 object-contain rounded-xl drop-shadow-sm select-none"
                 loading="lazy"
               />
@@ -528,35 +519,29 @@ const RoomPublicMessageRow = React.memo<RoomPublicMessageRowProps>(({
             <p className={`text-[13.5px] sm:text-sm leading-relaxed font-bold whitespace-pre-wrap break-words ${
               isDarkRoomBg ? 'text-white chat-text-outline-dark' : 'text-slate-950 chat-text-outline-light'
             }`}>
-              {isVipSender && senderStyle.badge && (
-                <span className="ml-0.5 text-xs align-middle select-none">{senderStyle.badge}</span>
-              )}
               <button
                 type="button"
                 onClick={(e) => {
                   e.stopPropagation();
                   onOpenUserProfile(msg, e);
                 }}
-                className={`font-black cursor-pointer hover:underline rounded inline ${senderStyle.name} ${nameHighlightClass}`}
+                className={`font-black cursor-pointer hover:underline rounded inline ${senderStyle.name}`}
               >
                 {msg.senderName}
               </button>
               <span className={`font-black mx-1 ${isDarkRoomBg ? 'text-slate-100 chat-text-outline-dark' : 'text-slate-950 chat-text-outline-light'}`}>:</span>
-              <InlineRichText text={`${msg.stickerEmoji || msg.content || '✨'}${msg.stickerLabel ? ` ${msg.stickerLabel}` : ''}`} />
+              <InlineRichText text={msg.stickerEmoji || msg.content || '✨'} />
             </p>
           )
         ) : msg.type === 'voice' ? (
           <div className="flex items-center flex-wrap gap-1.5 py-0.5">
-            {isVipSender && senderStyle.badge && (
-              <span className="ml-0.5 text-xs align-middle select-none">{senderStyle.badge}</span>
-            )}
             <button
               type="button"
               onClick={(e) => {
                 e.stopPropagation();
                 onOpenUserProfile(msg, e);
               }}
-              className={`text-[13px] sm:text-sm font-black cursor-pointer hover:underline rounded ${senderStyle.name} ${nameHighlightClass}`}
+              className={`text-[13px] sm:text-sm font-black cursor-pointer hover:underline rounded ${senderStyle.name}`}
             >
               {msg.senderName}
             </button>
@@ -600,17 +585,13 @@ const RoomPublicMessageRow = React.memo<RoomPublicMessageRowProps>(({
           <p className={`text-[13.5px] sm:text-sm leading-relaxed font-bold whitespace-pre-wrap break-words ${
             isDarkRoomBg ? 'text-white chat-text-outline-dark' : 'text-slate-950 chat-text-outline-light'
           }`}>
-            {isVipSender && senderStyle.badge && (
-              <span className="ml-0.5 text-xs align-middle select-none">{senderStyle.badge}</span>
-            )}
-
             <button
               type="button"
               onClick={(e) => {
                 e.stopPropagation();
                 onOpenUserProfile(msg, e);
               }}
-              className={`font-black cursor-pointer hover:underline rounded inline ${senderStyle.name} ${nameHighlightClass}`}
+              className={`font-black cursor-pointer hover:underline rounded inline ${senderStyle.name}`}
             >
               {msg.senderName}
             </button>
@@ -708,7 +689,7 @@ const RoomPublicMessageRow = React.memo<RoomPublicMessageRowProps>(({
                 ? 'text-slate-100 chat-text-outline-dark'
                 : 'text-slate-800 chat-text-outline-light'
             }`}>
-              {new Date(msg.timestamp).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })}
+              {formatArabicTime(msg.timestamp)}
             </span>
 
             {isMe && (
@@ -788,6 +769,7 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
   hasMoreOlderMessages = false,
   isLoadingOlderMessages = false,
   onCloseRoom,
+  onlineUsersList = [],
 }) => {
   // Chat Wallpapers Modal State (Select & Purchase) + Image Upload & Lightbox
   const [isWallpapersModalOpen, setIsWallpapersModalOpen] = useState(false);
@@ -850,20 +832,313 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
   const [isHandRaised, setIsHandRaised] = useState(false);
   const isLiveAudioRoom = room.roomType === 'live_audio' || room.category === 'live_audio';
   const lastSentSpamRef = useRef<{ text: string; ts: number }>({ text: '', ts: 0 });
+  const [isInviteModalOpen, setIsInviteModalOpen] = useState(false);
+  const [inviteSearch, setInviteSearch] = useState('');
+  const [invitedUserIds, setInvitedUserIds] = useState<Record<string, boolean>>({});
+  const [isCloseRoomConfirmOpen, setIsCloseRoomConfirmOpen] = useState(false);
+  const [liveSpeakers, setLiveSpeakers] = useState<SpeakerSeat[]>(() =>
+    room.speakers && room.speakers.length > 0
+      ? room.speakers
+      : Array.from({ length: 6 }, (_, i) => ({ seatId: i + 1, user: null, isMuted: false, isTalking: false, isVideo: false }))
+  );
+  const [speakingUserIds, setSpeakingUserIds] = useState<Record<string, boolean>>({});
+  const liveLocalStreamRef = useRef<MediaStream | null>(null);
+  const livePeersRef = useRef<Map<string, RTCPeerConnection>>(new Map());
+  const liveAudioElsRef = useRef<Map<string, HTMLAudioElement>>(new Map());
+  const liveAudioCtxRef = useRef<AudioContext | null>(null);
+  const liveAnalyserTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const lastSpeakingEmitRef = useRef<boolean>(false);
 
   useEffect(() => {
     setMuteJoinNotices(Boolean(currentUser.muteJoinNotices));
   }, [currentUser.muteJoinNotices]);
 
-  // Subscribe to Live Audio Stage raised hands
+  useEffect(() => {
+    if (room.speakers && room.speakers.length > 0) {
+      setLiveSpeakers(room.speakers);
+    }
+  }, [room.id, room.speakers]);
+
+  const stopLocalMicStageResources = useCallback(() => {
+    if (liveAnalyserTimerRef.current) {
+      clearInterval(liveAnalyserTimerRef.current);
+      liveAnalyserTimerRef.current = null;
+    }
+    if (liveAudioCtxRef.current) {
+      liveAudioCtxRef.current.close().catch(() => {});
+      liveAudioCtxRef.current = null;
+    }
+    if (liveLocalStreamRef.current) {
+      liveLocalStreamRef.current.getTracks().forEach((t) => t.stop());
+      liveLocalStreamRef.current = null;
+    }
+    if (lastSpeakingEmitRef.current) {
+      lastSpeakingEmitRef.current = false;
+      realtimeSocket.sendLiveAudioSpeaking(room.id, currentUser.id, false);
+    }
+    setSpeakingUserIds((prev) => ({ ...prev, [currentUser.id]: false }));
+  }, [room.id, currentUser.id]);
+
+  const cleanupAllLiveAudioStage = useCallback(() => {
+    stopLocalMicStageResources();
+    livePeersRef.current.forEach((pc) => {
+      try {
+        pc.close();
+      } catch {}
+    });
+    livePeersRef.current.clear();
+    liveAudioElsRef.current.forEach((el) => {
+      try {
+        el.pause();
+        el.srcObject = null;
+      } catch {}
+    });
+    liveAudioElsRef.current.clear();
+  }, [stopLocalMicStageResources]);
+
+  const createLiveAudioPeer = useCallback(
+    (peerId: string) => {
+      const existing = livePeersRef.current.get(peerId);
+      if (existing && existing.connectionState !== 'closed') return existing;
+      const pc = new RTCPeerConnection({
+        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
+      });
+      if (liveLocalStreamRef.current) {
+        liveLocalStreamRef.current.getTracks().forEach((track) => {
+          pc.addTrack(track, liveLocalStreamRef.current!);
+        });
+      }
+      pc.onicecandidate = (ev) => {
+        if (ev.candidate) {
+          realtimeSocket.sendLiveAudioSignal(room.id, peerId, {
+            kind: 'ice',
+            fromUserId: currentUser.id,
+            candidate: ev.candidate,
+          });
+        }
+      };
+      pc.ontrack = (ev) => {
+        const remoteStream = ev.streams[0] || new MediaStream([ev.track]);
+        let audioEl = liveAudioElsRef.current.get(peerId);
+        if (!audioEl) {
+          audioEl = document.createElement('audio');
+          audioEl.autoplay = true;
+          audioEl.setAttribute('playsinline', 'true');
+          liveAudioElsRef.current.set(peerId, audioEl);
+        }
+        audioEl.srcObject = remoteStream;
+        audioEl.play().catch(() => {});
+      };
+      livePeersRef.current.set(peerId, pc);
+      return pc;
+    },
+    [room.id, currentUser.id]
+  );
+
+  // Subscribe to Live Audio Stage raised hands, speakers, speaking pulse, and WebRTC signaling
   useEffect(() => {
     if (!isLiveAudioRoom) return;
-    const unsub = realtimeSocket.subscribeToLiveAudioStage(room.id, (ids) => {
+    const unsubHands = realtimeSocket.subscribeToLiveAudioStage(room.id, (ids) => {
       setRaisedHandUserIds(ids || []);
       setIsHandRaised((ids || []).includes(currentUser.id));
     });
-    return () => unsub();
-  }, [room.id, isLiveAudioRoom, currentUser.id]);
+    const unsubSpeakers = realtimeSocket.subscribeToLiveAudioSpeakers(room.id, (nextSpeakers) => {
+      if (Array.isArray(nextSpeakers) && nextSpeakers.length > 0) {
+        setLiveSpeakers(nextSpeakers);
+      }
+    });
+    const unsubSpeaking = realtimeSocket.subscribeToLiveAudioSpeaking(room.id, ({ userId, speaking }) => {
+      if (!userId) return;
+      setSpeakingUserIds((prev) => ({ ...prev, [userId]: Boolean(speaking) }));
+    });
+    const unsubSignals = realtimeSocket.subscribeToLiveAudioSignal(room.id, async (signal) => {
+      if (!signal || !signal.fromUserId || signal.fromUserId === currentUser.id) return;
+      const fromId = signal.fromUserId as string;
+      try {
+        if (signal.kind === 'speaker-ready') {
+          realtimeSocket.sendLiveAudioSignal(room.id, fromId, {
+            kind: 'listener-hello',
+            fromUserId: currentUser.id,
+          });
+        } else if (signal.kind === 'listener-hello' && liveLocalStreamRef.current) {
+          const oldPc = livePeersRef.current.get(fromId);
+          if (oldPc) {
+            try { oldPc.close(); } catch {}
+            livePeersRef.current.delete(fromId);
+          }
+          const pc = createLiveAudioPeer(fromId);
+          const offer = await pc.createOffer();
+          await pc.setLocalDescription(offer);
+          realtimeSocket.sendLiveAudioSignal(room.id, fromId, {
+            kind: 'offer',
+            fromUserId: currentUser.id,
+            sdp: offer,
+          });
+        } else if (signal.kind === 'offer' && signal.sdp) {
+          const pc = createLiveAudioPeer(fromId);
+          await pc.setRemoteDescription(new RTCSessionDescription(signal.sdp));
+          const answer = await pc.createAnswer();
+          await pc.setLocalDescription(answer);
+          realtimeSocket.sendLiveAudioSignal(room.id, fromId, {
+            kind: 'answer',
+            fromUserId: currentUser.id,
+            sdp: answer,
+          });
+        } else if (signal.kind === 'answer' && signal.sdp) {
+          const pc = livePeersRef.current.get(fromId);
+          if (pc) {
+            await pc.setRemoteDescription(new RTCSessionDescription(signal.sdp));
+          }
+        } else if (signal.kind === 'ice' && signal.candidate) {
+          const pc = livePeersRef.current.get(fromId);
+          if (pc) {
+            await pc.addIceCandidate(new RTCIceCandidate(signal.candidate));
+          }
+        }
+      } catch {}
+    });
+
+    // Greet any active speakers already on stage so listeners receive their live audio
+    (room.speakers || []).forEach((s) => {
+      if (s.user?.id && s.user.id !== currentUser.id) {
+        realtimeSocket.sendLiveAudioSignal(room.id, s.user.id, {
+          kind: 'listener-hello',
+          fromUserId: currentUser.id,
+        });
+      }
+    });
+
+    return () => {
+      unsubHands();
+      unsubSpeakers();
+      unsubSpeaking();
+      unsubSignals();
+      cleanupAllLiveAudioStage();
+    };
+  }, [room.id, isLiveAudioRoom, currentUser.id, createLiveAudioPeer, cleanupAllLiveAudioStage]);
+
+  const myLiveSeat = useMemo(
+    () => liveSpeakers.find((s) => s.user?.id === currentUser.id) || null,
+    [liveSpeakers, currentUser.id]
+  );
+
+  // Sync local mic mute state & release mic if removed from seat by moderator
+  useEffect(() => {
+    if (!isLiveAudioRoom) return;
+    if (!myLiveSeat && liveLocalStreamRef.current) {
+      stopLocalMicStageResources();
+    } else if (myLiveSeat && liveLocalStreamRef.current) {
+      liveLocalStreamRef.current.getAudioTracks().forEach((track) => {
+        track.enabled = !myLiveSeat.isMuted;
+      });
+      if (myLiveSeat.isMuted && lastSpeakingEmitRef.current) {
+        lastSpeakingEmitRef.current = false;
+        realtimeSocket.sendLiveAudioSpeaking(room.id, currentUser.id, false);
+        setSpeakingUserIds((prev) => ({ ...prev, [currentUser.id]: false }));
+      }
+    }
+  }, [isLiveAudioRoom, myLiveSeat, room.id, currentUser.id, stopLocalMicStageResources]);
+
+  const handleClaimSpeakerSeat = async (seatId: number) => {
+    if (!isLiveAudioRoom) return;
+    if (liveSpeakers.some((s) => s.user?.id === currentUser.id)) {
+      toast.info('أنت متواجد بالفعل على مقعد التحدث 🎙️');
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      });
+      liveLocalStreamRef.current = stream;
+
+      // Real speaking volume detection via Web Audio AnalyserNode
+      const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      if (AudioCtx) {
+        const ctx = new AudioCtx();
+        liveAudioCtxRef.current = ctx;
+        const src = ctx.createMediaStreamSource(stream);
+        const analyser = ctx.createAnalyser();
+        analyser.fftSize = 256;
+        src.connect(analyser);
+        const bins = new Uint8Array(analyser.frequencyBinCount);
+        liveAnalyserTimerRef.current = setInterval(() => {
+          if (!liveLocalStreamRef.current) return;
+          const track = liveLocalStreamRef.current.getAudioTracks()[0];
+          const isMutedTrack = !track || !track.enabled;
+          let speakingNow = false;
+          if (!isMutedTrack) {
+            analyser.getByteFrequencyData(bins);
+            const avg = bins.reduce((a, b) => a + b, 0) / Math.max(1, bins.length);
+            speakingNow = avg > 14;
+          }
+          if (speakingNow !== lastSpeakingEmitRef.current) {
+            lastSpeakingEmitRef.current = speakingNow;
+            realtimeSocket.sendLiveAudioSpeaking(room.id, currentUser.id, speakingNow);
+            setSpeakingUserIds((prev) => ({ ...prev, [currentUser.id]: speakingNow }));
+          }
+        }, 180);
+      }
+
+      const nextSpeakers = liveSpeakers.map((s) =>
+        s.seatId === seatId
+          ? { ...s, user: currentUser, isMuted: false }
+          : s.user?.id === currentUser.id
+          ? { ...s, user: null, isMuted: false }
+          : s
+      );
+      setLiveSpeakers(nextSpeakers);
+      onUpdateSpeakers(nextSpeakers);
+      realtimeSocket.sendLiveAudioSpeakersUpdate(room.id, nextSpeakers);
+      if (isHandRaised) {
+        setIsHandRaised(false);
+        realtimeSocket.sendLiveAudioRaiseHand(room.id, currentUser.id, false);
+      }
+      realtimeSocket.sendLiveAudioSignal(room.id, undefined, {
+        kind: 'speaker-ready',
+        fromUserId: currentUser.id,
+      });
+      sounds.playMicToggle(true);
+      toast.success('تم فتح المايك وصعودك للمنصة الصوتية 🎙️');
+    } catch {
+      toast.error('تعذر الوصول إلى الميكروفون — يرجى السماح بصلاحية الصوت أولاً 🎙️');
+    }
+  };
+
+  const handleLeaveSpeakerSeat = () => {
+    stopLocalMicStageResources();
+    const nextSpeakers = liveSpeakers.map((s) =>
+      s.user?.id === currentUser.id ? { ...s, user: null, isMuted: false } : s
+    );
+    setLiveSpeakers(nextSpeakers);
+    onUpdateSpeakers(nextSpeakers);
+    realtimeSocket.sendLiveAudioSpeakersUpdate(room.id, nextSpeakers);
+    sounds.playMicToggle(false);
+    toast.info('تم النزول من مقعد التحدث');
+  };
+
+  const handleToggleSpeakerMute = (seat: SpeakerSeat) => {
+    const canToggle = seat.user?.id === currentUser.id || isModerator;
+    if (!canToggle || !seat.user) return;
+    const nextMuted = !seat.isMuted;
+    const nextSpeakers = liveSpeakers.map((s) =>
+      s.seatId === seat.seatId ? { ...s, isMuted: nextMuted } : s
+    );
+    setLiveSpeakers(nextSpeakers);
+    onUpdateSpeakers(nextSpeakers);
+    realtimeSocket.sendLiveAudioSpeakersUpdate(room.id, nextSpeakers);
+    sounds.playMicToggle(!nextMuted);
+  };
+
+  const handleKickSpeakerFromSeat = (seat: SpeakerSeat) => {
+    if (!isModerator || !seat.user) return;
+    const nextSpeakers = liveSpeakers.map((s) =>
+      s.seatId === seat.seatId ? { ...s, user: null, isMuted: false } : s
+    );
+    setLiveSpeakers(nextSpeakers);
+    onUpdateSpeakers(nextSpeakers);
+    realtimeSocket.sendLiveAudioSpeakersUpdate(room.id, nextSpeakers);
+    toast.info(`تم إنزال ${seat.user.name} من مقعد المايك`);
+  };
 
   // Cleanup active voice playback & recorder streams on unmount
   useEffect(() => {
@@ -1099,7 +1374,15 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
   const audioPlayerRef = useRef<HTMLAudioElement | null>(null);
 
   // Moderator, Pin & Custom Room Background state
-  const isModerator = room.ownerId === currentUser.id || room.moderators?.includes(currentUser.id) || currentUser.role === 'owner' || currentUser.role === 'admin' || currentUser.role === 'super_admin';
+  const isStrictOwner = isUserAdminOrOwner(currentUser);
+  const isModerator =
+    isStrictOwner ||
+    room.ownerId === currentUser.id ||
+    room.hostId === currentUser.id ||
+    room.moderators?.includes(currentUser.id) ||
+    currentUser.role === 'owner' ||
+    currentUser.role === 'admin' ||
+    currentUser.role === 'super_admin';
   const [isModeratorPanelOpen, setIsModeratorPanelOpen] = useState(false);
   const [liveRoomBackgroundTheme, setLiveRoomBackgroundTheme] = useState<string>(room.backgroundTheme || 'default');
   const [liveIsLocked, setLiveIsLocked] = useState<boolean>(Boolean(room.isLocked));
@@ -1356,10 +1639,6 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
         userId: joinedUser.id,
         name: joinedUser.name,
         avatar: joinedUser.avatar || '',
-      });
-      toast.info(`انضم ${joinedUser.name} إلى الغرفة ${room.title}`, {
-        id: `room_join_${room.id}_${joinedUser.id}`,
-        duration: 3500,
       });
 
       if (!joinNoticeTimerRef.current && !activeJoinNoticeRef.current) {
@@ -2270,8 +2549,8 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
               <button
                 type="button"
                 onClick={onOpenOnlineUsers}
-                className="px-1.5 py-0.2 rounded bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300 text-[9px] font-black flex items-center gap-1 active:scale-95 shrink-0 tabular-nums cursor-pointer"
-                title="المتصلون الآن"
+                className="px-2 py-0.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300 text-[9.5px] font-black flex items-center gap-1 active:scale-95 shrink-0 tabular-nums cursor-pointer transition-colors"
+                title="عرض قائمة المتصلين الآن"
               >
                 <Users className="w-2.5 h-2.5 text-emerald-600 dark:text-emerald-400" />
                 <span>{Math.max(1, room.activeUsers || 1)} متصل</span>
@@ -2371,12 +2650,12 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
             {onCloseRoom &&
               room.id !== 'room_egypt' &&
               room.id !== 'room_egypt2' &&
-              (room.ownerId === currentUser.id || room.hostId === currentUser.id) && (
+              (isStrictOwner || room.ownerId === currentUser.id || room.hostId === currentUser.id) && (
                 <button
                   type="button"
-                  onClick={() => onCloseRoom(room.id)}
+                  onClick={() => setIsCloseRoomConfirmOpen(true)}
                   className="h-8 px-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-[10.5px] font-black flex items-center justify-center gap-1 active:scale-95 shrink-0 cursor-pointer shadow-xs"
-                  title="إغلاق الغرفة وحذفها"
+                  title="إغلاق الغرفة نهائياً"
                 >
                   <Trash2 className="w-3.5 h-3.5" />
                   <span>إغلاق الغرفة</span>
@@ -2462,24 +2741,25 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
             <span className="hidden sm:inline">مشاركة رابط الغرفة</span>
           </button>
 
-          {/* Primary Quick Buttons (Visible on All Viewports — Short & Clean) */}
+          {/* Invite Members Button */}
           <button
             type="button"
-            onClick={onOpenOnlineUsers}
-            className="h-7.5 w-7.5 sm:h-8 sm:w-auto sm:px-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-[10.5px] font-black flex items-center justify-center gap-1 active:scale-95 shrink-0 cursor-pointer"
-            title="المتصلون والدعوة"
+            onClick={() => setIsInviteModalOpen(true)}
+            className="h-7.5 px-2 sm:h-8 sm:px-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-[10.5px] font-black flex items-center justify-center gap-1 active:scale-95 shrink-0 cursor-pointer"
+            title="دعوة أعضاء للغرفة"
           >
-            <Users className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">المتصلون</span>
+            <Send className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">دعوة</span>
           </button>
 
           <button
             type="button"
             onClick={() => setIsMusicModalOpen(true)}
-            className="h-7.5 w-7.5 sm:h-8 sm:w-auto sm:px-2 rounded-xl text-purple-700 hover:bg-sky-100/70 text-[10.5px] font-black flex items-center justify-center gap-1 active:scale-95 shrink-0 cursor-pointer"
+            className="h-7.5 w-7.5 sm:h-8 sm:w-auto sm:px-2.5 rounded-xl bg-gradient-to-br from-orange-500 via-rose-500 to-fuchsia-600 hover:brightness-110 border border-rose-300/80 text-white text-[10.5px] font-black flex items-center justify-center gap-1 shadow-sm active:scale-95 shrink-0 cursor-pointer"
             title="راديو FM ومكتبة الأغاني"
+            aria-label="راديو FM ومكتبة الأغاني"
           >
-            <Music className="w-3.5 h-3.5" />
+            <Music className="w-3.5 h-3.5 text-white drop-shadow-xs" />
             <span className="hidden md:inline">FM</span>
           </button>
 
@@ -2671,15 +2951,29 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
                     </button>
                   )}
 
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsHeaderToolsOpen(false);
+                      setIsInviteModalOpen(true);
+                    }}
+                    className="w-full px-2.5 py-2 rounded-xl hover:bg-indigo-50 text-indigo-800 text-xs font-black flex items-center justify-between gap-2 cursor-pointer"
+                  >
+                    <span className="flex items-center gap-2">
+                      <UserPlus className="w-4 h-4 text-indigo-600" />
+                      <span>دعوة أعضاء للغرفة</span>
+                    </span>
+                  </button>
+
                   {onCloseRoom &&
                     room.id !== 'room_egypt' &&
                     room.id !== 'room_egypt2' &&
-                    (room.ownerId === currentUser.id || room.hostId === currentUser.id) && (
+                    (isStrictOwner || room.ownerId === currentUser.id || room.hostId === currentUser.id) && (
                       <button
                         type="button"
                         onClick={() => {
                           setIsHeaderToolsOpen(false);
-                          onCloseRoom(room.id);
+                          setIsCloseRoomConfirmOpen(true);
                         }}
                         className="w-full px-2.5 py-2 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-black flex items-center justify-between gap-2 cursor-pointer"
                       >
@@ -2851,7 +3145,7 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
       {/* Live Audio Stage (Only for 'live_audio' Voice & Interactive Rooms) */}
       {isLiveAudioRoom && (
         <div className="bg-gradient-to-l from-indigo-950 via-slate-900 to-purple-950 text-white border-b border-indigo-500/40 px-3 py-2 shrink-0 z-10 space-y-1.5">
-          <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center justify-between gap-2 flex-wrap">
             <div className="flex items-center gap-2 min-w-0">
               <span className="px-2 py-0.5 rounded-md bg-rose-600 text-white text-[10px] font-black flex items-center gap-1 shrink-0">
                 <span className="w-1.5 h-1.5 rounded-full bg-white animate-ping" />
@@ -2865,59 +3159,110 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
               )}
             </div>
 
-            <button
-              type="button"
-              onClick={() => {
-                const next = !isHandRaised;
-                setIsHandRaised(next);
-                realtimeSocket.sendLiveAudioRaiseHand(room.id, currentUser.id, next);
-                toast.info(next ? 'تم رفع يدك لطلب التحدث ✋' : 'تم إنزال يدك');
-              }}
-              className={`px-2.5 py-1 rounded-xl text-[11px] font-black flex items-center gap-1 transition cursor-pointer shrink-0 ${
-                isHandRaised
-                  ? 'bg-amber-400 text-slate-950 shadow-sm'
-                  : 'bg-white/15 hover:bg-white/25 text-white border border-white/20'
-              }`}
-            >
-              <Hand className="w-3.5 h-3.5" />
-              <span>{isHandRaised ? 'تم رفع اليد' : 'رفع اليد'}</span>
-            </button>
+            <div className="flex items-center gap-1.5 shrink-0">
+              {myLiveSeat ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => handleToggleSpeakerMute(myLiveSeat)}
+                    className={`px-2.5 py-1 rounded-xl text-[11px] font-black flex items-center gap-1 transition cursor-pointer ${
+                      myLiveSeat.isMuted
+                        ? 'bg-rose-600 hover:bg-rose-500 text-white'
+                        : 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                    }`}
+                  >
+                    {myLiveSeat.isMuted ? <MicOff className="w-3.5 h-3.5" /> : <Mic className="w-3.5 h-3.5" />}
+                    <span>{myLiveSeat.isMuted ? 'إلغاء الكتم' : 'كتم المايك'}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleLeaveSpeakerSeat}
+                    className="px-2.5 py-1 rounded-xl bg-white/15 hover:bg-rose-600/80 border border-white/20 text-white text-[11px] font-black transition cursor-pointer"
+                  >
+                    مغادرة المايك
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const next = !isHandRaised;
+                    setIsHandRaised(next);
+                    realtimeSocket.sendLiveAudioRaiseHand(room.id, currentUser.id, next);
+                    toast.info(next ? 'تم رفع يدك لطلب التحدث ✋' : 'تم إنزال يدك');
+                  }}
+                  className={`px-2.5 py-1 rounded-xl text-[11px] font-black flex items-center gap-1 transition cursor-pointer shrink-0 ${
+                    isHandRaised
+                      ? 'bg-amber-400 text-slate-950 shadow-sm'
+                      : 'bg-white/15 hover:bg-white/25 text-white border border-white/20'
+                  }`}
+                >
+                  <Hand className="w-3.5 h-3.5" />
+                  <span>{isHandRaised ? 'تم رفع اليد' : 'رفع اليد'}</span>
+                </button>
+              )}
+            </div>
           </div>
 
           <div className="flex items-center gap-2 overflow-x-auto scrollbar-none pb-0.5">
-            {(room.speakers || []).slice(0, 6).map((seat) => (
-              <div
-                key={seat.seatId}
-                className="flex items-center gap-1.5 px-2 py-1 rounded-xl bg-white/10 border border-white/15 shrink-0"
-              >
-                {seat.user ? (
-                  <>
-                    <AvatarWithFrame user={seat.user} size="xs" />
-                    <span className="text-[10.5px] font-bold max-w-[75px] truncate">{seat.user.name}</span>
-                    {isModerator && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const updated = (room.speakers || []).map((s) =>
-                            s.seatId === seat.seatId ? { ...s, isMuted: !s.isMuted } : s
-                          );
-                          onUpdateSpeakers(updated);
-                        }}
-                        className="p-0.5 rounded bg-white/15 hover:bg-white/25 cursor-pointer"
-                        title={seat.isMuted ? 'إلغاء كتم المتحدث' : 'كتم المتحدث'}
-                      >
-                        {seat.isMuted ? <MicOff className="w-3 h-3 text-rose-400" /> : <Mic className="w-3 h-3 text-emerald-400" />}
-                      </button>
-                    )}
-                  </>
-                ) : (
-                  <span className="text-[10px] text-slate-300 flex items-center gap-1">
-                    <Mic className="w-3 h-3 text-indigo-300" />
-                    <span>مقعد #{seat.seatId}</span>
-                  </span>
-                )}
-              </div>
-            ))}
+            {liveSpeakers.slice(0, 6).map((seat) => {
+              const isSeatOccupied = Boolean(seat.user);
+              const isSeatSpeaking = Boolean(seat.user && !seat.isMuted && speakingUserIds[seat.user.id]);
+              return (
+                <div
+                  key={seat.seatId}
+                  className={`flex items-center gap-1.5 px-2.5 py-1 rounded-xl border shrink-0 transition ${
+                    isSeatSpeaking
+                      ? 'bg-emerald-500/25 border-emerald-400 ring-2 ring-emerald-400/50'
+                      : isSeatOccupied
+                      ? 'bg-white/10 border-white/20'
+                      : 'bg-white/5 hover:bg-white/15 border-white/15'
+                  }`}
+                >
+                  {seat.user ? (
+                    <>
+                      <AvatarWithFrame user={seat.user} size="xs" />
+                      <span className="text-[10.5px] font-bold max-w-[75px] truncate">{seat.user.name}</span>
+                      {seat.isMuted ? (
+                        <MicOff className="w-3 h-3 text-rose-400 shrink-0" />
+                      ) : (
+                        <Mic className={`w-3 h-3 shrink-0 ${isSeatSpeaking ? 'text-emerald-300 animate-pulse' : 'text-emerald-400'}`} />
+                      )}
+                      {(isModerator || seat.user.id === currentUser.id) && (
+                        <button
+                          type="button"
+                          onClick={() => handleToggleSpeakerMute(seat)}
+                          className="p-0.5 rounded bg-white/15 hover:bg-white/25 cursor-pointer text-[9px] font-bold"
+                          title={seat.isMuted ? 'إلغاء كتم المتحدث' : 'كتم المتحدث'}
+                        >
+                          {seat.isMuted ? '🔊' : '🔇'}
+                        </button>
+                      )}
+                      {isModerator && seat.user.id !== currentUser.id && (
+                        <button
+                          type="button"
+                          onClick={() => handleKickSpeakerFromSeat(seat)}
+                          className="p-0.5 rounded bg-rose-500/30 hover:bg-rose-500/60 text-white cursor-pointer"
+                          title="إنزال من المايك"
+                        >
+                          <X className="w-2.5 h-2.5" />
+                        </button>
+                      )}
+                    </>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => handleClaimSpeakerSeat(seat.seatId)}
+                      className="text-[10px] text-indigo-100 hover:text-white font-bold flex items-center gap-1 cursor-pointer"
+                      title="انقر للصعود والتحدث بالمايك"
+                    >
+                      <Mic className="w-3 h-3 text-indigo-300" />
+                      <span>مايك #{seat.seatId}</span>
+                    </button>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
@@ -3297,7 +3642,7 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
                         </button>
 
                         <span className="text-[10px] font-medium text-slate-500 tabular-nums shrink-0">
-                          {new Date(msg.timestamp).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })}
+                          {formatArabicTime(msg.timestamp)}
                         </span>
                       </div>
                     </div>
@@ -3628,28 +3973,22 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
               </div>
 
               {activeEmojiTab === 'stickers' ? (
-                <div className="space-y-1.5 max-h-52 overflow-y-auto p-1 scrollbar-none">
-                  <span className="text-[10px] font-black text-slate-500 dark:text-slate-400 block">
-                    اضغط لإرسال ملصق GIF متحرك في الغرفة:
-                  </span>
+                <div className="max-h-52 overflow-y-auto p-1 scrollbar-none">
                   <div className="grid grid-cols-4 gap-2">
                     {ANIMATED_GIF_STICKERS.map((stk) => (
                       <button
                         key={stk.id}
                         type="button"
                         onClick={() => handleSendSticker(stk)}
-                        title={stk.label}
-                        className="p-1.5 rounded-2xl bg-slate-50 dark:bg-slate-800 hover:bg-sky-50 dark:hover:bg-slate-700 border border-slate-200/80 dark:border-slate-700 flex flex-col items-center justify-center gap-1 hover:scale-105 active:scale-95 transition-transform cursor-pointer"
+                        aria-label={stk.label}
+                        className="p-2 rounded-2xl bg-slate-50 dark:bg-slate-800 hover:bg-sky-50 dark:hover:bg-slate-700 border border-slate-200/80 dark:border-slate-700 flex items-center justify-center hover:scale-105 active:scale-95 transition-transform cursor-pointer"
                       >
                         <img
                           src={stk.gifUrl}
-                          alt={stk.label}
-                          className="w-11 h-11 object-contain"
+                          alt=""
+                          className="w-12 h-12 object-contain"
                           loading="lazy"
                         />
-                        <span className="text-[9px] font-bold text-slate-600 dark:text-slate-300 truncate max-w-full">
-                          {stk.label}
-                        </span>
                       </button>
                     ))}
                   </div>
@@ -4223,13 +4562,159 @@ export const RoomActiveView: React.FC<RoomActiveViewProps> = ({
         onClose={() => setIsWallpapersModalOpen(false)}
         currentUser={currentUser}
         onUpdateUser={onUpdateUser}
-        onOpenWallet={onOpenWallet}
+        onOpenWallet={isStrictOwner ? undefined : onOpenWallet}
         isModerator={isModerator}
         roomTitle={room.title}
         activeRoomBackground={effectiveRoomBackground}
         onSelectRoomBackground={handleSelectRoomBackground}
         initialMode={wallpapersModalMode}
       />
+
+      {/* In-Room Invite Members Modal */}
+      {isInviteModalOpen && (
+        <div
+          dir="rtl"
+          onClick={() => setIsInviteModalOpen(false)}
+          className="fixed inset-0 z-[220] bg-slate-950/60 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full sm:max-w-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-t-3xl sm:rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[82vh] text-right"
+          >
+            <div className="p-4 bg-gradient-to-r from-indigo-600 to-sky-600 text-white flex items-center justify-between gap-2 shrink-0">
+              <div className="flex items-center gap-2">
+                <UserPlus className="w-4 h-4" />
+                <div>
+                  <h3 className="text-sm font-black">دعوة أعضاء إلى الغرفة</h3>
+                  <p className="text-[11px] text-indigo-100 truncate max-w-[220px]">{room.title}</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsInviteModalOpen(false)}
+                className="w-8 h-8 rounded-full bg-white/15 hover:bg-white/25 flex items-center justify-center cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-3 border-b border-slate-100 dark:border-slate-800 space-y-2 shrink-0">
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={inviteSearch}
+                  onChange={(e) => setInviteSearch(e.target.value)}
+                  placeholder="ابحث عن عضو متصل لدعوته..."
+                  className="flex-1 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-indigo-500"
+                />
+                <button
+                  type="button"
+                  onClick={handleInviteMembers}
+                  className="px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 text-xs font-black text-slate-700 dark:text-slate-200 flex items-center gap-1 shrink-0 cursor-pointer"
+                >
+                  <Copy className="w-3.5 h-3.5" />
+                  <span>نسخ الرابط</span>
+                </button>
+              </div>
+            </div>
+
+            <div className="p-3 overflow-y-auto flex-1 space-y-2 bg-slate-50/70 dark:bg-slate-950/60">
+              {onlineUsersList
+                .filter((u) => u.id !== currentUser.id && (!inviteSearch.trim() || u.name.toLowerCase().includes(inviteSearch.trim().toLowerCase())))
+                .map((u) => {
+                  const alreadyInvited = Boolean(invitedUserIds[u.id]);
+                  return (
+                    <div
+                      key={u.id}
+                      className="p-2.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2"
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <AvatarWithFrame user={u} size="sm" showOnlineDot />
+                        <div className="min-w-0">
+                          <div className="text-xs font-black text-slate-900 dark:text-white truncate">{u.name}</div>
+                          <div className="text-[10px] text-slate-500 dark:text-slate-400">{u.countryFlag || '🇪🇬'} متصل الآن</div>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        disabled={alreadyInvited}
+                        onClick={async () => {
+                          setInvitedUserIds((prev) => ({ ...prev, [u.id]: true }));
+                          await sendRoomInvitation({
+                            roomId: room.id,
+                            roomTitle: room.title,
+                            isPrivate: Boolean(room.isPrivate),
+                            fromUser: currentUser,
+                            targetUserId: u.id,
+                          });
+                          toast.success(`تم إرسال دعوة الغرفة إلى ${u.name} ✉️`);
+                        }}
+                        className={`px-3 py-1.5 rounded-xl text-[11px] font-black shrink-0 transition cursor-pointer ${
+                          alreadyInvited
+                            ? 'bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-300'
+                            : 'bg-indigo-600 hover:bg-indigo-500 text-white'
+                        }`}
+                      >
+                        {alreadyInvited ? 'تمت الدعوة ✓' : 'دعوة'}
+                      </button>
+                    </div>
+                  );
+                })}
+              {onlineUsersList.filter((u) => u.id !== currentUser.id).length === 0 && (
+                <div className="py-8 text-center text-xs text-slate-500 dark:text-slate-400">
+                  لا يوجد أعضاء آخرون متصلون الآن — يمكنك نسخ رابط الغرفة ومشاركته.
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Close Room Confirmation Modal */}
+      {isCloseRoomConfirmOpen && onCloseRoom && (
+        <div
+          dir="rtl"
+          onClick={() => setIsCloseRoomConfirmOpen(false)}
+          className="fixed inset-0 z-[230] bg-slate-950/60 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-sm bg-white dark:bg-slate-900 border border-rose-200 dark:border-rose-900/60 rounded-3xl p-5 shadow-2xl space-y-4 text-right"
+          >
+            <div className="flex items-center gap-2.5">
+              <div className="w-10 h-10 rounded-2xl bg-rose-100 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 flex items-center justify-center shrink-0">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-sm font-black text-slate-900 dark:text-white">تأكيد إغلاق الغرفة</h3>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate max-w-[220px]">{room.title}</p>
+              </div>
+            </div>
+            <p className="text-xs text-slate-700 dark:text-slate-200 leading-relaxed">
+              هل أنت متأكد من إغلاق هذه الغرفة نهائياً؟ سيتم إخراج جميع المتواجدين وإزالتها من القائمة.
+            </p>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsCloseRoomConfirmOpen(false);
+                  onCloseRoom(room.id);
+                }}
+                className="flex-1 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-black transition cursor-pointer"
+              >
+                نعم، إغلاق الغرفة
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsCloseRoomConfirmOpen(false)}
+                className="px-4 py-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold transition cursor-pointer"
+              >
+                إلغاء
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );

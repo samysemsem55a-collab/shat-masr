@@ -39,6 +39,7 @@ import confetti from 'canvas-confetti';
 import { User, Message, Friend, GiftItem, UnreadSenderSummary } from '../types/chat';
 import { LUXURY_GIFTS } from '../data/seedData';
 import { sounds } from '../utils/soundEffects';
+import { formatArabicTime } from '../utils/dateFormat';
 import { 
   subscribeToDirectMessages, 
   getConversationId,
@@ -1348,7 +1349,7 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                         role: 'عضو',
                         status: peerOnline ? 'online' : 'offline',
                         lastMessage: sender.lastMessage,
-                        lastMessageTime: new Date(sender.lastTimestamp).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' }),
+                        lastMessageTime: formatArabicTime(sender.lastTimestamp, 'الآن'),
                         unreadCount: 0
                       });
                     }}
@@ -1468,7 +1469,7 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                           role: chat.peerRole || 'عضو',
                           status: peerOnline ? 'online' : 'offline',
                           lastMessage: chat.lastMessage || '',
-                          lastMessageTime: chat.lastTimestamp ? new Date(chat.lastTimestamp).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' }) : 'مؤخراً',
+                          lastMessageTime: chat.lastTimestamp ? formatArabicTime(chat.lastTimestamp, 'مؤخراً') : 'مؤخراً',
                           unreadCount: 0
                         });
                       }}
@@ -1520,7 +1521,7 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
 
                       <div className="text-left text-xs space-y-1 flex flex-col items-end shrink-0">
                         <span className="text-[10px] text-slate-500 block">
-                          {chat.lastTimestamp ? new Date(chat.lastTimestamp).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' }) : ''}
+                          {chat.lastTimestamp ? formatArabicTime(chat.lastTimestamp, '') : ''}
                         </span>
                         <div className="flex items-center gap-1.5">
                           {unreadCount > 0 && (
@@ -2005,7 +2006,7 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                               </button>
 
                               <span className="text-[9.5px] text-slate-500 font-medium tabular-nums shrink-0">
-                                {new Date(msg.timestamp).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })}
+                                {formatArabicTime(msg.timestamp)}
                               </span>
                             </div>
                           </div>
@@ -2172,7 +2173,6 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                       ) : (
                         <p className="leading-relaxed whitespace-pre-wrap font-medium text-slate-900 dark:text-slate-100">
                           <InlineRichText text={msg.stickerEmoji || msg.content || '✨'} />
-                          {msg.stickerLabel ? ` ${msg.stickerLabel}` : ''}
                         </p>
                       )
                     ) : msg.type === 'image' && (msg.mediaUrl || msg.imageUrl) ? (
@@ -2256,7 +2256,7 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                     <div className={`flex items-center justify-end gap-1 text-[10px] ${
                       isMe && msg.type !== 'sticker' ? 'text-white/85' : 'text-slate-500'
                     }`}>
-                      <span>{new Date(msg.timestamp).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })}</span>
+                      <span>{formatArabicTime(msg.timestamp)}</span>
                       {isMe && (
                         <MessageStatusIcon
                           status={msg.status}
@@ -2414,28 +2414,22 @@ export const PrivateChatView: React.FC<PrivateChatViewProps> = ({
                     ))}
                   </div>
                 ) : (
-                  <div className="max-h-52 overflow-y-auto space-y-1.5 pr-0.5">
-                    <span className="text-[10px] font-black text-slate-500 dark:text-slate-400 block">
-                      اضغط لإرسال ملصق GIF متحرك فوراً:
-                    </span>
+                  <div className="max-h-52 overflow-y-auto p-1 pr-0.5">
                     <div className="grid grid-cols-4 gap-2">
                       {ANIMATED_GIF_STICKERS.map((stk) => (
                         <button
                           key={stk.id}
                           type="button"
                           onClick={() => handleSendSticker(stk)}
-                          title={stk.label}
-                          className="p-1.5 rounded-2xl bg-slate-50 dark:bg-slate-800 hover:bg-sky-50 dark:hover:bg-slate-700 border border-slate-200/80 dark:border-slate-700 flex flex-col items-center justify-center gap-1 hover:scale-105 active:scale-95 transition-transform cursor-pointer"
+                          aria-label={stk.label}
+                          className="p-2 rounded-2xl bg-slate-50 dark:bg-slate-800 hover:bg-sky-50 dark:hover:bg-slate-700 border border-slate-200/80 dark:border-slate-700 flex items-center justify-center hover:scale-105 active:scale-95 transition-transform cursor-pointer"
                         >
                           <img
                             src={stk.gifUrl}
-                            alt={stk.label}
-                            className="w-11 h-11 object-contain"
+                            alt=""
+                            className="w-12 h-12 object-contain"
                             loading="lazy"
                           />
-                          <span className="text-[9px] font-bold text-slate-600 dark:text-slate-300 truncate max-w-full">
-                            {stk.label}
-                          </span>
                         </button>
                       ))}
                     </div>

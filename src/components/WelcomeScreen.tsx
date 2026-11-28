@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { X, CheckCircle2, User as UserIcon } from 'lucide-react';
 import { User } from '../types/chat';
 import { signInWithGoogle, syncUserProfileToFirebase } from '../services/firebase';
+import { getDefaultAvatarForGender, isLegacyDicebearAvatar } from '../data/seedData';
 import { HumanVerificationWidget } from './HumanVerificationWidget';
 import { toast } from '../utils/appToast';
 import officialBrandIcon from '../assets/images/shat_masr_official_icon.png';
@@ -86,10 +87,10 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
       }
 
       const suffix = memberId.slice(-4).toLowerCase();
-      const genderAvatar =
-        guestGender === 'female'
-          ? `https://api.dicebear.com/9.x/avataaars/svg?seed=fem_${encodeURIComponent(memberId)}`
-          : `https://api.dicebear.com/9.x/avataaars/svg?seed=male_${encodeURIComponent(memberId)}`;
+      const genderAvatar = getDefaultAvatarForGender(
+        guestGender === 'female' ? 'female' : 'male',
+        memberId
+      );
 
       const nextUser: User = {
         ...currentUser,
@@ -99,7 +100,7 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
         gender: guestGender as 'male' | 'female',
         age: parsedGuestAge,
         avatar:
-          currentUser.avatar && !currentUser.avatar.includes('dicebear')
+          currentUser.avatar && !isLegacyDicebearAvatar(currentUser.avatar)
             ? currentUser.avatar
             : genderAvatar,
         bio: `عضو في مجتمع شات مصر • ${parsedGuestAge} سنة 🇪🇬`,

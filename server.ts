@@ -1519,6 +1519,71 @@ wss.on('connection', (ws: WebSocket) => {
           break;
         }
 
+        case 'LIVE_AUDIO_SPEAKERS_UPDATE': {
+          const { roomId, speakers } = payload || {};
+          if (roomId && Array.isArray(speakers)) {
+            broadcastToRoom(roomId, {
+              type: 'LIVE_AUDIO_SPEAKERS_UPDATE',
+              roomId,
+              speakers
+            }, ws);
+          }
+          break;
+        }
+
+        case 'LIVE_AUDIO_SPEAKING': {
+          const { roomId, userId, speaking } = payload || {};
+          if (roomId && userId) {
+            broadcastToRoom(roomId, {
+              type: 'LIVE_AUDIO_SPEAKING',
+              roomId,
+              userId,
+              speaking: Boolean(speaking)
+            }, ws);
+          }
+          break;
+        }
+
+        case 'LIVE_AUDIO_SIGNAL': {
+          const { roomId, targetUserId, signal } = payload || {};
+          if (roomId && signal) {
+            if (targetUserId) {
+              const delivered = sendToUser(targetUserId, {
+                type: 'LIVE_AUDIO_SIGNAL',
+                roomId,
+                signal
+              });
+              if (!delivered) {
+                broadcastToRoom(roomId, {
+                  type: 'LIVE_AUDIO_SIGNAL',
+                  roomId,
+                  signal
+                }, ws);
+              }
+            } else {
+              broadcastToRoom(roomId, {
+                type: 'LIVE_AUDIO_SIGNAL',
+                roomId,
+                signal
+              }, ws);
+            }
+          }
+          break;
+        }
+
+        case 'ROOM_CLOSED': {
+          const { roomId, closedBy } = payload || {};
+          if (roomId) {
+            roomOccupants.delete(roomId);
+            broadcastToAll({
+              type: 'ROOM_CLOSED',
+              roomId,
+              closedBy: closedBy || 'creator'
+            });
+          }
+          break;
+        }
+
         default:
           break;
       }

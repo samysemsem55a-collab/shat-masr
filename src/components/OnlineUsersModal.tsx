@@ -10,7 +10,8 @@ import {
   UserPlus, 
   Check, 
   Star,
-  Award
+  Award,
+  Dices
 } from 'lucide-react';
 import { User } from '../types/chat';
 import { getRankDisplayMeta } from '../utils/userRanks';
@@ -26,6 +27,7 @@ interface OnlineUsersModalProps {
   onSelectUserForProfile: (user: User) => void;
   onInviteToMic: (user: User) => void;
   onOpenPrivateChatWith: (user: User) => void;
+  onInviteToLudo?: (user: User) => void;
   roomTitle?: string;
   roomUsers?: User[];
   allActiveUsers?: User[];
@@ -39,6 +41,7 @@ export const OnlineUsersModal: React.FC<OnlineUsersModalProps> = ({
   onSelectUserForProfile,
   onInviteToMic,
   onOpenPrivateChatWith,
+  onInviteToLudo,
   roomTitle,
   roomUsers = [],
   allActiveUsers = [],
@@ -305,6 +308,19 @@ export const OnlineUsersModal: React.FC<OnlineUsersModalProps> = ({
                           title="دعوة للانضمام إلى الغرفة"
                         >
                           {hasInvited ? <Check className="w-3 h-3" /> : <UserPlus className="w-3 h-3" />}
+                        </button>
+                      )}
+
+                      {onInviteToLudo && (
+                        <button
+                          onClick={() => {
+                            onClose();
+                            onInviteToLudo(user);
+                          }}
+                          className="p-1.5 rounded-lg bg-amber-50 dark:bg-amber-950/50 hover:bg-gradient-to-r hover:from-rose-500 hover:to-amber-500 border border-amber-200 dark:border-amber-800 text-amber-700 dark:text-amber-300 hover:text-white transition-all cursor-pointer"
+                          title="دعوة للعب اللودو 🎲"
+                        >
+                          <Dices className="w-3.5 h-3.5" />
                         </button>
                       )}
 

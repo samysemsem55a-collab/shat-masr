@@ -21,6 +21,7 @@ import { isUserAdminOrOwner } from '../data/seedData';
 import { sounds } from '../utils/soundEffects';
 import { submitPaymentRequest, PendingPaymentOrder } from '../services/firebase';
 import { maskPhone, maskTransactionId } from '../utils/maskData';
+import { formatArabicDateTime } from '../utils/dateFormat';
 
 interface WalletModalProps {
   isOpen: boolean;
@@ -47,10 +48,9 @@ export const WalletModal: React.FC<WalletModalProps> = ({
   
   // Recharge Form State
   const [selectedPackage, setSelectedPackage] = useState<RechargePackage | null>(null);
-  const [paymentMethod, setPaymentMethod] = useState<'instapay' | 'vodafone_cash' | 'fawry'>('instapay');
+  const [paymentMethod, setPaymentMethod] = useState<'instapay' | 'vodafone_cash'>('instapay');
   const [senderPhone, setSenderPhone] = useState<string>('');
   const [senderName, setSenderName] = useState<string>('');
-  const [senderReference, setSenderReference] = useState<string>('');
   const [transferNote, setTransferNote] = useState<string>('');
   const [isSubmittingOrder, setIsSubmittingOrder] = useState<boolean>(false);
   const [formError, setFormError] = useState<string | null>(null);
@@ -67,6 +67,7 @@ export const WalletModal: React.FC<WalletModalProps> = ({
 
   const [lastSubmittedOrder, setLastSubmittedOrder] = useState<PendingPaymentOrder | null>(null);
   const [copiedInstapay, setCopiedInstapay] = useState<boolean>(false);
+  const [copiedWallet, setCopiedWallet] = useState<boolean>(false);
   const [copiedReferral, setCopiedReferral] = useState<boolean>(false);
 
   useEffect(() => {
@@ -79,6 +80,7 @@ export const WalletModal: React.FC<WalletModalProps> = ({
   if (!isOpen || isUserAdminOrOwner(currentUser)) return null;
 
   const INSTAPAY_ADDRESS = 'samyelsayed9@instapay';
+  const WALLET_NUMBER = '01098750740';
 
   const rechargePackages: RechargePackage[] = [
     { coins: 1000, price: '50 ج.م', priceEgp: 50, usd: '$1.05', badge: 'باقة المبتدئ 💫' },
@@ -92,6 +94,13 @@ export const WalletModal: React.FC<WalletModalProps> = ({
     setCopiedInstapay(true);
     sounds.playMessageReceived();
     setTimeout(() => setCopiedInstapay(false), 2500);
+  };
+
+  const handleCopyWallet = () => {
+    navigator.clipboard.writeText(WALLET_NUMBER);
+    setCopiedWallet(true);
+    sounds.playMessageReceived();
+    setTimeout(() => setCopiedWallet(false), 2500);
   };
 
   const handleCopyReferral = () => {
@@ -117,24 +126,16 @@ export const WalletModal: React.FC<WalletModalProps> = ({
 
     const cleanPhone = senderPhone.trim();
     const cleanName = senderName.trim();
-    const cleanRef = senderReference.trim();
 
     if (!cleanPhone) {
       setFormError('يرجى إدخال رقم المحفظة أو الحساب المحول منه.');
-      return;
-    }
-    if (!cleanName) {
-      setFormError('يرجى إدخال اسم صاحب الحساب أو المحول.');
-      return;
-    }
-    if (!cleanRef) {
-      setFormError('يرجى إدخال الرقم المرجعي أو كود العملية لإيصال التحويل.');
       return;
     }
 
     setIsSubmittingOrder(true);
 
     try {
+      const methodLabel = paymentMethod === 'instapay' ? 'InstaPay' : 'محفظة إلكترونية';
       const orderData = {
         userId: currentUser.id,
         userName: currentUser.name,
@@ -144,15 +145,14 @@ export const WalletModal: React.FC<WalletModalProps> = ({
         coinsAmount: selectedPackage.coins,
         paymentMethod: paymentMethod,
         senderAccountOrPhone: cleanPhone,
-        senderName: cleanName,
-        transactionRef: cleanRef,
-        note: `شحن كوينز: ${selectedPackage.coins.toLocaleString()} كوينز (${selectedPackage.priceEgp} ج.م) - المحول: ${cleanName} (${cleanPhone}) - مرجع: ${cleanRef}${transferNote ? ` - ملاحظة: ${transferNote}` : ''}`
+        ...(cleanName ? { senderName: cleanName } : {}),
+        note: `شحن كوينز: ${selectedPackage.coins.toLocaleString()} كوينز (${selectedPackage.priceEgp} ج.م) - ${methodLabel} من ${cleanPhone}${cleanName ? ` (${cleanName})` : ''}${transferNote ? ` - ملاحظة: ${transferNote}` : ''}`
       };
 
       const result = await submitPaymentRequest(orderData);
 
       if (result.duplicate) {
-        setFormError('رقم العملية المرجعي مستخدم من قبل، يرجى التأكد والمحاولة برقم جديد.');
+        setFormError('تم إرسال هذا الطلب للتو، يرجى الانتظار قليلاً.');
         setIsSubmittingOrder(false);
         return;
       }
@@ -161,7 +161,7 @@ export const WalletModal: React.FC<WalletModalProps> = ({
         id: result.orderId,
         userId: currentUser.id,
         userName: currentUser.name,
-        senderName: cleanName,
+        ...(cleanName ? { senderName: cleanName } : {}),
         amount: selectedPackage.priceEgp,
         amountEgp: selectedPackage.priceEgp,
         coins: selectedPackage.coins,
@@ -169,7 +169,6 @@ export const WalletModal: React.FC<WalletModalProps> = ({
         itemName: `${selectedPackage.coins.toLocaleString()} كوينز`,
         paymentMethod: paymentMethod,
         senderAccountOrPhone: cleanPhone,
-        transactionRef: cleanRef,
         note: orderData.note,
         status: 'pending',
         timestamp: Date.now()
@@ -181,7 +180,6 @@ export const WalletModal: React.FC<WalletModalProps> = ({
       setSelectedPackage(null);
       setSenderPhone('');
       setSenderName('');
-      setSenderReference('');
       setTransferNote('');
     } catch (e) {
       console.warn("Payment request submission notice:", e);
@@ -207,7 +205,7 @@ export const WalletModal: React.FC<WalletModalProps> = ({
                 <Sparkles className="w-4 h-4 text-amber-500" />
               </h3>
               <p className="text-[11px] text-slate-600">
-                التحويل المعتمد عبر InstaPay (مراجعة وتأكيد إداري) ⚡
+                التحويل المعتمد عبر InstaPay أو المحفظة الإلكترونية ⚡
               </p>
             </div>
           </div>
@@ -298,12 +296,12 @@ export const WalletModal: React.FC<WalletModalProps> = ({
               </div>
             )}
 
-            {/* Official Payment Account Card (InstaPay Only) */}
+            {/* Official Payment Accounts Card (InstaPay + Electronic Wallet) */}
             <div className="p-3.5 rounded-2xl bg-white border border-purple-200 shadow-sm space-y-3">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-black text-purple-900 flex items-center gap-1.5">
                   <ShieldCheck className="w-4 h-4 text-purple-600" />
-                  <span>عنوان التحويل الرسمي المعتمد للإدارة:</span>
+                  <span>حسابات التحويل الرسمية المعتمدة للإدارة:</span>
                 </span>
                 <span className="text-[10px] text-emerald-700 font-bold bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
                   معتمد 100%
@@ -322,8 +320,9 @@ export const WalletModal: React.FC<WalletModalProps> = ({
                     </span>
                   </div>
                   <button
+                    type="button"
                     onClick={handleCopyInstaPay}
-                    className="m-1.5 px-2.5 py-1 rounded-lg bg-purple-600 hover:bg-purple-500 text-white font-bold text-[10px] flex items-center gap-1 shadow-sm transition-all shrink-0"
+                    className="m-1.5 px-2.5 py-1 rounded-lg bg-purple-600 hover:bg-purple-500 text-white font-bold text-[10px] flex items-center gap-1 shadow-sm transition-all shrink-0 cursor-pointer"
                   >
                     {copiedInstapay ? <Check className="w-3 h-3 text-emerald-300" /> : <Copy className="w-3 h-3" />}
                     <span>{copiedInstapay ? 'تم النسخ' : 'نسخ'}</span>
@@ -331,9 +330,31 @@ export const WalletModal: React.FC<WalletModalProps> = ({
                 </div>
               </div>
 
+              {/* Electronic Wallet Number */}
+              <div className="space-y-1">
+                <span className="text-[10px] text-rose-700 font-bold flex items-center gap-1">
+                  <Wallet className="w-3 h-3" /> محفظة إلكترونية (فودافون / اتصالات / أورنج كاش):
+                </span>
+                <div className="flex items-center justify-between bg-slate-50 border border-rose-300 rounded-xl overflow-hidden">
+                  <div className="px-3 py-1.5 text-left" dir="ltr">
+                    <span className="font-mono text-xs sm:text-sm font-black text-rose-700 select-all tracking-wide">
+                      {WALLET_NUMBER}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleCopyWallet}
+                    className="m-1.5 px-2.5 py-1 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-bold text-[10px] flex items-center gap-1 shadow-sm transition-all shrink-0 cursor-pointer"
+                  >
+                    {copiedWallet ? <Check className="w-3 h-3 text-emerald-300" /> : <Copy className="w-3 h-3" />}
+                    <span>{copiedWallet ? 'تم النسخ' : 'نسخ'}</span>
+                  </button>
+                </div>
+              </div>
+
               <div className="text-[10px] text-slate-600 flex items-center gap-1.5 bg-slate-50 p-2 rounded-lg border border-slate-200">
                 <Clock className="w-3.5 h-3.5 text-amber-500 shrink-0" />
-                <span>تم إلغاء رقم شحن المحفظة؛ يرجى التحويل عبر عنوان InstaPay أعلاه ثم اختيار باقتك وتسجيل تفاصيل التحويل.</span>
+                <span>حوّل عبر InstaPay أو رقم المحفظة أعلاه ثم اختر باقتك وأدخل رقم الهاتف المحوّل منه فقط لتأكيد الشحن.</span>
               </div>
             </div>
 
@@ -395,7 +416,7 @@ export const WalletModal: React.FC<WalletModalProps> = ({
                 {/* Payment Method Selector */}
                 <div className="space-y-1.5">
                   <span className="text-[11px] text-slate-700 font-bold block">اختر وسيلة التحويل:</span>
-                  <div className="grid grid-cols-3 gap-1.5 text-[11px] font-bold">
+                  <div className="grid grid-cols-2 gap-2 text-[11px] font-bold">
                     <button
                       type="button"
                       onClick={() => setPaymentMethod('instapay')}
@@ -405,7 +426,7 @@ export const WalletModal: React.FC<WalletModalProps> = ({
                           : 'bg-purple-50 text-purple-900 border-purple-200 hover:bg-purple-100'
                       }`}
                     >
-                      InstaPay
+                      InstaPay ({INSTAPAY_ADDRESS})
                     </button>
                     <button
                       type="button"
@@ -416,18 +437,7 @@ export const WalletModal: React.FC<WalletModalProps> = ({
                           : 'bg-rose-50 text-rose-900 border-rose-200 hover:bg-rose-100'
                       }`}
                     >
-                      فودافون كاش
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setPaymentMethod('fawry')}
-                      className={`py-2 px-2 rounded-xl border transition cursor-pointer ${
-                        paymentMethod === 'fawry'
-                          ? 'bg-amber-500 text-slate-950 border-amber-500 shadow-xs'
-                          : 'bg-amber-50 text-amber-900 border-amber-200 hover:bg-amber-100'
-                      }`}
-                    >
-                      فوري Fawry
+                      محفظة إلكترونية ({WALLET_NUMBER})
                     </button>
                   </div>
                 </div>
@@ -436,40 +446,26 @@ export const WalletModal: React.FC<WalletModalProps> = ({
                 <div className="space-y-2">
                   <div>
                     <label className="text-[11px] text-slate-700 font-bold block mb-1">
-                      رقم الهاتف أو رقم المحفظة المحول منها <span className="text-rose-500">*</span>:
+                      رقم الهاتف أو الحساب المحول منه <span className="text-rose-500">*</span>:
                     </label>
                     <input
                       type="text"
                       value={senderPhone}
                       onChange={(e) => setSenderPhone(e.target.value)}
-                      placeholder="مثال: 010xxxxxxxx أو 011xxxxxxxx"
+                      placeholder="مثال: 010xxxxxxxx أو معرف InstaPay"
                       className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 focus:outline-none focus:border-amber-500 focus:bg-white"
                     />
                   </div>
 
                   <div>
                     <label className="text-[11px] text-slate-700 font-bold block mb-1">
-                      اسم صاحب الحساب أو المعرف على إنستاباي / المحفظة <span className="text-rose-500">*</span>:
+                      اسم المحوّل (اختياري):
                     </label>
                     <input
                       type="text"
                       value={senderName}
                       onChange={(e) => setSenderName(e.target.value)}
-                      placeholder="اسمك المسجل في تطبيق البنك أو المحفظة"
-                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 focus:outline-none focus:border-amber-500 focus:bg-white"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="text-[11px] text-slate-700 font-bold block mb-1">
-                      الرقم المرجعي للعملية أو كود التحويل <span className="text-rose-500">*</span>:
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      value={senderReference}
-                      onChange={(e) => setSenderReference(e.target.value)}
-                      placeholder="أدخل الرقم المرجعي أو كود العملية من الإيصال"
+                      placeholder="اكتب اسمك إذا رغبت (اختياري)"
                       className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 focus:outline-none focus:border-amber-500 focus:bg-white"
                     />
                   </div>
@@ -581,13 +577,10 @@ export const WalletModal: React.FC<WalletModalProps> = ({
                       {ord.senderAccountOrPhone && (
                         <span>• المحول: <span className="font-mono">{maskPhone(ord.senderAccountOrPhone)}</span></span>
                       )}
-                      {ord.transactionRef && (
-                        <span>• المرجع: <span className="font-mono">{maskTransactionId(ord.transactionRef)}</span></span>
-                      )}
                     </div>
 
                     <div className="text-[9.5px] text-slate-400 font-mono mt-1">
-                      {new Date(ord.timestamp).toLocaleString('ar-EG')}
+                      {formatArabicDateTime(ord.timestamp)}
                     </div>
                   </div>
                 ))}

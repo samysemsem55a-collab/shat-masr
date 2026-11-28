@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { SpeakerSeat, User, Room } from '../types/chat';
 import { sounds } from '../utils/soundEffects';
+import { getDefaultAvatarForGender, isLegacyDicebearAvatar } from '../data/seedData';
 
 interface VoiceStageProps {
   room: Room;
@@ -556,7 +557,11 @@ export const VoiceStage: React.FC<VoiceStageProps> = ({
             <div className="flex items-center gap-2.5 bg-slate-50 p-2.5 rounded-xl border border-slate-200 text-right">
               <div className="w-10 h-10 rounded-full overflow-hidden border border-slate-200 shrink-0">
                 <img 
-                  src={selectedSeatAction.user.avatar || `https://api.dicebear.com/9.x/avataaars/svg?seed=${encodeURIComponent(selectedSeatAction.user.name || selectedSeatAction.user.id)}`} 
+                  src={
+                    selectedSeatAction.user.avatar && !isLegacyDicebearAvatar(selectedSeatAction.user.avatar)
+                      ? selectedSeatAction.user.avatar
+                      : getDefaultAvatarForGender(selectedSeatAction.user.gender || 'male', selectedSeatAction.user.id)
+                  } 
                   alt="" 
                   className="w-full h-full object-cover" 
                 />

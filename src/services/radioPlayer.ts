@@ -33,6 +33,7 @@ class GlobalRadioPlayerService {
   private loadingTimer: ReturnType<typeof setTimeout> | null = null;
   private lastTimeEmitAt = 0;
   private fallbackAttemptedForId: string | null = null;
+  private fallbackHopsCount = 0;
   private stationsVerifiedAt = 0;
   private verifyStationsPromise: Promise<void> | null = null;
 
@@ -89,6 +90,23 @@ class GlobalRadioPlayerService {
       ...this.state,
       unavailableSongIds: [...this.state.unavailableSongIds, songId]
     };
+  }
+
+  private pickHealthyFallbackStation(excludeId: string, preferredCategory?: string): ArabicRadioStation | null {
+    const unavailable = new Set([...this.state.unavailableStationIds, excludeId]);
+    const sameCategory = preferredCategory
+      ? ARABIC_RADIO_STATIONS.find(
+          (s) =>
+            s.category === preferredCategory &&
+            !unavailable.has(s.id) &&
+            Boolean(s.streamUrl && s.streamUrl.startsWith('https://'))
+        )
+      : undefined;
+    if (sameCategory) return sameCategory;
+    const anyHealthy = ARABIC_RADIO_STATIONS.find(
+      (s) => !unavailable.has(s.id) && Boolean(s.streamUrl && s.streamUrl.startsWith('https://'))
+    );
+    return anyHealthy || null;
   }
 
   private applyRealSongDuration(audio: HTMLAudioElement) {
@@ -160,6 +178,7 @@ class GlobalRadioPlayerService {
             ? this.state.unavailableSongIds.filter((id) => id !== currentId)
             : this.state.unavailableSongIds;
 
+        this.fallbackHopsCount = 0;
         this.state = {
           ...this.state,
           isLoading: false,
@@ -214,7 +233,7 @@ class GlobalRadioPlayerService {
         this.clearLoadingTimer();
         if (this.state.activeTab === 'radio') {
           const station = this.state.activeStation;
-          // Try fallback URL ONLY for the SAME station — never switch to another random station
+          // 1. Try fallbackUrl for the same station first
           if (
             station.fallbackUrl &&
             station.fallbackUrl.startsWith('https://') &&
@@ -225,31 +244,18 @@ class GlobalRadioPlayerService {
             this.state = {
               ...this.state,
               isLoading: true,
-              errorMessage: 'تعذر تشغيل القناة — جارٍ تجربة البث البديل لنفس القناة...'
+              errorMessage: 'جارٍ تجربة البث البديل للقناة...'
             };
             this.emit();
             audio.src = station.fallbackUrl;
             audio.play().catch(() => {
-              this.markStationUnavailable(station.id);
-              this.state = {
-                ...this.state,
-                isLoading: false,
-                isPlaying: false,
-                errorMessage: 'تعذر تشغيل القناة'
-              };
-              this.emit();
+              this.tryAutoSwitchToHealthyStation(station);
             });
             return;
           }
 
-          this.markStationUnavailable(station.id);
-          this.state = {
-            ...this.state,
-            isLoading: false,
-            isPlaying: false,
-            errorMessage: 'تعذر تشغيل القناة'
-          };
-          this.emit();
+          // 2. Automatically fall back to another live station (up to 4 hops) so radio keeps playing cleanly
+          this.tryAutoSwitchToHealthyStation(station);
           return;
         }
 
@@ -268,6 +274,42 @@ class GlobalRadioPlayerService {
       this.audio = audio;
     }
     return this.audio;
+  }
+
+  private tryAutoSwitchToHealthyStation(failedStation: ArabicRadioStation) {
+    this.markStationUnavailable(failedStation.id);
+    if (!this.userPausedManually && this.fallbackHopsCount < 4) {
+      const alt = this.pickHealthyFallbackStation(failedStation.id, failedStation.category);
+      if (alt) {
+        this.fallbackHopsCount += 1;
+        this.fallbackAttemptedForId = null;
+        const audio = this.ensureAudio();
+        this.state = {
+          ...this.state,
+          activeTab: 'radio',
+          activeStation: alt,
+          isLoading: true,
+          errorMessage: `تم التحويل تلقائياً إلى ${alt.name}`
+        };
+        this.emit();
+        if (audio) {
+          audio.src = alt.streamUrl;
+          audio.play().catch(() => {
+            this.clearLoadingTimer();
+            this.state = { ...this.state, isLoading: false, isPlaying: false, errorMessage: null };
+            this.emit();
+          });
+          return;
+        }
+      }
+    }
+    this.state = {
+      ...this.state,
+      isLoading: false,
+      isPlaying: false,
+      errorMessage: 'تعذر تشغيل القناة — جرّب محطة أخرى'
+    };
+    this.emit();
   }
 
   private emit() {
@@ -339,8 +381,14 @@ class GlobalRadioPlayerService {
             .filter(([, isUp]) => isUp === false)
             .map(([id]) => id);
           this.stationsVerifiedAt = Date.now();
+          let nextActive = this.state.activeStation;
+          if (!this.state.isPlaying && deadIds.includes(nextActive.id)) {
+            const healthy = ARABIC_RADIO_STATIONS.find((s) => !deadIds.includes(s.id));
+            if (healthy) nextActive = healthy;
+          }
           this.state = {
             ...this.state,
+            activeStation: nextActive,
             unavailableStationIds: deadIds,
             checkingStations: false
           };
@@ -510,30 +558,37 @@ class GlobalRadioPlayerService {
   }
 
   selectStation(station: ArabicRadioStation) {
+    this.userPausedManually = false;
+    this.fallbackAttemptedForId = null;
+    this.fallbackHopsCount = 0;
+
+    let targetStation = station;
     if (
       this.state.unavailableStationIds.includes(station.id) ||
       !station.streamUrl ||
       !station.streamUrl.startsWith('https://')
     ) {
-      this.state = {
-        ...this.state,
-        activeTab: 'radio',
-        activeStation: station,
-        isPlaying: false,
-        isLoading: false,
-        errorMessage: 'غير متاحة — تعذر تشغيل القناة'
-      };
-      this.emit();
-      return;
+      const alt = this.pickHealthyFallbackStation(station.id, station.category);
+      if (!alt) {
+        this.state = {
+          ...this.state,
+          activeTab: 'radio',
+          activeStation: station,
+          isPlaying: false,
+          isLoading: false,
+          errorMessage: 'غير متاحة — تعذر تشغيل القناة'
+        };
+        this.emit();
+        return;
+      }
+      targetStation = alt;
     }
 
-    this.userPausedManually = false;
-    this.fallbackAttemptedForId = null;
     const audio = this.ensureAudio();
     this.state = {
       ...this.state,
       activeTab: 'radio',
-      activeStation: station,
+      activeStation: targetStation,
       isLoading: false,
       errorMessage: null
     };
@@ -541,7 +596,7 @@ class GlobalRadioPlayerService {
     this.scheduleLoadingIndicator();
 
     if (audio) {
-      audio.src = station.streamUrl;
+      audio.src = targetStation.streamUrl;
       audio.play()
         .then(() => {
           this.clearLoadingTimer();
@@ -614,23 +669,29 @@ class GlobalRadioPlayerService {
       return;
     }
 
-    const station = this.state.activeStation;
+    let station = this.state.activeStation;
     if (
       this.state.unavailableStationIds.includes(station.id) ||
       !station.streamUrl ||
       !station.streamUrl.startsWith('https://')
     ) {
-      this.state = {
-        ...this.state,
-        isPlaying: false,
-        isLoading: false,
-        errorMessage: 'تعذر تشغيل القناة'
-      };
-      this.emit();
-      return;
+      const alt = this.pickHealthyFallbackStation(station.id, station.category);
+      if (!alt) {
+        this.state = {
+          ...this.state,
+          isPlaying: false,
+          isLoading: false,
+          errorMessage: 'تعذر تشغيل القناة'
+        };
+        this.emit();
+        return;
+      }
+      station = alt;
+      this.state = { ...this.state, activeStation: station };
     }
 
     this.fallbackAttemptedForId = null;
+    this.fallbackHopsCount = 0;
     if (!silent) this.scheduleLoadingIndicator();
     if (audio.src !== station.streamUrl && audio.src !== station.fallbackUrl) {
       audio.src = station.streamUrl;

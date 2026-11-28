@@ -11,7 +11,8 @@ import {
   Users,
   Swords,
   RotateCcw,
-  Crown
+  Crown,
+  Dices
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { toast } from '../utils/appToast';
@@ -29,6 +30,7 @@ import { getRankDisplayMeta } from '../utils/userRanks';
 import { AvatarWithFrame } from './AvatarWithFrame';
 import { sounds } from '../utils/soundEffects';
 import { VerifiedBadge } from '../utils/verifiedBadge';
+import { LudoGamePanel, ActiveLudoRef } from './LudoGamePanel';
 
 export interface AcceptedExternalChallenge {
   matchId: string;
@@ -45,6 +47,11 @@ interface GamesViewProps {
   onOpenWallet: () => void;
   externalAcceptedChallenge?: AcceptedExternalChallenge | null;
   onConsumeExternalChallenge?: () => void;
+  externalLudoMatchRef?: ActiveLudoRef | null;
+  onConsumeExternalLudoMatchRef?: () => void;
+  externalQuickInviteUser?: User | null;
+  onConsumeExternalQuickInviteUser?: () => void;
+  onOpenLudoFullWindow?: () => void;
 }
 
 type CellValue = 'X' | 'O' | null;
@@ -106,9 +113,20 @@ export const GamesView: React.FC<GamesViewProps> = ({
   onOpenWallet,
   externalAcceptedChallenge = null,
   onConsumeExternalChallenge,
+  externalLudoMatchRef = null,
+  onConsumeExternalLudoMatchRef,
+  externalQuickInviteUser = null,
+  onConsumeExternalQuickInviteUser,
+  onOpenLudoFullWindow,
 }) => {
   const isStrictOwner = isUserAdminOrOwner(currentUser);
-  const [activeSubTab, setActiveSubTab] = useState<'trivia' | 'tictactoe' | 'leaderboard'>('trivia');
+  const [activeSubTab, setActiveSubTab] = useState<'trivia' | 'tictactoe' | 'ludo' | 'leaderboard'>('trivia');
+
+  useEffect(() => {
+    if (externalLudoMatchRef || externalQuickInviteUser) {
+      setActiveSubTab('ludo');
+    }
+  }, [externalLudoMatchRef, externalQuickInviteUser]);
 
   // Keep fresh coins ref for async WS / AI timeouts
   const coinsRef = useRef<number>(currentUser.coins || 0);
@@ -851,6 +869,25 @@ export const GamesView: React.FC<GamesViewProps> = ({
 
         <button
           type="button"
+          onClick={() => {
+            if (onOpenLudoFullWindow) {
+              onOpenLudoFullWindow();
+            } else {
+              setActiveSubTab('ludo');
+            }
+          }}
+          className={`px-3.5 py-2 rounded-xl text-xs sm:text-sm font-bold flex items-center gap-1.5 transition-all whitespace-nowrap cursor-pointer ${
+            activeSubTab === 'ludo'
+              ? 'bg-gradient-to-r from-rose-600 to-amber-500 text-white shadow-sm'
+              : 'bg-white border border-slate-200 text-slate-600 hover:text-slate-900'
+          }`}
+        >
+          <Dices className="w-4 h-4" />
+          <span>لعبة اللودو</span>
+        </button>
+
+        <button
+          type="button"
           onClick={() => setActiveSubTab('leaderboard')}
           className={`px-3.5 py-2 rounded-xl text-xs sm:text-sm font-bold flex items-center gap-1.5 transition-all whitespace-nowrap cursor-pointer ${
             activeSubTab === 'leaderboard'
@@ -862,6 +899,19 @@ export const GamesView: React.FC<GamesViewProps> = ({
           <span>لوحة الصدارة ({leaders.length})</span>
         </button>
       </div>
+
+      {activeSubTab === 'ludo' && (
+        <LudoGamePanel
+          currentUser={currentUser}
+          allOnlineUsers={allOnlineUsers}
+          onUpdateCoins={onUpdateCoins}
+          onOpenWallet={onOpenWallet}
+          externalLudoMatchRef={externalLudoMatchRef}
+          onConsumeExternalLudoMatchRef={onConsumeExternalLudoMatchRef}
+          externalQuickInviteUser={externalQuickInviteUser}
+          onConsumeExternalQuickInviteUser={onConsumeExternalQuickInviteUser}
+        />
+      )}
 
       {/* 1. Cultural Trivia Quiz Engine */}
       {activeSubTab === 'trivia' && (

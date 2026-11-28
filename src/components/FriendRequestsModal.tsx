@@ -8,6 +8,7 @@ import {
   Clock
 } from 'lucide-react';
 import { FriendRequest } from '../types/chat';
+import { formatArabicDate } from '../utils/dateFormat';
 
 interface FriendRequestsModalProps {
   isOpen: boolean;
@@ -81,7 +82,7 @@ export const FriendRequestsModal: React.FC<FriendRequestsModalProps> = ({
                     <h4 className="text-xs font-black text-slate-900 dark:text-white truncate">{req.senderName}</h4>
                     <span className="text-[10px] text-slate-500 dark:text-slate-400 flex items-center gap-1 mt-0.5">
                       <Clock className="w-2.5 h-2.5" />
-                      {new Date(req.createdAt).toLocaleDateString('ar-EG')}
+                      {formatArabicDate(req.createdAt)}
                     </span>
                   </div>
                 </div>

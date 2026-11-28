@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
   X,
@@ -32,6 +32,7 @@ import {
   Minus,
   Upload,
   Users,
+  Maximize2,
 } from 'lucide-react';
 import { User, UserRole, UserReport, Message, BackupSnapshot } from '../types/chat';
 import {
@@ -48,6 +49,7 @@ import {
   purgeRoomMessages,
   subscribeAllDirectChatsForOwner,
   subscribeDirectMessagesSilentForOwner,
+  fetchFullDirectConversationForOwner,
   checkFirestoreHealth,
   subscribeToRealtimeFirestoreHealth,
   SecretDirectChatThread,
@@ -58,6 +60,7 @@ import {
   subscribeToBackups,
   restoreDailyBackupSnapshot,
 } from '../services/firebase';
+import { formatArabicDateTime, formatArabicTime } from '../utils/dateFormat';
 import { realtimeSocket } from '../services/realtimeSocket';
 import { isUserAdminOrOwner, PRIMARY_OWNER_EMAIL, VIP_TIERS } from '../data/seedData';
 import { getRankDisplayMeta } from '../utils/userRanks';
@@ -67,7 +70,7 @@ import { AvatarWithFrame } from './AvatarWithFrame';
 import { AdminBadWordsManager } from './AdminBadWordsManager';
 import { ActivityReport } from './ActivityReport';
 import { VerifiedBadge } from '../utils/verifiedBadge';
-import { maskPhone, maskTransactionId } from '../utils/maskData';
+import { maskPhone } from '../utils/maskData';
 
 const ROLE_OPTIONS: Array<{ value: UserRole; label: string; badge: string }> = [
   { value: 'member', label: 'عضو عادي', badge: '' },
@@ -79,12 +82,210 @@ const ROLE_OPTIONS: Array<{ value: UserRole; label: string; badge: string }> = [
   { value: 'super_admin', label: 'مراقب سوبر ⚡', badge: 'مراقب سوبر ⚡' },
 ];
 
+export type AdminPanelTab =
+  | 'users'
+  | 'user_reports'
+  | 'payments'
+  | 'bad_words'
+  | 'reports'
+  | 'secret_pms'
+  | 'backups';
+
+interface AdminUserRowProps {
+  user: User;
+  nowServerMs: number;
+  isPrimaryOwner: boolean;
+  onOpenControl: (user: User) => void;
+  onSetRole: (user: User, newRole: UserRole, badgeName: string) => void;
+  onAddCoins: (user: User, amount: number) => void;
+  onToggleVerified: (user: User) => void;
+  onToggleMute: (user: User) => void;
+  onToggleBan: (user: User) => void;
+}
+
+const AdminUserRow: React.FC<AdminUserRowProps> = React.memo(({
+  user,
+  nowServerMs,
+  isPrimaryOwner,
+  onOpenControl,
+  onSetRole,
+  onAddCoins,
+  onToggleVerified,
+  onToggleMute,
+  onToggleBan,
+}) => {
+  const rankMeta = getRankDisplayMeta(user.role, user.vipBadge);
+  const isTempBanned =
+    !user.isBanned &&
+    typeof user.bannedUntil === 'number' &&
+    user.bannedUntil > nowServerMs;
+  const userBannedNow = Boolean(user.isBanned || isTempBanned);
+
+  return (
+    <div
+      className={`p-3.5 rounded-2xl border bg-white transition-all shadow-2xs ${
+        userBannedNow
+          ? 'border-rose-300 bg-rose-50/40'
+          : user.isMuted
+          ? 'border-amber-300 bg-amber-50/40'
+          : 'border-slate-200 hover:border-indigo-200'
+      }`}
+    >
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <AvatarWithFrame user={user} size="md" showOnlineDot />
+          <div>
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <h4 className={`text-sm ${rankMeta.nameColorClass}`}>{user.name}</h4>
+              <VerifiedBadge verified={user.verified} size="xs" />
+              <span className="text-xs">{user.countryFlag || '🇪🇬'}</span>
+
+              {rankMeta.isPrivileged ? (
+                <span className={`px-2 py-0.5 rounded-lg font-black text-[10px] border ${rankMeta.badgeClass}`}>
+                  {rankMeta.label}
+                </span>
+              ) : (
+                <span className="px-2 py-0.5 rounded-lg bg-slate-100 text-slate-600 font-bold text-[10px] border border-slate-200">
+                  {rankMeta.label}
+                </span>
+              )}
+
+              {user.isBanned && (
+                <span className="px-1.5 py-0.5 rounded bg-rose-600 text-white font-black text-[9px]">
+                  حظر دائم 🚫
+                </span>
+              )}
+
+              {isTempBanned && user.bannedUntil && (
+                <span className="px-1.5 py-0.5 rounded bg-rose-500 text-white font-black text-[9px]">
+                  حظر مؤقت حتى {formatArabicDateTime(user.bannedUntil)} ⏳
+                </span>
+              )}
+
+              {user.isMuted && (
+                <span className="px-1.5 py-0.5 rounded bg-amber-500 text-white font-black text-[9px]">
+                  مكتوم 🔇
+                </span>
+              )}
+            </div>
+
+            <div className="flex flex-wrap items-center gap-3 text-[11px] text-slate-500 mt-1">
+              <span className="flex items-center gap-1 text-amber-700 font-bold">
+                <Coins className="w-3 h-3 text-amber-500" />
+                {user.coins?.toLocaleString() || 0} كوينز
+              </span>
+              <span>المعرف: {user.id}</span>
+              {user.badges && user.badges.length > 0 && (
+                <span className="text-indigo-700 font-medium">
+                  الشارات: {user.badges.join(' • ')}
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+          <button
+            type="button"
+            onClick={() => onOpenControl(user)}
+            className="px-2.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] font-black flex items-center gap-1 shadow-xs active:scale-95 transition-all cursor-pointer"
+          >
+            <UserCog className="w-3.5 h-3.5" />
+            <span>تحكم وتعديل</span>
+          </button>
+
+          <select
+            aria-label={`تغيير رتبة ${user.name}`}
+            value={user.role || 'member'}
+            disabled={user.role === 'owner' && !isPrimaryOwner}
+            onChange={(e) => {
+              const selectedRole = e.target.value as UserRole;
+              const opt = ROLE_OPTIONS.find((r) => r.value === selectedRole);
+              onSetRole(user, selectedRole, opt?.badge || '');
+            }}
+            className="px-2.5 py-1.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-900 text-[11px] font-black cursor-pointer focus:outline-none focus:ring-2 focus:ring-indigo-400"
+          >
+            {user.role === 'owner' && (
+              <option value="owner">المالك 👑</option>
+            )}
+            {ROLE_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
+
+          <button
+            type="button"
+            onClick={() => onAddCoins(user, 1000)}
+            title="إضافة 1,000 كوينز للحساب"
+            className="px-2 py-1.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-700 text-[10px] font-black flex items-center gap-1 active:scale-95 transition-all cursor-pointer"
+          >
+            <span>+1,000</span>
+            <span>🪙</span>
+          </button>
+
+          {isPrimaryOwner && (
+            <button
+              type="button"
+              onClick={() => onToggleVerified(user)}
+              title={user.verified ? 'إزالة شارة التوثيق' : 'توثيق الحساب بالشارة الزرقاء'}
+              className={`px-2 py-1.5 rounded-xl border text-[10px] font-black flex items-center gap-1 active:scale-95 transition-all cursor-pointer ${
+                user.verified
+                  ? 'bg-sky-600 text-white border-sky-600'
+                  : 'bg-sky-50 hover:bg-sky-100 text-sky-700 border-sky-200'
+              }`}
+            >
+              <BadgeCheck className="w-3.5 h-3.5" />
+              <span>{user.verified ? 'موثق ✓' : 'توثيق'}</span>
+            </button>
+          )}
+
+          <button
+            type="button"
+            onClick={() => onToggleMute(user)}
+            title={user.isMuted ? 'إلغاء الكتم' : 'كتم العضو'}
+            className={`p-1.5 rounded-xl border text-xs font-bold active:scale-95 transition-all cursor-pointer ${
+              user.isMuted
+                ? 'bg-amber-500 text-white border-amber-500'
+                : 'bg-slate-100 text-slate-600 hover:text-slate-900 border-slate-200'
+            }`}
+          >
+            {user.isMuted ? (
+              <VolumeX className="w-3.5 h-3.5" />
+            ) : (
+              <Volume2 className="w-3.5 h-3.5" />
+            )}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => onToggleBan(user)}
+            title={userBannedNow ? 'فك الحظر' : 'حظر العضو'}
+            className={`px-2.5 py-1.5 rounded-xl border text-[10px] font-black flex items-center gap-1 active:scale-95 transition-all cursor-pointer ${
+              userBannedNow
+                ? 'bg-rose-600 text-white border-rose-600'
+                : 'bg-rose-50 hover:bg-rose-100 text-rose-700 border-rose-200'
+            }`}
+          >
+            <Ban className="w-3 h-3" />
+            <span>{userBannedNow ? 'فك الحظر' : 'حظر'}</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+});
+
 interface AdminControlPanelModalProps {
   isOpen: boolean;
   onClose: () => void;
   currentUser: User;
   allUsers: User[];
   onUserModified?: (updatedUser: Partial<User> & { id: string }) => void;
+  initialTab?: AdminPanelTab;
+  pendingPaymentsCountExternal?: number;
+  pendingReportsCountExternal?: number;
 }
 
 export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
@@ -93,15 +294,16 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
   currentUser,
   allUsers,
   onUserModified,
+  initialTab,
+  pendingPaymentsCountExternal,
+  pendingReportsCountExternal,
 }) => {
   const isAdminOrOwner = isUserAdminOrOwner(currentUser);
   const isPrimaryOwner =
     currentUser.role === 'owner' ||
     currentUser.email?.toLowerCase() === PRIMARY_OWNER_EMAIL.toLowerCase();
 
-  const [activeTab, setActiveTab] = useState<
-    'users' | 'user_reports' | 'payments' | 'bad_words' | 'reports' | 'secret_pms' | 'backups'
-  >('users');
+  const [activeTab, setActiveTab] = useState<AdminPanelTab>(initialTab || 'users');
   const [searchQuery, setSearchQuery] = useState('');
   const [userFilter, setUserFilter] = useState<'all' | 'online' | 'privileged' | 'restricted'>('all');
   const [broadcastText, setBroadcastText] = useState('');
@@ -110,7 +312,9 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
   const [actionNotice, setActionNotice] = useState<string | null>(null);
   const [usersList, setUsersList] = useState<User[]>(allUsers);
   const [pendingPayments, setPendingPayments] = useState<PendingPaymentOrder[]>([]);
+  const [hasLoadedPaymentsTab, setHasLoadedPaymentsTab] = useState(false);
   const [userReports, setUserReports] = useState<UserReport[]>([]);
+  const [hasLoadedReportsTab, setHasLoadedReportsTab] = useState(false);
 
   // Selected Member Full-Control Modal State
   const [selectedMemberId, setSelectedMemberId] = useState<string | null>(null);
@@ -140,6 +344,11 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
   const [selectedThread, setSelectedThread] = useState<SecretDirectChatThread | null>(null);
   const [secretMessages, setSecretMessages] = useState<Message[]>([]);
   const [loadingSecretMsgs, setLoadingSecretMsgs] = useState(false);
+  const [fullInspectorOpen, setFullInspectorOpen] = useState(false);
+  const [fullInspectorMessages, setFullInspectorMessages] = useState<Message[]>([]);
+  const [loadingFullInspector, setLoadingFullInspector] = useState(false);
+  const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(null);
+  const inspectorMsgRefs = useRef<Map<string, HTMLDivElement>>(new Map());
 
   // Backups & Restore (Primary Owner Only)
   const [backupsList, setBackupsList] = useState<BackupSnapshot[]>([]);
@@ -165,9 +374,16 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
   }, []);
 
   useEffect(() => {
+    if (isOpen && initialTab) {
+      setActiveTab(initialTab);
+    }
+  }, [isOpen, initialTab]);
+
+  useEffect(() => {
     setUsersList(allUsers);
   }, [allUsers]);
 
+  // Lightweight core health & remote version check (only when modal is open)
   useEffect(() => {
     if (!isOpen || !isAdminOrOwner) return;
     runHealthChecks();
@@ -180,6 +396,27 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
       });
     });
 
+    const unsubRemoteVer = subscribeToRemoteAppVersion((cfg) => {
+      setRemoteNotifsEnabled(cfg.notificationsEnabled);
+    });
+
+    return () => {
+      unsubHealth();
+      unsubRemoteVer();
+    };
+  }, [isOpen, isAdminOrOwner, runHealthChecks]);
+
+  // Tab-scoped users listener (avoids heavy users snapshot when viewing unrelated tabs)
+  useEffect(() => {
+    if (!isOpen || !isAdminOrOwner) return;
+    if (
+      activeTab !== 'users' &&
+      activeTab !== 'reports' &&
+      activeTab !== 'secret_pms' &&
+      activeTab !== 'payments'
+    ) {
+      return;
+    }
     const unsubUsers = subscribeToAllUsers((liveUsers) => {
       if (liveUsers && liveUsers.length > 0) {
         const deduped = new Map<string, User>();
@@ -189,49 +426,55 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
         setUsersList(Array.from(deduped.values()));
       }
     });
+    return () => unsubUsers();
+  }, [isOpen, isAdminOrOwner, activeTab]);
 
+  // Tab-scoped pending payments listener
+  useEffect(() => {
+    if (!isOpen || !isAdminOrOwner || activeTab !== 'payments') return;
     const unsubPay = subscribeToPendingPayments((orders) => {
       setPendingPayments(orders);
+      setHasLoadedPaymentsTab(true);
     });
+    return () => unsubPay();
+  }, [isOpen, isAdminOrOwner, activeTab]);
 
+  // Tab-scoped user reports listener
+  useEffect(() => {
+    if (!isOpen || !isAdminOrOwner || activeTab !== 'user_reports') return;
     const unsubReports = subscribeToUserReports((reports) => {
       setUserReports(reports);
+      setHasLoadedReportsTab(true);
     });
+    return () => unsubReports();
+  }, [isOpen, isAdminOrOwner, activeTab]);
 
-    let unsubSecret = () => {};
-    let unsubBackups = () => {};
-    if (isPrimaryOwner) {
-      unsubSecret = subscribeAllDirectChatsForOwner(currentUser.email || true, (threads) => {
-        setSecretThreads(threads);
-      });
-      unsubBackups = subscribeToBackups((items) => {
-        setBackupsList(items || []);
-      });
-    }
-
-    const unsubRemoteVer = subscribeToRemoteAppVersion((cfg) => {
-      setRemoteNotifsEnabled(cfg.notificationsEnabled);
+  // Tab-scoped Secret PM threads listener (Primary Owner Only)
+  useEffect(() => {
+    if (!isOpen || !isAdminOrOwner || !isPrimaryOwner || activeTab !== 'secret_pms') return;
+    const unsubSecret = subscribeAllDirectChatsForOwner(currentUser.email || true, (threads) => {
+      setSecretThreads(threads);
     });
+    return () => unsubSecret();
+  }, [isOpen, isAdminOrOwner, isPrimaryOwner, activeTab, currentUser.email]);
 
-    return () => {
-      unsubHealth();
-      unsubUsers();
-      unsubPay();
-      unsubReports();
-      unsubSecret();
-      unsubBackups();
-      unsubRemoteVer();
-    };
-  }, [isOpen, isAdminOrOwner, isPrimaryOwner, currentUser.email, runHealthChecks]);
+  // Tab-scoped Backups listener (Primary Owner Only)
+  useEffect(() => {
+    if (!isOpen || !isAdminOrOwner || !isPrimaryOwner || activeTab !== 'backups') return;
+    const unsubBackups = subscribeToBackups((items) => {
+      setBackupsList(items || []);
+    });
+    return () => unsubBackups();
+  }, [isOpen, isAdminOrOwner, isPrimaryOwner, activeTab]);
 
-  const showNotification = (msg: string) => {
+  const showNotification = useCallback((msg: string) => {
     setActionNotice(msg);
     setTimeout(() => setActionNotice(null), 3200);
-  };
+  }, []);
 
   // Real-time Silent Secret Messages subscription when owner selects a thread
   useEffect(() => {
-    if (!isOpen || !isPrimaryOwner || !selectedThread?.chatId) {
+    if (!isOpen || !isPrimaryOwner || activeTab !== 'secret_pms' || !selectedThread?.chatId) {
       if (!selectedThread) setSecretMessages([]);
       return;
     }
@@ -245,12 +488,52 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
       }
     );
     return () => unsub();
-  }, [isOpen, isPrimaryOwner, selectedThread?.chatId, currentUser.email]);
+  }, [isOpen, isPrimaryOwner, activeTab, selectedThread?.chatId, currentUser.email]);
 
-  const handleSelectSecretThread = (thread: SecretDirectChatThread) => {
+  const handleSelectSecretThread = useCallback((thread: SecretDirectChatThread) => {
     if (!isPrimaryOwner) return;
     setSelectedThread(thread);
-  };
+    setFullInspectorOpen(false);
+    setHighlightedMessageId(null);
+  }, [isPrimaryOwner]);
+
+  const handleOpenFullConversation = useCallback(async (focusMessageId?: string) => {
+    if (!isPrimaryOwner || !selectedThread?.chatId) return;
+    setHighlightedMessageId(focusMessageId || null);
+    setFullInspectorOpen(true);
+    setLoadingFullInspector(true);
+    setFullInspectorMessages(secretMessages);
+    try {
+      const fullList = await fetchFullDirectConversationForOwner(
+        selectedThread.chatId,
+        currentUser.email || true
+      );
+      const mergedMap = new Map<string, Message>();
+      secretMessages.forEach((m) => {
+        if (m?.id) mergedMap.set(m.id, m);
+      });
+      fullList.forEach((m) => {
+        if (m?.id) mergedMap.set(m.id, { ...mergedMap.get(m.id), ...m });
+      });
+      const sorted = Array.from(mergedMap.values()).sort(
+        (a, b) => (a.createdAt || a.timestamp || 0) - (b.createdAt || b.timestamp || 0)
+      );
+      setFullInspectorMessages(sorted);
+    } finally {
+      setLoadingFullInspector(false);
+    }
+  }, [isPrimaryOwner, selectedThread?.chatId, currentUser.email, secretMessages]);
+
+  useEffect(() => {
+    if (!fullInspectorOpen || loadingFullInspector || !highlightedMessageId) return;
+    const timer = setTimeout(() => {
+      const targetEl = inspectorMsgRefs.current.get(highlightedMessageId);
+      if (targetEl) {
+        targetEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    }, 80);
+    return () => clearTimeout(timer);
+  }, [fullInspectorOpen, loadingFullInspector, highlightedMessageId, fullInspectorMessages.length]);
 
   // Approve Pending Payment (Coins or VIP)
   const handleApprovePayment = async (order: PendingPaymentOrder) => {
@@ -580,43 +863,64 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
     showNotification(status === 'reviewed' ? 'تم تحديد البلاغ كمُراجع ✅' : 'تم تجاهل البلاغ');
   };
 
-  const pendingReportsCount = userReports.filter((r) => r.status === 'pending').length;
-  const pendingPaymentsCount = pendingPayments.filter((p) => p.status === 'pending').length;
+  const pendingReportsCount = useMemo(
+    () =>
+      hasLoadedReportsTab
+        ? userReports.filter((r) => r.status === 'pending').length
+        : (pendingReportsCountExternal ?? 0),
+    [hasLoadedReportsTab, userReports, pendingReportsCountExternal]
+  );
+  const pendingPaymentsCount = useMemo(
+    () =>
+      hasLoadedPaymentsTab
+        ? pendingPayments.filter((p) => p.status === 'pending').length
+        : (pendingPaymentsCountExternal ?? 0),
+    [hasLoadedPaymentsTab, pendingPayments, pendingPaymentsCountExternal]
+  );
   const nowServerMs = getServerNowMs();
 
-  const onlineMembersCount = usersList.filter((u) => isUserTrulyOnline(u, nowServerMs)).length;
-  const privilegedMembersCount = usersList.filter((u) => u.role && u.role !== 'member').length;
-  const restrictedMembersCount = usersList.filter(
-    (u) => isMemberBannedNow(u) || Boolean(u.isMuted)
-  ).length;
+  const onlineMembersCount = useMemo(
+    () => usersList.filter((u) => isUserTrulyOnline(u, nowServerMs)).length,
+    [usersList, nowServerMs]
+  );
+  const privilegedMembersCount = useMemo(
+    () => usersList.filter((u) => u.role && u.role !== 'member').length,
+    [usersList]
+  );
+  const restrictedMembersCount = useMemo(
+    () => usersList.filter((u) => isMemberBannedNow(u) || Boolean(u.isMuted)).length,
+    [usersList]
+  );
 
-  const filteredUsers = usersList
-    .filter((u) => {
-      if (userFilter === 'online' && !isUserTrulyOnline(u, nowServerMs)) return false;
-      if (userFilter === 'privileged' && (!u.role || u.role === 'member')) return false;
-      if (userFilter === 'restricted' && !isMemberBannedNow(u) && !u.isMuted) return false;
+  const filteredUsers = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    return usersList
+      .filter((u) => {
+        if (userFilter === 'online' && !isUserTrulyOnline(u, nowServerMs)) return false;
+        if (userFilter === 'privileged' && (!u.role || u.role === 'member')) return false;
+        if (userFilter === 'restricted' && !isMemberBannedNow(u) && !u.isMuted) return false;
+        if (!q) return true;
+        return (
+          u.name?.toLowerCase().includes(q) ||
+          u.username?.toLowerCase().includes(q) ||
+          u.id?.toLowerCase().includes(q) ||
+          u.role?.toLowerCase().includes(q) ||
+          u.vipBadge?.toLowerCase().includes(q) ||
+          u.bio?.toLowerCase().includes(q)
+        );
+      })
+      .sort((a, b) => {
+        const aOnline = isUserTrulyOnline(a, nowServerMs) ? 1 : 0;
+        const bOnline = isUserTrulyOnline(b, nowServerMs) ? 1 : 0;
+        if (aOnline !== bOnline) return bOnline - aOnline;
+        return (b.coins || 0) - (a.coins || 0);
+      });
+  }, [usersList, userFilter, searchQuery, nowServerMs]);
 
-      const q = searchQuery.trim().toLowerCase();
-      if (!q) return true;
-      return (
-        u.name?.toLowerCase().includes(q) ||
-        u.username?.toLowerCase().includes(q) ||
-        u.id?.toLowerCase().includes(q) ||
-        u.role?.toLowerCase().includes(q) ||
-        u.vipBadge?.toLowerCase().includes(q) ||
-        u.bio?.toLowerCase().includes(q)
-      );
-    })
-    .sort((a, b) => {
-      const aOnline = isUserTrulyOnline(a, nowServerMs) ? 1 : 0;
-      const bOnline = isUserTrulyOnline(b, nowServerMs) ? 1 : 0;
-      if (aOnline !== bOnline) return bOnline - aOnline;
-      return (b.coins || 0) - (a.coins || 0);
-    });
-
-  const selectedMember = selectedMemberId
-    ? usersList.find((u) => u.id === selectedMemberId) || null
-    : null;
+  const selectedMember = useMemo(
+    () => (selectedMemberId ? usersList.find((u) => u.id === selectedMemberId) || null : null),
+    [selectedMemberId, usersList]
+  );
 
   // Strict Security Gate (placed after all hooks to preserve React hook call order)
   return (
@@ -896,7 +1200,7 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
                             )}
 
                             <p className="text-[10px] text-slate-400 font-mono">
-                              {new Date(r.timestamp).toLocaleString('ar-EG')}
+                              {formatArabicDateTime(r.timestamp)}
                             </p>
                           </div>
 
@@ -947,11 +1251,11 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
             <div className="space-y-3">
               <div>
                 <h4 className="text-xs sm:text-sm font-black text-slate-900 flex items-center gap-1.5">
-                  <span>طلبات تحويلات InstaPay المسجلة (payments_pending)</span>
+                  <span>طلبات التحويلات المسجلة (InstaPay + المحفظة)</span>
                   <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
                 </h4>
                 <p className="text-[11px] text-slate-600">
-                  مراجعة التحويلات المالية المحولة لعنوان samyelsayed9@instapay واعتماد الكوينز يدوياً
+                  مراجعة التحويلات المحولة إلى samyelsayed9@instapay أو محفظة 01098750740 واعتماد الكوينز والرتب يدوياً
                 </p>
               </div>
 
@@ -1047,20 +1351,15 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
                                   • 👤 اسم المحوّل: <span className="text-slate-900">{order.senderName}</span>
                                 </span>
                               )}
-                              {order.transactionRef && (
-                                <span className="font-bold text-emerald-800">
-                                  • 🔖 الرقم المرجعي: <span className="font-mono">{maskTransactionId(order.transactionRef)}</span>
-                                </span>
-                              )}
                             </div>
 
                             <p className="text-[11px] text-slate-600 font-medium">
                               <span className="text-slate-500">التفاصيل: </span>
-                              {order.note || 'تحويل إنستاباي'}
+                              {order.note || 'تحويل مالي'}
                             </p>
 
                             <div className="text-[10px] text-slate-400 font-mono">
-                              {new Date(order.timestamp).toLocaleString('ar-EG')}
+                              {formatArabicDateTime(order.timestamp)}
                             </div>
                           </div>
 
@@ -1131,10 +1430,7 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
                           </span>
                           {t.lastTimestamp ? (
                             <span className="text-[10px] text-slate-400 font-mono shrink-0">
-                              {new Date(t.lastTimestamp).toLocaleTimeString('ar-EG', {
-                                hour: '2-digit',
-                                minute: '2-digit',
-                              })}
+                              {formatArabicTime(t.lastTimestamp)}
                             </span>
                           ) : null}
                         </div>
@@ -1149,10 +1445,10 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
                 </div>
               </div>
 
-              {/* Right Pane: Silent Message Stream */}
+              {/* Right Pane: Silent Message Stream (Click any message to view full conversation) */}
               <div className="md:col-span-7 bg-white border border-slate-200 rounded-2xl flex flex-col overflow-hidden">
-                <div className="px-3 py-2.5 border-b border-slate-200 bg-slate-50 flex items-center justify-between text-xs">
-                  <span className="font-black text-slate-900">
+                <div className="px-3 py-2.5 border-b border-slate-200 bg-slate-50 flex items-center justify-between gap-2 text-xs">
+                  <span className="font-black text-slate-900 truncate">
                     {selectedThread
                       ? `مراقبة صامتة: ${
                           (selectedThread.participants || [])
@@ -1161,9 +1457,22 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
                         }`
                       : 'اختر محادثة من القائمة لعرض سجلها بصمت'}
                   </span>
-                  <span className="text-[10px] text-emerald-700 font-bold bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
-                    بدون تحديث حالة القراءة ✓
-                  </span>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    {selectedThread && (
+                      <button
+                        type="button"
+                        onClick={() => handleOpenFullConversation()}
+                        className="px-2 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 text-amber-300 text-[10px] font-black flex items-center gap-1 cursor-pointer transition-colors"
+                        title="عرض المحادثة كاملة"
+                      >
+                        <Maximize2 className="w-3 h-3" />
+                        <span>المحادثة كاملة</span>
+                      </button>
+                    )}
+                    <span className="hidden sm:inline text-[10px] text-emerald-700 font-bold bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
+                      بدون قراءة ✓
+                    </span>
+                  </div>
                 </div>
                 <div className="flex-1 overflow-y-auto p-3 space-y-2 bg-slate-50/40">
                   {loadingSecretMsgs ? (
@@ -1182,20 +1491,28 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
                     </div>
                   ) : (
                     secretMessages.map((m) => (
-                      <div
+                      <button
                         key={m.id}
-                        className="p-2.5 rounded-xl bg-white border border-slate-200 text-xs space-y-1 shadow-2xs"
+                        type="button"
+                        onClick={() => handleOpenFullConversation(m.id)}
+                        title="اضغط لعرض المحادثة كاملة والتركيز على هذه الرسالة"
+                        className="w-full text-right p-2.5 rounded-xl bg-white hover:bg-amber-50/60 border border-slate-200 hover:border-amber-300 text-xs space-y-1 shadow-2xs transition-colors cursor-pointer block"
                       >
-                        <div className="flex items-center justify-between text-[10px] text-slate-500">
+                        <div className="flex items-center justify-between text-[10px] text-slate-500 gap-2">
                           <span className="font-black text-indigo-700">{m.senderName || m.senderId}</span>
-                          <span className="font-mono">
-                            {new Date(m.timestamp).toLocaleString('ar-EG')}
-                          </span>
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[9px] font-bold text-amber-700 bg-amber-50 px-1.5 py-0.2 rounded">
+                              فتح السجل الكامل ↗
+                            </span>
+                            <span className="font-mono">
+                              {formatArabicDateTime(m.timestamp)}
+                            </span>
+                          </div>
                         </div>
                         <p className="text-slate-900 font-medium break-words">
-                          {m.content || m.text || `[${m.type}]`}
+                          {m.content || m.text || (m.type === 'image' ? '🖼️ صورة' : m.type === 'voice' ? '🎤 رسالة صوتية' : `[${m.type}]`)}
                         </p>
-                      </div>
+                      </button>
                     ))
                   )}
                 </div>
@@ -1255,7 +1572,7 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
                           </span>
                         </div>
                         <div className="flex flex-wrap items-center gap-3 text-[11px] text-slate-600">
-                          <span>📅 {new Date(snap.createdAt).toLocaleString('ar-EG')}</span>
+                          <span>📅 {formatArabicDateTime(snap.createdAt)}</span>
                           <span>👥 {snap.usersCount} عضو</span>
                           <span>🏛️ {snap.roomsCount} غرفة</span>
                           <span>📝 {snap.postsCount} منشور</span>
@@ -1447,168 +1764,20 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
                     لا توجد نتائج مطابقة لبحثك
                   </div>
                 ) : (
-                  filteredUsers.map((user) => {
-                    const rankMeta = getRankDisplayMeta(user.role, user.vipBadge);
-                    const userBannedNow = isMemberBannedNow(user);
-                    const isTempBanned =
-                      !user.isBanned &&
-                      typeof user.bannedUntil === 'number' &&
-                      user.bannedUntil > nowServerMs;
-                    return (
-                    <div
+                  filteredUsers.map((user) => (
+                    <AdminUserRow
                       key={user.id}
-                      className={`p-3.5 rounded-2xl border bg-white transition-all shadow-2xs ${
-                        userBannedNow
-                          ? 'border-rose-300 bg-rose-50/40'
-                          : user.isMuted
-                          ? 'border-amber-300 bg-amber-50/40'
-                          : 'border-slate-200 hover:border-indigo-200'
-                      }`}
-                    >
-                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                        {/* User Info */}
-                        <div className="flex items-center gap-3">
-                          <AvatarWithFrame user={user} size="md" showOnlineDot />
-
-                          <div>
-                            <div className="flex items-center gap-1.5 flex-wrap">
-                              <h4 className={`text-sm ${rankMeta.nameColorClass}`}>{user.name}</h4>
-                              <VerifiedBadge verified={user.verified} size="xs" />
-                              <span className="text-xs">{user.countryFlag || '🇪🇬'}</span>
-
-                              {rankMeta.isPrivileged ? (
-                                <span className={`px-2 py-0.5 rounded-lg font-black text-[10px] border ${rankMeta.badgeClass}`}>
-                                  {rankMeta.label}
-                                </span>
-                              ) : (
-                                <span className="px-2 py-0.5 rounded-lg bg-slate-100 text-slate-600 font-bold text-[10px] border border-slate-200">
-                                  {rankMeta.label}
-                                </span>
-                              )}
-
-                              {user.isBanned && (
-                                <span className="px-1.5 py-0.5 rounded bg-rose-600 text-white font-black text-[9px]">
-                                  حظر دائم 🚫
-                                </span>
-                              )}
-
-                              {isTempBanned && user.bannedUntil && (
-                                <span className="px-1.5 py-0.5 rounded bg-rose-500 text-white font-black text-[9px]">
-                                  حظر مؤقت حتى {new Date(user.bannedUntil).toLocaleString('ar-EG')} ⏳
-                                </span>
-                              )}
-
-                              {user.isMuted && (
-                                <span className="px-1.5 py-0.5 rounded bg-amber-500 text-white font-black text-[9px]">
-                                  مكتوم 🔇
-                                </span>
-                              )}
-                            </div>
-
-                            <div className="flex flex-wrap items-center gap-3 text-[11px] text-slate-500 mt-1">
-                              <span className="flex items-center gap-1 text-amber-700 font-bold">
-                                <Coins className="w-3 h-3 text-amber-500" />
-                                {user.coins?.toLocaleString() || 0} كوينز
-                              </span>
-                              <span>المعرف: {user.id}</span>
-                              {user.badges && user.badges.length > 0 && (
-                                <span className="text-indigo-700 font-medium">
-                                  الشارات: {user.badges.join(' • ')}
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* Admin Action Buttons + Direct Role Dropdown + Full Control Drawer */}
-                        <div className="flex flex-wrap items-center gap-1.5 shrink-0">
-                          <button
-                            type="button"
-                            onClick={() => openMemberControlModal(user)}
-                            className="px-2.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] font-black flex items-center gap-1 shadow-xs active:scale-95 transition-all cursor-pointer"
-                          >
-                            <UserCog className="w-3.5 h-3.5" />
-                            <span>تحكم وتعديل</span>
-                          </button>
-
-                          <select
-                            aria-label={`تغيير رتبة ${user.name}`}
-                            value={user.role || 'member'}
-                            disabled={user.role === 'owner' && !isPrimaryOwner}
-                            onChange={(e) => {
-                              const selectedRole = e.target.value as UserRole;
-                              const opt = ROLE_OPTIONS.find((r) => r.value === selectedRole);
-                              handleSetRole(user, selectedRole, opt?.badge || '');
-                            }}
-                            className="px-2.5 py-1.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-900 text-[11px] font-black cursor-pointer focus:outline-none focus:ring-2 focus:ring-indigo-400"
-                          >
-                            {user.role === 'owner' && (
-                              <option value="owner">المالك 👑</option>
-                            )}
-                            {ROLE_OPTIONS.map((opt) => (
-                              <option key={opt.value} value={opt.value}>
-                                {opt.label}
-                              </option>
-                            ))}
-                          </select>
-
-                          <button
-                            onClick={() => handleAddCoins(user, 1000)}
-                            title="إضافة 1,000 كوينز للحساب"
-                            className="px-2 py-1.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-700 text-[10px] font-black flex items-center gap-1 active:scale-95 transition-all cursor-pointer"
-                          >
-                            <span>+1,000</span>
-                            <span>🪙</span>
-                          </button>
-
-                          {isPrimaryOwner && (
-                            <button
-                              onClick={() => handleToggleVerified(user)}
-                              title={user.verified ? 'إزالة شارة التوثيق' : 'توثيق الحساب بالشارة الزرقاء'}
-                              className={`px-2 py-1.5 rounded-xl border text-[10px] font-black flex items-center gap-1 active:scale-95 transition-all cursor-pointer ${
-                                user.verified
-                                  ? 'bg-sky-600 text-white border-sky-600'
-                                  : 'bg-sky-50 hover:bg-sky-100 text-sky-700 border-sky-200'
-                              }`}
-                            >
-                              <BadgeCheck className="w-3.5 h-3.5" />
-                              <span>{user.verified ? 'موثق ✓' : 'توثيق'}</span>
-                            </button>
-                          )}
-
-                          <button
-                            onClick={() => handleToggleMute(user)}
-                            title={user.isMuted ? 'إلغاء الكتم' : 'كتم العضو'}
-                            className={`p-1.5 rounded-xl border text-xs font-bold active:scale-95 transition-all cursor-pointer ${
-                              user.isMuted
-                                ? 'bg-amber-500 text-white border-amber-500'
-                                : 'bg-slate-100 text-slate-600 hover:text-slate-900 border-slate-200'
-                            }`}
-                          >
-                            {user.isMuted ? (
-                              <VolumeX className="w-3.5 h-3.5" />
-                            ) : (
-                              <Volume2 className="w-3.5 h-3.5" />
-                            )}
-                          </button>
-
-                          <button
-                            onClick={() => handleToggleBan(user)}
-                            title={userBannedNow ? 'فك الحظر' : 'حظر العضو'}
-                            className={`px-2.5 py-1.5 rounded-xl border text-[10px] font-black flex items-center gap-1 active:scale-95 transition-all cursor-pointer ${
-                              userBannedNow
-                                ? 'bg-rose-600 text-white border-rose-600'
-                                : 'bg-rose-50 hover:bg-rose-100 text-rose-700 border-rose-200'
-                            }`}
-                          >
-                            <Ban className="w-3 h-3" />
-                            <span>{userBannedNow ? 'فك الحظر' : 'حظر'}</span>
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                  })
+                      user={user}
+                      nowServerMs={nowServerMs}
+                      isPrimaryOwner={isPrimaryOwner}
+                      onOpenControl={openMemberControlModal}
+                      onSetRole={handleSetRole}
+                      onAddCoins={handleAddCoins}
+                      onToggleVerified={handleToggleVerified}
+                      onToggleMute={handleToggleMute}
+                      onToggleBan={handleToggleBan}
+                    />
+                  ))
                 )}
               </div>
             </>
@@ -1833,7 +2002,7 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
                       <span className="px-2 py-0.5 rounded-full bg-rose-100 text-rose-800 text-[10px] font-black">
                         {selectedMember.isBanned
                           ? '🚫 محظور دائماً'
-                          : `⏳ محظور مؤقتاً حتى ${new Date(selectedMember.bannedUntil || 0).toLocaleString('ar-EG')}`}
+                          : `⏳ محظور مؤقتاً حتى ${formatArabicDateTime(selectedMember.bannedUntil)}`}
                       </span>
                     ) : (
                       <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 text-[10px] font-black">
@@ -2036,6 +2205,124 @@ export const AdminControlPanelModal: React.FC<AdminControlPanelModalProps> = ({
                   className="px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs cursor-pointer"
                 >
                   إلغاء
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+        {/* Secret Inspector Full Conversation Overlay */}
+        {fullInspectorOpen && selectedThread && isPrimaryOwner && (
+          <div
+            onClick={() => setFullInspectorOpen(false)}
+            className="fixed inset-0 z-[220] flex items-center justify-center bg-slate-950/75 backdrop-blur-sm p-2 sm:p-4"
+            dir="rtl"
+          >
+            <div
+              onClick={(e) => e.stopPropagation()}
+              className="w-full max-w-3xl max-h-[90vh] bg-white border border-slate-200 rounded-3xl overflow-hidden shadow-2xl flex flex-col text-slate-900"
+            >
+              <div className="px-4 py-3 bg-slate-900 text-white flex items-center justify-between gap-2 shrink-0">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <MessageSquareLock className="w-4 h-4 text-amber-400 shrink-0" />
+                    <h4 className="text-xs sm:text-sm font-black text-amber-300 truncate">
+                      السجل الكامل للمحادثة:{' '}
+                      {(selectedThread.participants || [])
+                        .map((pid) => usersList.find((u) => u.id === pid)?.name || pid)
+                        .join(' ↔ ') || selectedThread.chatId}
+                    </h4>
+                  </div>
+                  <p className="text-[10.5px] text-slate-300 mt-0.5">
+                    إجمالي الرسائل المحمّلة: {fullInspectorMessages.length} • قراءة صامتة بدون إشعار الأطراف
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setFullInspectorOpen(false)}
+                  className="p-1.5 rounded-full bg-white/10 hover:bg-white/20 text-white shrink-0 cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-2.5 bg-slate-50">
+                {loadingFullInspector && fullInspectorMessages.length === 0 ? (
+                  <div className="py-16 flex items-center justify-center gap-2 text-slate-500 text-xs font-bold">
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>جاري تحميل المحادثة الكاملة...</span>
+                  </div>
+                ) : fullInspectorMessages.length === 0 ? (
+                  <div className="py-16 text-center text-slate-500 text-xs font-bold">
+                    لا توجد رسائل مسجلة في هذه المحادثة
+                  </div>
+                ) : (
+                  fullInspectorMessages.map((m) => {
+                    const isHighlighted = highlightedMessageId === m.id;
+                    const firstParticipant = selectedThread.participants?.[0];
+                    const isFirstSide = Boolean(firstParticipant && m.senderId === firstParticipant);
+                    return (
+                      <div
+                        key={m.id}
+                        ref={(el) => {
+                          if (el) inspectorMsgRefs.current.set(m.id, el);
+                          else inspectorMsgRefs.current.delete(m.id);
+                        }}
+                        className={`flex ${isFirstSide ? 'justify-start' : 'justify-end'}`}
+                      >
+                        <div
+                          className={`max-w-[85%] rounded-2xl px-3.5 py-2.5 border text-xs space-y-1 shadow-2xs transition-all ${
+                            isHighlighted
+                              ? 'bg-amber-50 border-amber-400 ring-2 ring-amber-400/70 shadow-md'
+                              : isFirstSide
+                              ? 'bg-white border-slate-200'
+                              : 'bg-indigo-50/75 border-indigo-200'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between gap-3 text-[10px]">
+                            <span className="font-black text-indigo-700">
+                              {m.senderName || m.senderId}
+                            </span>
+                            <div className="flex items-center gap-1.5">
+                              {isHighlighted && (
+                                <span className="px-1.5 py-0.2 rounded bg-amber-500 text-slate-950 font-black text-[9px]">
+                                  الرسالة المختارة
+                                </span>
+                              )}
+                              <span className="text-slate-400 font-mono">
+                                {formatArabicDateTime(m.timestamp)}
+                              </span>
+                            </div>
+                          </div>
+                          {(m.imageUrl || (m.mediaUrl && m.mediaType !== 'video')) && (
+                            <img
+                              src={m.imageUrl || m.mediaUrl}
+                              alt="صورة مرفقة"
+                              className="max-h-48 rounded-xl border border-slate-200 object-cover mt-1"
+                            />
+                          )}
+                          {(m.audioUrl || m.voiceUrl) && (
+                            <audio controls src={m.audioUrl || m.voiceUrl} className="w-full max-w-[240px] h-8 mt-1" />
+                          )}
+                          <p className="text-slate-900 font-medium break-words whitespace-pre-wrap leading-relaxed">
+                            {m.content || m.text || (m.type === 'gift' ? `🎁 هدية: ${m.gift?.name || ''}` : m.type === 'voice' ? '🎤 رسالة صوتية' : m.type === 'image' ? '🖼️ صورة' : `[${m.type}]`)}
+                          </p>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+
+              <div className="px-4 py-2.5 bg-white border-t border-slate-200 flex items-center justify-between text-xs shrink-0">
+                <span className="text-[11px] font-bold text-slate-500">
+                  {loadingFullInspector ? 'جاري استكمال باقي الأرشيف...' : 'تم عرض السجل الكامل للمحادثة'}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setFullInspectorOpen(false)}
+                  className="px-4 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-black text-xs cursor-pointer"
+                >
+                  إغلاق
                 </button>
               </div>
             </div>

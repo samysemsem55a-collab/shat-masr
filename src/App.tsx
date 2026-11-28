@@ -2,12 +2,13 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { AnimatePresence, motion } from 'framer-motion';
 import { Toaster } from 'sonner';
 import { toast, TOASTER_ICONS, getToasterOptions } from './utils/appToast';
-import { X, Check, RefreshCw, UserPlus, MessageCircle, Sparkles, Download, Bell, Swords, DoorOpen } from 'lucide-react';
+import { X, Check, RefreshCw, UserPlus, MessageCircle, Sparkles, Download, Swords, DoorOpen, Dices } from 'lucide-react';
 import { Header } from './components/Header';
 import { BottomNav, NavTab } from './components/BottomNav';
 import { RoomsView } from './components/RoomsView';
 import { RoomActiveView } from './components/RoomActiveView';
 import { GamesView, AcceptedExternalChallenge } from './components/GamesView';
+import { LudoGamePanel, ActiveLudoRef } from './components/LudoGamePanel';
 import { PrivateChatView } from './components/PrivateChatView';
 import { ProfileView } from './components/ProfileView';
 import { LuxuryGiftModal } from './components/LuxuryGiftModal';
@@ -105,16 +106,28 @@ import {
   deleteFirestoreCallSignal,
   getLocalActiveCall,
   subscribeToUserNotifications,
+  subscribeToForumNotifications,
+  subscribeToStoryNotifications,
+  saveCreatedRoomToFirestore,
+  closeRoomInDB,
+  subscribeToCreatedRooms,
+  OFFICIAL_PUBLIC_ROOM_IDS,
   markUserNotificationsRead,
   deleteUserNotification,
   clearAllUserNotifications,
+  subscribeToOwnerPendingItems,
+  OwnerPendingSummary,
   RealtimeUserNotification,
   RoomInvitation,
   OwnerRoomJoinRequest,
   GameChallengeInvite,
+  LudoInvite,
+  subscribeToIncomingLudoInvites,
+  respondToLudoInvite,
   AppUpdateNotice
 } from './services/firebase';
 import { isUserTrulyOnline, getServerNowMs, resolveTimestampMs } from './utils/presenceStatus';
+import { formatArabicDateTime, getVipDurationInfo } from './utils/dateFormat';
 
 function isNewerVersion(remote: string, local: string): boolean {
   const rParts = remote.split('.').map((n) => parseInt(n, 10) || 0);
@@ -394,7 +407,7 @@ export default function App() {
         const parsed: Room[] = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) {
           const defaultMap = new Map(INITIAL_ROOMS.map((r) => [r.id, r]));
-          const nonPrivate = parsed.filter((r) => r && r.id && !r.isPrivate);
+          const nonPrivate = parsed.filter((r) => r && r.id && !r.isPrivate && !r.isClosed);
           for (const def of INITIAL_ROOMS) {
             if (!nonPrivate.some((r) => r.id === def.id)) {
               nonPrivate.unshift(def);
@@ -455,9 +468,9 @@ export default function App() {
   const [registeredUsersCount, setRegisteredUsersCount] = useState<number>(() => {
     try {
       const saved = Number(localStorage.getItem('shat_masr_registered_users_count') || '0');
-      return saved > 0 ? saved : 1;
+      return Number.isFinite(saved) && saved > 0 ? saved : 0;
     } catch {
-      return 1;
+      return 0;
     }
   });
   const [allRegisteredUsers, setAllRegisteredUsers] = useState<User[]>([]);
@@ -512,6 +525,12 @@ export default function App() {
   const dismissedGameChallengeIdsRef = useRef<Set<string>>(new Set());
   const [acceptedGameChallenge, setAcceptedGameChallenge] = useState<AcceptedExternalChallenge | null>(null);
 
+  const [incomingLudoInvite, setIncomingLudoInvite] = useState<LudoInvite | null>(null);
+  const dismissedLudoInviteIdsRef = useRef<Set<string>>(new Set());
+  const [acceptedLudoMatchRef, setAcceptedLudoMatchRef] = useState<ActiveLudoRef | null>(null);
+  const [quickLudoInviteUser, setQuickLudoInviteUser] = useState<User | null>(null);
+  const [isLudoFullWindowOpen, setIsLudoFullWindowOpen] = useState(false);
+
   useEffect(() => {
     return () => {
       if (bellNotifTimerRef.current) clearTimeout(bellNotifTimerRef.current);
@@ -526,6 +545,30 @@ export default function App() {
 
   // Modals State
   const [isAdminOpen, setIsAdminOpen] = useState(false);
+  const [adminInitialTab, setAdminInitialTab] = useState<
+    'users' | 'user_reports' | 'payments' | 'bad_words' | 'reports' | 'secret_pms' | 'backups'
+  >('users');
+  const [ownerPendingSummary, setOwnerPendingSummary] = useState<OwnerPendingSummary>({
+    pendingPaymentsCount: 0,
+    pendingReportsCount: 0,
+    totalPendingCount: 0,
+    latestPendingPayment: null,
+    latestPendingReport: null,
+  });
+  const [adminTopBanner, setAdminTopBanner] = useState<{
+    id: string;
+    tab: 'payments' | 'user_reports';
+    title: string;
+    subtitle: string;
+    count: number;
+  } | null>(null);
+  const adminTopBannerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const prevOwnerPendingRef = useRef<{
+    payments: number;
+    reports: number;
+    latestPayId: string | null;
+    latestRepId: string | null;
+  }>({ payments: -1, reports: -1, latestPayId: null, latestRepId: null });
   const [isWalletOpen, setIsWalletOpen] = useState(false);
   const [isVipOpen, setIsVipOpen] = useState(false);
   const [isGiftModalOpen, setIsGiftModalOpen] = useState(false);
@@ -778,7 +821,7 @@ export default function App() {
     }
   }, [currentUser, isProfileReady]);
 
-  // Subscribe to real-time User Profile updates from Firestore (silent equality check + instant ban enforcement)
+  // Subscribe to real-time User Profile updates from Firestore (silent equality check + instant ban & VIP expiry enforcement)
   useEffect(() => {
     if (!isProfileReady) return;
     const unsub = subscribeToUserProfile(currentUser.id, (profileUpdate) => {
@@ -791,9 +834,31 @@ export default function App() {
         }
         toast.error('تم حظر حسابك بواسطة الإدارة ولا يمكنك دخول الغرف أو الإرسال 🚫');
       }
+      const vipInfo = getVipDurationInfo(mergedCheck);
+      const normalizedUpdate: Partial<User> = vipInfo.isExpired
+        ? {
+            ...profileUpdate,
+            role: 'member',
+            vipBadge: '',
+            vipStartedAt: undefined,
+            vipExpiresAt: undefined,
+            vipDurationDays: undefined,
+          }
+        : profileUpdate;
+      if (vipInfo.isExpired && currentUserRef.current.role !== 'member') {
+        syncUserProfileToFirebase({
+          ...mergedCheck,
+          role: 'member',
+          vipBadge: '',
+          vipStartedAt: undefined,
+          vipExpiresAt: undefined,
+          vipDurationDays: undefined,
+        }).catch(() => {});
+        toast.info('انتهت مدة اشتراك VIP الخاصة بك وعادت عضويتك إلى عضو عادي');
+      }
       setCurrentUser(prev => {
-        if (!hasUserVisibleChange(prev, profileUpdate)) return prev;
-        return { ...prev, ...profileUpdate };
+        if (!hasUserVisibleChange(prev, normalizedUpdate)) return prev;
+        return { ...prev, ...normalizedUpdate };
       });
     });
     return () => unsub();
@@ -971,11 +1036,13 @@ export default function App() {
       syncMergedGlobalPresence();
     });
 
-    // Automatically re-register user and room on socket reconnect
+    // Automatically re-register user, room, and Firestore/RTDB presence on socket reconnect
     const unsubReconnect = realtimeSocket.subscribeToReconnectSuccess(() => {
       const me = currentUserRef.current;
       realtimeSocket.registerUser(me);
+      syncSelfPresenceProfile(me);
       const currentRoom = activeRoomRef.current;
+      updatePresenceCurrentRoom(me.id, currentRoom?.id || null);
       if (currentRoom) {
         realtimeSocket.joinRoom(currentRoom.id, me);
       }
@@ -1012,26 +1079,39 @@ export default function App() {
       setAppUpdateNotice(notice);
     });
 
-    // Live Last Message Preview across all rooms
-    const unsubRoomLastMsgs = subscribeToAllRoomLastMessages((lastMsgMap) => {
-      setRooms(prev => {
-        let changed = false;
-        const next = prev.map(r => {
-          const lm = lastMsgMap[r.id];
-          if (!lm) return r;
-          if (
-            r.lastMessage?.timestamp === lm.timestamp &&
-            r.lastMessage?.content === lm.content &&
-            r.lastMessage?.senderName === lm.senderName
-          ) {
-            return r;
-          }
-          changed = true;
-          return { ...r, lastMessage: lm };
+    // Live Last Message Preview across all rooms (deferred slightly so initial shell paints first)
+    let isEffectDisposed = false;
+    let unsubRoomLastMsgs: (() => void) | null = null;
+    let unsubRegisteredUsers: (() => void) | null = null;
+    const deferredStartupTimer = setTimeout(() => {
+      if (isEffectDisposed) return;
+      unsubRoomLastMsgs = subscribeToAllRoomLastMessages((lastMsgMap) => {
+        setRooms(prev => {
+          let changed = false;
+          const next = prev.map(r => {
+            const lm = lastMsgMap[r.id];
+            if (!lm) return r;
+            if (
+              r.lastMessage?.timestamp === lm.timestamp &&
+              r.lastMessage?.content === lm.content &&
+              r.lastMessage?.senderName === lm.senderName
+            ) {
+              return r;
+            }
+            changed = true;
+            return { ...r, lastMessage: lm };
+          });
+          return changed ? next : prev;
         });
-        return changed ? next : prev;
       });
-    });
+
+      unsubRegisteredUsers = subscribeToRegisteredUsersCount((count, users) => {
+        setRegisteredUsersCount((prev) => (count >= 1 && prev !== count ? count : prev));
+        if (users && users.length > 0) {
+          setAllRegisteredUsers(users);
+        }
+      });
+    }, 80);
 
     // Listen to room background theme updates across all rooms (silent no-op if unchanged)
     const unsubRoomBgs = realtimeSocket.subscribeToAllRoomBackgrounds((backgrounds) => {
@@ -1224,14 +1304,6 @@ export default function App() {
     const unsubCalls = realtimeSocket.subscribeToCallSignals(handleIncomingCallSignal);
     const unsubFirestoreCalls = subscribeToFirestoreCallSignals(activeUser.id, handleIncomingCallSignal);
 
-    // Real-time total registered members counter (users collection) + cached against transient drops
-    const unsubRegisteredUsers = subscribeToRegisteredUsersCount((count, users) => {
-      setRegisteredUsersCount((prev) => (count >= 1 && prev !== count ? count : prev));
-      if (users && users.length > 0) {
-        setAllRegisteredUsers(users);
-      }
-    });
-
     // Real-time per-room online users counts across ALL rooms (from presence/{uid}.currentRoom)
     const unsubRoomOnlineCounts = subscribeToAllRoomsOnlineCounts(activeUser.id, (countsMap) => {
       setRooms((prev) => {
@@ -1248,22 +1320,119 @@ export default function App() {
       });
     });
 
+    // Real-time created & closed rooms sync across all devices
+    const unsubCreatedRooms = subscribeToCreatedRooms((createdRooms, closedIds) => {
+      setRooms((prev) => {
+        const defaultMap = new Map(INITIAL_ROOMS.map((r) => [r.id, r]));
+        const mergedMap = new Map<string, Room>();
+        for (const r of prev) {
+          if (!r?.id || closedIds.has(r.id)) continue;
+          mergedMap.set(r.id, r);
+        }
+        for (const cr of createdRooms) {
+          if (!cr?.id || closedIds.has(cr.id) || cr.isClosed) continue;
+          const existing = mergedMap.get(cr.id);
+          mergedMap.set(cr.id, {
+            ...cr,
+            activeUsers: existing?.activeUsers ?? cr.activeUsers ?? 0,
+            lastMessage: existing?.lastMessage ?? cr.lastMessage,
+            backgroundTheme: existing?.backgroundTheme ?? cr.backgroundTheme,
+            isLocked: typeof existing?.isLocked === 'boolean' ? existing.isLocked : cr.isLocked,
+          });
+        }
+        for (const def of INITIAL_ROOMS) {
+          if (!mergedMap.has(def.id)) {
+            mergedMap.set(def.id, defaultMap.get(def.id)!);
+          }
+        }
+        const nextList = Array.from(mergedMap.values()).sort((a, b) => {
+          const aOff = OFFICIAL_PUBLIC_ROOM_IDS.has(a.id) ? 1 : 0;
+          const bOff = OFFICIAL_PUBLIC_ROOM_IDS.has(b.id) ? 1 : 0;
+          if (aOff !== bOff) return bOff - aOff;
+          return (b.createdAt || 0) - (a.createdAt || 0);
+        });
+        return nextList;
+      });
+
+      const currentActive = activeRoomRef.current;
+      if (currentActive && closedIds.has(currentActive.id)) {
+        setActiveRoom(null);
+        toast.info(`تم إغلاق غرفة "${currentActive.title}"`);
+      }
+    });
+
+    // Immediate WebSocket room-closed kick & list cleanup
+    const unsubRoomClosed = realtimeSocket.subscribeToRoomClosed(({ roomId }) => {
+      if (!roomId || OFFICIAL_PUBLIC_ROOM_IDS.has(roomId)) return;
+      setRooms((prev) => prev.filter((r) => r.id !== roomId));
+      if (activeRoomRef.current?.id === roomId) {
+        const closedTitle = activeRoomRef.current.title;
+        setActiveRoom(null);
+        toast.info(`تم إغلاق غرفة "${closedTitle}"`);
+      }
+    });
+
     return () => {
+      isEffectDisposed = true;
+      clearTimeout(deferredStartupTimer);
       unsubFirestorePresence();
       unsubWsGlobalPresence();
-      unsubRegisteredUsers();
+      if (unsubRegisteredUsers) unsubRegisteredUsers();
       unsubRoomOnlineCounts();
+      unsubCreatedRooms();
+      unsubRoomClosed();
       unsubReconnect();
       unsubAdmin();
       unsubGlobalJoin();
       unsubAppUpdate();
-      unsubRoomLastMsgs();
+      if (unsubRoomLastMsgs) unsubRoomLastMsgs();
       unsubRoomBgs();
       unsubRoomLocks();
       unsubCalls();
       unsubFirestoreCalls();
     };
   }, [currentUser.id, currentUser.sessionId, isProfileReady]);
+
+  // Auto-close empty custom rooms (excluding official Egypt 1 & Egypt 2) with safe grace & debounce
+  const emptyRoomTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  useEffect(() => {
+    if (!isProfileReady) return;
+    const now = Date.now();
+    const candidateIds = new Set<string>();
+
+    rooms.forEach((room) => {
+      if (!room?.id || OFFICIAL_PUBLIC_ROOM_IDS.has(room.id)) return;
+      if (activeRoom?.id === room.id) return;
+      const ageMs = now - (room.createdAt || 0);
+      if (ageMs < 15000) return;
+      if ((room.activeUsers || 0) === 0) {
+        candidateIds.add(room.id);
+        if (!emptyRoomTimersRef.current.has(room.id)) {
+          const timer = setTimeout(() => {
+            emptyRoomTimersRef.current.delete(room.id);
+            closeRoomInDB(room.id, 'auto_empty').catch(() => {});
+            realtimeSocket.sendRoomClosed(room.id, 'auto_empty');
+            setRooms((prev) => prev.filter((r) => r.id !== room.id));
+          }, 5500);
+          emptyRoomTimersRef.current.set(room.id, timer);
+        }
+      }
+    });
+
+    emptyRoomTimersRef.current.forEach((timer, rId) => {
+      if (!candidateIds.has(rId)) {
+        clearTimeout(timer);
+        emptyRoomTimersRef.current.delete(rId);
+      }
+    });
+  }, [rooms, activeRoom?.id, isProfileReady]);
+
+  useEffect(() => {
+    return () => {
+      emptyRoomTimersRef.current.forEach((t) => clearTimeout(t));
+      emptyRoomTimersRef.current.clear();
+    };
+  }, []);
 
   // Track Cumulative Visitor on each visit/session and sync atomically in real time (never decreases)
   useEffect(() => {
@@ -1275,24 +1444,83 @@ export default function App() {
     }
 
     const visitToken = `${deviceId}_${sessionStorage.getItem('shat_masr_session_id') || 's'}`;
-    const unsub = syncCumulativeVisitorsRealtime(
-      visitToken,
-      shouldIncrement,
-      cumulativeVisitorsCount,
-      (highestCount) => {
-        setCumulativeVisitorsCount((prev) => {
-          const next = Math.max(prev, highestCount, 15480);
-          if (next === prev) return prev;
-          try {
-            localStorage.setItem('shat_masr_cumulative_visitors', String(next));
-          } catch {}
-          return next;
-        });
-      }
-    );
+    let unsubVisitors: (() => void) | null = null;
+    let disposed = false;
+    const timer = setTimeout(() => {
+      if (disposed) return;
+      unsubVisitors = syncCumulativeVisitorsRealtime(
+        visitToken,
+        shouldIncrement,
+        cumulativeVisitorsCount,
+        (highestCount) => {
+          setCumulativeVisitorsCount((prev) => {
+            const next = Math.max(prev, highestCount, 15480);
+            if (next === prev) return prev;
+            try {
+              localStorage.setItem('shat_masr_cumulative_visitors', String(next));
+            } catch {}
+            return next;
+          });
+        }
+      );
+    }, 100);
 
-    return () => unsub();
+    return () => {
+      disposed = true;
+      clearTimeout(timer);
+      if (unsubVisitors) unsubVisitors();
+    };
   }, [deviceId]);
+
+  // Lightweight Owner/Admin real-time pending decision listener (Payments/VIP upgrades + User Reports)
+  const isCurrentAdminOrOwner = isUserAdminOrOwner(currentUser);
+  useEffect(() => {
+    if (!isProfileReady || !isCurrentAdminOrOwner) {
+      setOwnerPendingSummary({
+        pendingPaymentsCount: 0,
+        pendingReportsCount: 0,
+        totalPendingCount: 0,
+        latestPendingPayment: null,
+        latestPendingReport: null,
+      });
+      return;
+    }
+
+    const unsubPending = subscribeToOwnerPendingItems((summary) => {
+      setOwnerPendingSummary(summary);
+      const prev = prevOwnerPendingRef.current;
+      const latestPayId = summary.latestPendingPayment?.id || null;
+      const latestRepId = summary.latestPendingReport?.id || null;
+
+      const isFirstLoad = prev.payments === -1;
+      const hasNewPayment =
+        (isFirstLoad && summary.pendingPaymentsCount > 0) ||
+        (!isFirstLoad &&
+          (summary.pendingPaymentsCount > prev.payments ||
+            (latestPayId && latestPayId !== prev.latestPayId && summary.pendingPaymentsCount > 0)));
+      const hasNewReport =
+        (isFirstLoad && summary.pendingReportsCount > 0) ||
+        (!isFirstLoad &&
+          (summary.pendingReportsCount > prev.reports ||
+            (latestRepId && latestRepId !== prev.latestRepId && summary.pendingReportsCount > 0)));
+
+      prevOwnerPendingRef.current = {
+        payments: summary.pendingPaymentsCount,
+        reports: summary.pendingReportsCount,
+        latestPayId,
+        latestRepId,
+      };
+
+      if (hasNewPayment || hasNewReport) {
+        sounds.playNotificationChime();
+      }
+    });
+
+    return () => {
+      unsubPending();
+      if (adminTopBannerTimerRef.current) clearTimeout(adminTopBannerTimerRef.current);
+    };
+  }, [isProfileReady, isCurrentAdminOrOwner]);
 
   const currentTabRef = useRef(currentTab);
   currentTabRef.current = currentTab;
@@ -1340,18 +1568,6 @@ export default function App() {
             const existing = prev[rawMsg.senderId];
             const nextCount = (existing?.count || 0) + 1;
             const senderDisplayName = rawMsg.senderName || existing?.senderName || 'عضو شات مصر';
-            const dmPrefsEnabled = me.notificationPrefs?.directMessages !== false;
-            if (dmPrefsEnabled) {
-              toast.social(
-                nextCount > 1
-                  ? `رسائل خاصة جديدة (${nextCount}) من ${senderDisplayName} 💬`
-                  : `رسالة خاصة جديدة من ${senderDisplayName} 💬`,
-                {
-                  id: `grouped_dm_${rawMsg.senderId}`,
-                  description: msgPreview,
-                }
-              );
-            }
             return {
               ...prev,
               [rawMsg.senderId]: {
@@ -1449,17 +1665,6 @@ export default function App() {
             }
             sounds.playNotificationChime();
             const previewText = rawMsg.content || rawMsg.text || 'رسالة جديدة';
-            setDmTopBanner({
-              id: bannerId,
-              senderId: toastPayload.senderId,
-              senderName: toastPayload.senderName,
-              senderAvatar: toastPayload.senderAvatar,
-              preview: previewText
-            });
-            if (dmTopBannerTimerRef.current) clearTimeout(dmTopBannerTimerRef.current);
-            dmTopBannerTimerRef.current = setTimeout(() => {
-              setDmTopBanner((curr) => (curr?.id === bannerId ? null : curr));
-            }, 6000);
             if (typeof document !== 'undefined' && document.hidden) {
               triggerExternalBrowserNotification(
                 `أرسل إليك ${toastPayload.senderName} رسالة خاصة`,
@@ -1506,7 +1711,7 @@ export default function App() {
                 lastTimestamp: Math.max(rec.lastTimestamp || 0, prevEntry?.lastTimestamp || 0)
               };
 
-              // If Firestore delivered a brand-new message ID before/without WS banner, trigger DM top banner
+              // Sound cue when a brand-new message arrives via Firestore sync
               if (
                 rec.lastMessageId &&
                 !processedUnreadDmIdsRef.current.has(rec.lastMessageId) &&
@@ -1518,17 +1723,6 @@ export default function App() {
                 const dmNotifsEnabled = currentUserRef.current.notificationPrefs?.directMessages !== false;
                 if (dmNotifsEnabled) {
                   sounds.playNotificationChime();
-                  setDmTopBanner({
-                    id: rec.lastMessageId,
-                    senderId: rec.senderId,
-                    senderName: rec.senderName,
-                    senderAvatar: rec.senderAvatar,
-                    preview: rec.lastMessage
-                  });
-                  if (dmTopBannerTimerRef.current) clearTimeout(dmTopBannerTimerRef.current);
-                  dmTopBannerTimerRef.current = setTimeout(() => {
-                    setDmTopBanner((curr) => (curr?.id === rec.lastMessageId ? null : curr));
-                  }, 6000);
                 }
               }
             });
@@ -1641,25 +1835,6 @@ export default function App() {
           unseen.forEach(r => seenFriendBannerIdsRef.current.add(r.id));
           const newest = unseen[0];
           sounds.playMessageReceived();
-          setFriendReqBanner(newest);
-          toast.social(
-            pending.length > 1
-              ? `لديك ${pending.length} طلبات صداقة جديدة 🤝`
-              : `لديك طلب صداقة جديد من ${newest.senderName} 🤝`,
-            {
-              id: 'grouped_friend_requests',
-              description: pending.length > 1 ? `آخرهم من ${newest.senderName}` : 'اضغط لفتح قائمة الطلبات',
-              duration: 6000,
-              action: {
-                label: 'عرض',
-                onClick: () => setIsFriendRequestsOpen(true),
-              },
-            }
-          );
-          if (friendReqBannerTimerRef.current) clearTimeout(friendReqBannerTimerRef.current);
-          friendReqBannerTimerRef.current = setTimeout(() => {
-            setFriendReqBanner((curr) => (curr?.id === newest.id ? null : curr));
-          }, 10000);
           if (typeof document !== 'undefined' && document.hidden) {
             triggerExternalBrowserNotification(
               `طلب صداقة جديد من ${newest.senderName}`,
@@ -1680,108 +1855,156 @@ export default function App() {
       const next = invites.find(
         (inv) => inv.status === 'pending' && !dismissedRoomInviteIdsRef.current.has(inv.id)
       );
-      if (next) {
-        setIncomingRoomInvite((prev) => {
-          if (prev?.id !== next.id) {
-            sounds.playNotificationChime();
-            toast.info(`يدعوك ${next.fromUserName} للانضمام إلى ${next.roomTitle} 🚪`);
-          }
-          return next;
-        });
-      } else {
-        setIncomingRoomInvite(null);
-      }
-    });
-    return () => unsub();
-  }, [currentUser.id, isProfileReady]);
-
-  // Dedicated onSnapshot listener: Owner Room Join Requests (from room cards / private rooms)
-  useEffect(() => {
-    if (!isProfileReady || !currentUser.id) return;
-    const unsub = subscribeToOwnerRoomJoinRequests(currentUser.id, (reqs) => {
-      const next = reqs.find(
-        (req) => req.status === 'pending' && !dismissedOwnerJoinReqIdsRef.current.has(req.id)
-      );
-      if (next) {
-        setOwnerRoomJoinRequest((prev) => {
-          if (prev?.id !== next.id) {
-            sounds.playNotificationChime();
-            toast.info(`يريد ${next.userName} الانضمام إلى غرفتك 🔑`);
-          }
-          return next;
-        });
-      } else {
-        setOwnerRoomJoinRequest(null);
-      }
-    });
-    return () => unsub();
-  }, [currentUser.id, isProfileReady]);
-
-  // Dedicated onSnapshot listener: Incoming XO Game Challenges across all tabs & inside rooms
-  useEffect(() => {
-    if (!isProfileReady || !currentUser.id) return;
-    const unsub = subscribeToIncomingGameChallenges(currentUser.id, (challenges) => {
-      const next = challenges.find(
-        (ch) => ch.status === 'pending' && !dismissedGameChallengeIdsRef.current.has(ch.matchId)
-      );
-      if (next) {
-        setIncomingGameChallenge((prev) => {
-          if (prev?.matchId !== next.matchId) {
-            sounds.playNotificationChime();
-            toast.info(`⚔️ يتحداك ${next.fromName} في لعبة إكس أو`);
-          }
-          return next;
-        });
-      } else {
-        setIncomingGameChallenge(null);
-      }
-    });
-    return () => unsub();
-  }, [currentUser.id, isProfileReady]);
-
-  // Real-time social notifications (Forum post & Story likes/comments & App updates)
-  const [realtimeNotifications, setRealtimeNotifications] = useState<RealtimeUserNotification[]>([]);
-  const realtimeNotificationsRef = useRef<RealtimeUserNotification[]>([]);
-  realtimeNotificationsRef.current = realtimeNotifications;
-  const [isAppUpdateNotifRead, setIsAppUpdateNotifRead] = useState(false);
-  const seenNotifIdsRef = useRef<Set<string>>(new Set());
-
-  useEffect(() => {
-    setIsAppUpdateNotifRead(false);
-  }, [appUpdateNotice?.version]);
-
-  useEffect(() => {
-    if (!isProfileReady || !currentUser.id) return;
-    const mountThresholdMs = getServerNowMs() - 8000;
-    const unsub = subscribeToUserNotifications(currentUser.id, (list) => {
-      setRealtimeNotifications(list);
-      for (const item of list) {
-        if (!item.id || seenNotifIdsRef.current.has(item.id)) continue;
-        seenNotifIdsRef.current.add(item.id);
-        if (!item.isRead && (item.createdAt || 0) >= mountThresholdMs && item.message) {
-          sounds.playNotificationChime();
-          setBellNotifBanner(item);
-          if (bellNotifTimerRef.current) clearTimeout(bellNotifTimerRef.current);
-          bellNotifTimerRef.current = setTimeout(() => {
-            setBellNotifBanner((curr) => (curr?.id === item.id ? null : curr));
-          }, 5200);
-          toast.social(item.message, {
-            id: `rt_notif_${item.id}`,
-            duration: 4500,
+        if (next) {
+          setIncomingRoomInvite((prev) => {
+            if (prev?.id !== next.id) {
+              sounds.playNotificationChime();
+            }
+            return next;
           });
-          if (typeof document !== 'undefined' && document.hidden) {
-            triggerExternalBrowserNotification(
-              item.kind === 'story_like' || item.kind === 'story_comment'
-                ? 'إشعار جديد على قصتك'
-                : 'إشعار جديد في المنتدى',
-              item.message,
-              { openForum: item.kind === 'forum_like' || item.kind === 'forum_comment' }
-            );
+        } else {
+          setIncomingRoomInvite(null);
+        }
+      });
+      return () => unsub();
+    }, [currentUser.id, isProfileReady]);
+
+    // Dedicated onSnapshot listener: Owner Room Join Requests (from room cards / private rooms)
+    useEffect(() => {
+      if (!isProfileReady || !currentUser.id) return;
+      const unsub = subscribeToOwnerRoomJoinRequests(currentUser.id, (reqs) => {
+        const next = reqs.find(
+          (req) => req.status === 'pending' && !dismissedOwnerJoinReqIdsRef.current.has(req.id)
+        );
+        if (next) {
+          setOwnerRoomJoinRequest((prev) => {
+            if (prev?.id !== next.id) {
+              sounds.playNotificationChime();
+            }
+            return next;
+          });
+        } else {
+          setOwnerRoomJoinRequest(null);
+        }
+      });
+      return () => unsub();
+    }, [currentUser.id, isProfileReady]);
+
+    // Dedicated onSnapshot listener: Incoming XO Game Challenges across all tabs & inside rooms
+    useEffect(() => {
+      if (!isProfileReady || !currentUser.id) return;
+      const unsub = subscribeToIncomingGameChallenges(currentUser.id, (challenges) => {
+        const next = challenges.find(
+          (ch) => ch.status === 'pending' && !dismissedGameChallengeIdsRef.current.has(ch.matchId)
+        );
+        if (next) {
+          setIncomingGameChallenge((prev) => {
+            if (prev?.matchId !== next.matchId) {
+              sounds.playNotificationChime();
+            }
+            return next;
+          });
+        } else {
+          setIncomingGameChallenge(null);
+        }
+      });
+      return () => unsub();
+    }, [currentUser.id, isProfileReady]);
+
+    // Dedicated isolated onSnapshot listener: Incoming Ludo Invites
+    useEffect(() => {
+      if (!isProfileReady || !currentUser.id) return;
+      const unsub = subscribeToIncomingLudoInvites(currentUser.id, (invites) => {
+        const next = invites.find(
+          (inv) => inv.status === 'pending' && !dismissedLudoInviteIdsRef.current.has(inv.matchId)
+        );
+        if (next) {
+          setIncomingLudoInvite((prev) => {
+            if (prev?.matchId !== next.matchId) {
+              sounds.playNotificationChime();
+            }
+            return next;
+          });
+        } else {
+          setIncomingLudoInvite(null);
+        }
+      });
+      return () => unsub();
+    }, [currentUser.id, isProfileReady]);
+
+    // Real-time social notifications (3 isolated listeners: general, forum likes/comments, story likes/comments)
+    const [generalNotifications, setGeneralNotifications] = useState<RealtimeUserNotification[]>([]);
+    const [forumNotifications, setForumNotifications] = useState<RealtimeUserNotification[]>([]);
+    const [storyNotifications, setStoryNotifications] = useState<RealtimeUserNotification[]>([]);
+    const [isAppUpdateNotifRead, setIsAppUpdateNotifRead] = useState(false);
+    const seenNotifIdsRef = useRef<Set<string>>(new Set());
+
+    const realtimeNotifications = React.useMemo<RealtimeUserNotification[]>(() => {
+      const byId = new Map<string, RealtimeUserNotification>();
+      [...generalNotifications, ...forumNotifications, ...storyNotifications].forEach((n) => {
+        if (!n?.id) return;
+        const existing = byId.get(n.id);
+        if (!existing) {
+          byId.set(n.id, n);
+        } else {
+          byId.set(n.id, {
+            ...existing,
+            ...n,
+            isRead: Boolean(existing.isRead || n.isRead),
+          });
+        }
+      });
+      return Array.from(byId.values()).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    }, [generalNotifications, forumNotifications, storyNotifications]);
+
+    const realtimeNotificationsRef = useRef<RealtimeUserNotification[]>([]);
+    realtimeNotificationsRef.current = realtimeNotifications;
+
+    useEffect(() => {
+      setIsAppUpdateNotifRead(false);
+    }, [appUpdateNotice?.version]);
+
+    useEffect(() => {
+      if (!isProfileReady || !currentUser.id) return;
+      const mountThresholdMs = getServerNowMs() - 8000;
+
+      const handleNewRealtimeNotifs = (list: RealtimeUserNotification[]) => {
+        for (const item of list) {
+          if (!item.id || seenNotifIdsRef.current.has(item.id)) continue;
+          seenNotifIdsRef.current.add(item.id);
+          if (!item.isRead && (item.createdAt || 0) >= mountThresholdMs && item.message) {
+            sounds.playNotificationChime();
+            if (typeof document !== 'undefined' && document.hidden) {
+              triggerExternalBrowserNotification(
+                item.kind === 'story_like' || item.kind === 'story_comment'
+                  ? 'إشعار جديد على قصتك'
+                  : 'إشعار جديد في المنتدى',
+                item.message,
+                { openForum: item.kind === 'forum_like' || item.kind === 'forum_comment' }
+              );
+            }
           }
         }
-      }
+      };
+
+    const unsubGeneral = subscribeToUserNotifications(currentUser.id, (list) => {
+      setGeneralNotifications(list);
+      handleNewRealtimeNotifs(list);
     });
-    return () => unsub();
+    const unsubForum = subscribeToForumNotifications(currentUser.id, (list) => {
+      setForumNotifications(list);
+      handleNewRealtimeNotifs(list);
+    });
+    const unsubStory = subscribeToStoryNotifications(currentUser.id, (list) => {
+      setStoryNotifications(list);
+      handleNewRealtimeNotifs(list);
+    });
+
+    return () => {
+      unsubGeneral();
+      unsubForum();
+      unsubStory();
+    };
   }, [currentUser.id, isProfileReady]);
 
   const bellNotifications = React.useMemo<RealtimeUserNotification[]>(() => {
@@ -2383,6 +2606,7 @@ export default function App() {
     setIsSettingsOpen(false);
     setIsWallpapersModalOpen(false);
     setIsLogoutModalOpen(false);
+    setIsLudoFullWindowOpen(false);
   }, []);
 
   // Enter Room Handler with Ban Check, Room Lock & Private Room Protection
@@ -2458,7 +2682,8 @@ export default function App() {
   };
 
   const handleCreateRoom = (newRoom: Room, cost: number) => {
-    if (cost > 0) {
+    const isOwnerAccount = isUserAdminOrOwner(currentUserRef.current);
+    if (cost > 0 && !isOwnerAccount) {
       setCurrentUser(prev => ({
         ...prev,
         coins: Math.max(0, prev.coins - cost)
@@ -2469,12 +2694,34 @@ export default function App() {
       activeUsers: 1,
       visitorsCount: '1',
       ownerId: currentUser.id,
-      hostId: currentUser.id
+      hostId: currentUser.id,
+      createdAt: Date.now(),
+      isClosed: false,
     };
-    setRooms([created, ...rooms]);
+    setRooms((prev) => [created, ...prev.filter((r) => r.id !== created.id)]);
+    saveCreatedRoomToFirestore(created).catch(() => {});
     toast.success(`تم إنشاء غرفة "${created.title}" بنجاح ✨`);
     handleSelectRoom(created);
   };
+
+  const handleCloseRoom = useCallback(async (roomId: string) => {
+    if (!roomId || OFFICIAL_PUBLIC_ROOM_IDS.has(roomId)) return;
+    const me = currentUserRef.current;
+    await closeRoomInDB(roomId, me.id).catch(() => {});
+    realtimeSocket.sendRoomClosed(roomId, me.id);
+    setRooms((prev) => {
+      const next = prev.filter((r) => r.id !== roomId);
+      try {
+        localStorage.setItem('arab_chat_rooms', JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+    if (activeRoomRef.current?.id === roomId) {
+      closeAllModals();
+      setActiveRoom(null);
+    }
+    toast.success('تم إغلاق الغرفة وحذفها بنجاح');
+  }, [closeAllModals]);
 
   // Update Speakers on Stage
   const handleUpdateSpeakers = (updatedSpeakers: SpeakerSeat[]) => {
@@ -2613,9 +2860,11 @@ export default function App() {
     if (currentUserRef.current?.id) {
       markUserNotificationsRead(currentUserRef.current.id, [notificationId]).catch(() => {});
     }
-    setRealtimeNotifications((prev) =>
-      prev.map((n) => (n.id === notificationId ? { ...n, isRead: true } : n))
-    );
+    const markList = (prev: RealtimeUserNotification[]) =>
+      prev.map((n) => (n.id === notificationId ? { ...n, isRead: true, read: true } : n));
+    setGeneralNotifications(markList);
+    setForumNotifications(markList);
+    setStoryNotifications(markList);
   }, []);
 
   const markAllNotificationsRead = useCallback(() => {
@@ -2623,7 +2872,11 @@ export default function App() {
     const unreadIds = realtimeNotificationsRef.current.filter((n) => !n.isRead).map((n) => n.id);
     if (unreadIds.length > 0 && currentUserRef.current?.id) {
       markUserNotificationsRead(currentUserRef.current.id, unreadIds).catch(() => {});
-      setRealtimeNotifications((prev) => prev.map((n) => (n.isRead ? n : { ...n, isRead: true })));
+      const markAllList = (prev: RealtimeUserNotification[]) =>
+        prev.map((n) => (n.isRead ? n : { ...n, isRead: true, read: true }));
+      setGeneralNotifications(markAllList);
+      setForumNotifications(markAllList);
+      setStoryNotifications(markAllList);
     }
   }, []);
 
@@ -2652,7 +2905,21 @@ export default function App() {
     });
     setIsFriendRequestsOpen(true);
   }, [pendingFriendRequests]);
-  const openAdmin = useCallback(() => setIsAdminOpen(true), []);
+  const openAdminAt = useCallback((tab: 'users' | 'user_reports' | 'payments' = 'users') => {
+    setAdminInitialTab(tab);
+    setIsAdminOpen(true);
+  }, []);
+
+  const openAdmin = useCallback(() => {
+    const defaultTab =
+      ownerPendingSummary.pendingPaymentsCount > 0
+        ? 'payments'
+        : ownerPendingSummary.pendingReportsCount > 0
+        ? 'user_reports'
+        : 'users';
+    setAdminInitialTab(defaultTab);
+    setIsAdminOpen(true);
+  }, [ownerPendingSummary.pendingPaymentsCount, ownerPendingSummary.pendingReportsCount]);
   const openRadio = useCallback(() => setIsRadioModalOpen(true), []);
   const openMissions = useCallback(() => setIsDailyMissionsOpen(true), []);
   const handleSendGiftToUser = useCallback((user: User) => {
@@ -2694,7 +2961,10 @@ export default function App() {
     if (currentUserRef.current?.id) {
       deleteUserNotification(currentUserRef.current.id, notificationId).catch(() => {});
     }
-    setRealtimeNotifications((prev) => prev.filter((n) => n.id !== notificationId));
+    const filterFn = (prev: RealtimeUserNotification[]) => prev.filter((n) => n.id !== notificationId);
+    setGeneralNotifications(filterFn);
+    setForumNotifications(filterFn);
+    setStoryNotifications(filterFn);
   }, []);
 
   const handleClearAllNotifications = useCallback(() => {
@@ -2703,7 +2973,9 @@ export default function App() {
     if (currentUserRef.current?.id) {
       clearAllUserNotifications(currentUserRef.current.id).catch(() => {});
     }
-    setRealtimeNotifications([]);
+    setGeneralNotifications([]);
+    setForumNotifications([]);
+    setStoryNotifications([]);
   }, []);
 
   const openSettings = useCallback(() => {
@@ -2819,6 +3091,12 @@ export default function App() {
         return;
       }
 
+      // 2.5 Exit full-window Ludo back to Games/Home
+      if (isLudoFullWindowOpen) {
+        setIsLudoFullWindowOpen(false);
+        return;
+      }
+
       // 3. Return to 'home' tab
       if (currentTab !== 'home') {
         setCurrentTab('home');
@@ -2833,7 +3111,7 @@ export default function App() {
     isNotificationsOpen, isOnlineUsersOpen, isPrivateChatDrawerOpen, isRadioModalOpen,
     isLeaderboardOpen, selectedProfileUser, isPhoneAuthOpen, isPrivatePromptOpen,
     isDailyMissionsOpen, isFriendRequestsOpen, isSettingsOpen, isWallpapersModalOpen,
-    isInsidePrivateChat, activeRoom, currentTab
+    isInsidePrivateChat, activeRoom, isLudoFullWindowOpen, currentTab
   ]);
 
   // Friend Request Accept / Decline (Optimistic UI with safe rollback)
@@ -3062,235 +3340,6 @@ export default function App() {
                   }}
                   aria-label="إغلاق"
                   className="p-1 rounded-full hover:bg-white/20 text-white/90 cursor-pointer"
-                >
-                  <X className="w-3.5 h-3.5" />
-                </button>
-              </div>
-            </motion.div>
-          )}
-
-          {/* Global User Join Banner (Clickable with Private Chat / Add Friend / Profile Actions) */}
-          {globalJoinBanner && (
-            <motion.div
-              key={`join-${globalJoinBanner.id}`}
-              initial={{ opacity: 0, y: -12, scale: 0.97 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: -10, scale: 0.97 }}
-              transition={{ duration: 0.26, ease: [0.22, 1, 0.36, 1] }}
-              onClick={() => setIsGlobalJoinMenuOpen((prev) => !prev)}
-              className="pointer-events-auto cursor-pointer flex flex-col gap-1.5 px-3.5 py-2 rounded-2xl bg-white/95 backdrop-blur-md border border-emerald-200 shadow-lg text-slate-900"
-            >
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2 min-w-0">
-                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping shrink-0" />
-                  <span className="text-xs font-black text-emerald-800 truncate">
-                    انضم {globalJoinBanner.name} إلى شات مصر
-                  </span>
-                </div>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setIsGlobalJoinMenuOpen(false);
-                    setGlobalJoinBanner(null);
-                  }}
-                  aria-label="إغلاق"
-                  className="p-1 rounded-full text-slate-400 hover:text-slate-700 cursor-pointer"
-                >
-                  <X className="w-3.5 h-3.5" />
-                </button>
-              </div>
-              {isGlobalJoinMenuOpen && (
-                <div
-                  onClick={(e) => e.stopPropagation()}
-                  className="flex items-center justify-between gap-1.5 pt-1 border-t border-emerald-100"
-                >
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const found = globalOnlineUsersRef.current.find((u) => u.id === globalJoinBanner.id);
-                      const peer: User = found || {
-                        id: globalJoinBanner.id,
-                        name: globalJoinBanner.name,
-                        username: globalJoinBanner.name.toLowerCase().replace(/\s+/g, '_'),
-                        avatar: globalJoinBanner.avatar || '',
-                        bio: 'عضو في شات مصر',
-                        country: 'مصر',
-                        countryFlag: '🇪🇬',
-                        role: 'member',
-                        coins: 100,
-                        earningsEgp: 0,
-                        earningsUsd: 0,
-                        vipBadge: '',
-                        frameStyle: 'border-slate-300',
-                        profileWallpaper: '',
-                        fontPreference: 'cairo',
-                        isOnline: true,
-                        status: 'online',
-                        joinedAt: new Date().toISOString(),
-                        gender: 'male',
-                        level: 1,
-                        likesReceived: 0,
-                        giftsReceivedCount: 0,
-                        badges: []
-                      };
-                      setIsGlobalJoinMenuOpen(false);
-                      setGlobalJoinBanner(null);
-                      handleOpenPrivateChatWith(peer);
-                    }}
-                    className="flex-1 py-1.5 px-2 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[11px] font-black text-center cursor-pointer"
-                  >
-                    💬 رسالة خاصة
-                  </button>
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      const ok = await sendFriendRequest(currentUserRef.current, globalJoinBanner.id);
-                      if (ok) {
-                        toast.success(`تم إرسال طلب صداقة إلى ${globalJoinBanner.name} 🤝`);
-                      } else {
-                        toast.error('تعذر إرسال طلب الصداقة حالياً');
-                      }
-                      setIsGlobalJoinMenuOpen(false);
-                      setGlobalJoinBanner(null);
-                    }}
-                    className="flex-1 py-1.5 px-2 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-700 text-[11px] font-black text-center cursor-pointer"
-                  >
-                    🤝 طلب صداقة
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const found = globalOnlineUsersRef.current.find((u) => u.id === globalJoinBanner.id);
-                      const peer: User = found || {
-                        id: globalJoinBanner.id,
-                        name: globalJoinBanner.name,
-                        username: globalJoinBanner.name.toLowerCase().replace(/\s+/g, '_'),
-                        avatar: globalJoinBanner.avatar || '',
-                        bio: 'عضو في شات مصر',
-                        country: 'مصر',
-                        countryFlag: '🇪🇬',
-                        role: 'member',
-                        coins: 100,
-                        earningsEgp: 0,
-                        earningsUsd: 0,
-                        vipBadge: '',
-                        frameStyle: 'border-slate-300',
-                        profileWallpaper: '',
-                        fontPreference: 'cairo',
-                        isOnline: true,
-                        status: 'online',
-                        joinedAt: new Date().toISOString(),
-                        gender: 'male',
-                        level: 1,
-                        likesReceived: 0,
-                        giftsReceivedCount: 0,
-                        badges: []
-                      };
-                      setIsGlobalJoinMenuOpen(false);
-                      setGlobalJoinBanner(null);
-                      setSelectedProfileUser(peer);
-                    }}
-                    className="flex-1 py-1.5 px-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 text-[11px] font-black text-center cursor-pointer"
-                  >
-                    👤 الملف الشخصي
-                  </button>
-                </div>
-              )}
-            </motion.div>
-          )}
-
-          {/* Incoming Private Message Top Banner (Smooth fade-in/out) */}
-          {dmTopBanner && (
-            <motion.div
-              key={`dm-${dmTopBanner.id}`}
-              initial={{ opacity: 0, y: -12, scale: 0.97 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: -10, scale: 0.97 }}
-              transition={{ duration: 0.26, ease: [0.22, 1, 0.36, 1] }}
-              onClick={() => {
-                const target = {
-                  senderId: dmTopBanner.senderId,
-                  senderName: dmTopBanner.senderName,
-                  senderAvatar: dmTopBanner.senderAvatar,
-                };
-                setDmTopBanner(null);
-                handleOpenIncomingChat(target);
-              }}
-              className="pointer-events-auto cursor-pointer flex items-center justify-between gap-2.5 px-3.5 py-2.5 rounded-2xl bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border border-indigo-200 dark:border-indigo-700/60 shadow-xl text-slate-900 dark:text-slate-100 hover:bg-indigo-50/70 dark:hover:bg-slate-800/95 transition-colors"
-            >
-              <div className="flex items-center gap-2.5 min-w-0">
-                <div className="w-8 h-8 rounded-full bg-indigo-100 dark:bg-indigo-900/60 border border-indigo-200 dark:border-indigo-700 flex items-center justify-center text-indigo-600 dark:text-indigo-300 shrink-0 overflow-hidden">
-                  {dmTopBanner.senderAvatar ? (
-                    <img src={dmTopBanner.senderAvatar} alt={dmTopBanner.senderName} className="w-full h-full object-cover" />
-                  ) : (
-                    <MessageCircle className="w-4 h-4" />
-                  )}
-                </div>
-                <div className="min-w-0">
-                  <p className="text-xs font-black text-slate-900 dark:text-slate-100 truncate">
-                    أرسل إليك {dmTopBanner.senderName} رسالة خاصة
-                  </p>
-                  <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">{dmTopBanner.preview}</p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setDmTopBanner(null);
-                }}
-                aria-label="إغلاق"
-                className="p-1 rounded-full text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 shrink-0 cursor-pointer"
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
-            </motion.div>
-          )}
-
-          {/* Incoming Friend Request Top Banner with Instant Accept / Decline (Smooth fade-in/out) */}
-          {friendReqBanner && (
-            <motion.div
-              key={`fr-${friendReqBanner.id}`}
-              initial={{ opacity: 0, y: -12, scale: 0.97 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: -10, scale: 0.97 }}
-              transition={{ duration: 0.26, ease: [0.22, 1, 0.36, 1] }}
-              className="pointer-events-auto flex items-center justify-between gap-2 px-3.5 py-2.5 rounded-2xl bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border border-amber-200 dark:border-amber-700/60 shadow-xl text-slate-900 dark:text-slate-100"
-            >
-              <div className="flex items-center gap-2 min-w-0">
-                <div className="w-8 h-8 rounded-full bg-amber-100 dark:bg-amber-900/50 border border-amber-200 dark:border-amber-700 flex items-center justify-center text-amber-600 dark:text-amber-300 shrink-0 overflow-hidden">
-                  {friendReqBanner.senderAvatar ? (
-                    <img src={friendReqBanner.senderAvatar} alt={friendReqBanner.senderName} className="w-full h-full object-cover" />
-                  ) : (
-                    <UserPlus className="w-4 h-4" />
-                  )}
-                </div>
-                <p className="text-xs font-black text-slate-900 dark:text-slate-100 truncate">
-                  أرسل لك {friendReqBanner.senderName} طلب صداقة
-                </p>
-              </div>
-              <div className="flex items-center gap-1 shrink-0">
-                <button
-                  type="button"
-                  onClick={() => handleAcceptFriendRequest(friendReqBanner)}
-                  className="px-2.5 py-1 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-black flex items-center gap-1 shadow-xs active:scale-95 transition cursor-pointer"
-                >
-                  <Check className="w-3 h-3" />
-                  <span>قبول</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleDeclineFriendRequest(friendReqBanner.id, friendReqBanner.senderId)}
-                  className="px-2.5 py-1 rounded-xl bg-rose-100 hover:bg-rose-200 dark:bg-rose-900/50 dark:hover:bg-rose-800/60 text-rose-700 dark:text-rose-200 text-[11px] font-black active:scale-95 transition cursor-pointer"
-                >
-                  رفض
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setFriendReqBanner(null)}
-                  aria-label="إغلاق"
-                  className="p-1 rounded-full text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 cursor-pointer"
                 >
                   <X className="w-3.5 h-3.5" />
                 </button>
@@ -3531,50 +3580,80 @@ export default function App() {
             </motion.div>
           )}
 
-          {/* Incoming Forum / Story Bell Notification Top Banner (Works on Home & Inside Rooms) */}
-          {bellNotifBanner && (() => {
-            const notifBg = getNotificationBgPresetById(readSavedNotificationBgPresetId(currentUser));
-            return (
-              <motion.div
-                key={`bell-${bellNotifBanner.id}`}
-                initial={{ opacity: 0, y: -12, scale: 0.97 }}
-                animate={{ opacity: 1, y: 0, scale: 1 }}
-                exit={{ opacity: 0, y: -10, scale: 0.97 }}
-                transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
-                onClick={() => {
-                  setBellNotifBanner(null);
-                  openNotifications();
-                }}
-                style={{
-                  background: notifBg.background,
-                  borderColor: notifBg.borderColor,
-                  color: notifBg.textColor,
-                }}
-                className="pointer-events-auto cursor-pointer flex items-center justify-between gap-2.5 px-3.5 py-2.5 rounded-2xl border shadow-xl backdrop-blur-md"
-              >
-                <div className="flex items-center gap-2.5 min-w-0">
-                  <div className="w-8 h-8 rounded-full bg-white/25 border border-white/30 flex items-center justify-center shrink-0">
-                    <Bell className="w-4 h-4" />
-                  </div>
-                  <div className="min-w-0">
-                    <p className="text-xs font-black truncate">{bellNotifBanner.message}</p>
-                    <p className="text-[10.5px] opacity-80 truncate">اضغط لعرض الإشعارات</p>
-                  </div>
+          {/* Incoming Ludo Match Invite Top Banner */}
+          {incomingLudoInvite && (
+            <motion.div
+              key={`ludo-inv-${incomingLudoInvite.matchId}`}
+              initial={{ opacity: 0, y: -12, scale: 0.97 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: -10, scale: 0.97 }}
+              transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
+              className="pointer-events-auto flex items-center justify-between gap-2 px-3.5 py-2.5 rounded-2xl bg-gradient-to-l from-rose-600 via-pink-600 to-amber-500 text-white border border-amber-300/60 shadow-xl"
+            >
+              <div className="flex items-center gap-2 min-w-0">
+                <div className="w-8 h-8 rounded-full bg-white/20 border border-white/30 flex items-center justify-center shrink-0 overflow-hidden">
+                  {incomingLudoInvite.hostAvatar ? (
+                    <img src={incomingLudoInvite.hostAvatar} alt={incomingLudoInvite.hostName} className="w-full h-full object-cover" />
+                  ) : (
+                    <Dices className="w-4 h-4" />
+                  )}
                 </div>
+                <div className="min-w-0">
+                  <p className="text-xs font-black leading-snug break-words">
+                    يدعوك {incomingLudoInvite.hostName} لطاولة اللودو ({incomingLudoInvite.playerCount} لاعبين) 🎲
+                  </p>
+                  {incomingLudoInvite.wager > 0 && (
+                    <p className="text-[10.5px] text-amber-100 font-bold">
+                      رهان الطاولة: {incomingLudoInvite.wager} كوينز 🪙
+                    </p>
+                  )}
+                </div>
+              </div>
+              <div className="flex items-center gap-1 shrink-0">
                 <button
                   type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setBellNotifBanner(null);
+                  onClick={async () => {
+                    const inv = incomingLudoInvite;
+                    dismissedLudoInviteIdsRef.current.add(inv.matchId);
+                    setIncomingLudoInvite(null);
+                    await respondToLudoInvite({
+                      userId: currentUser.id,
+                      hostId: inv.hostId,
+                      matchId: inv.matchId,
+                      acceptorUser: currentUser,
+                      status: 'accepted',
+                    });
+                    setAcceptedLudoMatchRef({ hostId: inv.hostId, matchId: inv.matchId });
+                    closeAllModals();
+                    setActiveRoom(null);
+                    setCurrentTab('games');
+                    setIsLudoFullWindowOpen(true);
                   }}
-                  aria-label="إغلاق"
-                  className="p-1 rounded-full hover:bg-black/10 shrink-0 cursor-pointer"
+                  className="px-2.5 py-1 rounded-xl bg-white text-rose-700 hover:bg-rose-50 text-[11px] font-black shadow-xs active:scale-95 transition cursor-pointer"
                 >
-                  <X className="w-3.5 h-3.5" />
+                  انضمام واللعب
                 </button>
-              </motion.div>
-            );
-          })()}
+                <button
+                  type="button"
+                  onClick={() => {
+                    const inv = incomingLudoInvite;
+                    dismissedLudoInviteIdsRef.current.add(inv.matchId);
+                    setIncomingLudoInvite(null);
+                    respondToLudoInvite({
+                      userId: currentUser.id,
+                      hostId: inv.hostId,
+                      matchId: inv.matchId,
+                      acceptorUser: currentUser,
+                      status: 'declined',
+                    }).catch(() => {});
+                  }}
+                  className="px-2 py-1 rounded-xl bg-white/15 hover:bg-white/25 text-white text-[11px] font-black cursor-pointer"
+                >
+                  رفض
+                </button>
+              </div>
+            </motion.div>
+          )}
         </AnimatePresence>
       </div>
 
@@ -3605,6 +3684,7 @@ export default function App() {
           onOpenSupport={openSupportFromHeader}
           onOpenSettings={openSettings}
           unreadNotificationsCount={unreadNotificationsCount}
+          adminPendingCount={isCurrentAdminOrOwner ? ownerPendingSummary.totalPendingCount : 0}
         />
       )}
 
@@ -3613,7 +3693,7 @@ export default function App() {
         <div className="bg-rose-600 text-white px-4 py-2.5 text-center text-xs font-black flex flex-wrap items-center justify-center gap-2 shadow-lg sticky top-0 z-[300] animate-in slide-in-from-top">
           <span>
             {!currentUser.isBanned && currentUser.bannedUntil
-              ? `🚫 حسابك محظور مؤقتاً حتى ${new Date(currentUser.bannedUntil).toLocaleString('ar-EG')}${currentUser.banReason ? ` (${currentUser.banReason})` : ''}`
+              ? `🚫 حسابك محظور مؤقتاً حتى ${formatArabicDateTime(currentUser.bannedUntil)}${currentUser.banReason ? ` (${currentUser.banReason})` : ''}`
               : `🚫 حسابك محظور حالياً من قِبل إدارة شات مصر والعرب${currentUser.banReason ? ` (${currentUser.banReason})` : ''}.`}
           </span>
           {isUserAdminOrOwner(currentUser) && (
@@ -3650,8 +3730,8 @@ export default function App() {
             : "flex-1 min-h-0 w-full max-w-7xl mx-auto overflow-hidden overscroll-none"
         }
       >
-        {/* Frozen Home Page Container (always mounted; hidden via CSS when inside a room or on another tab) */}
-        <div className={!activeRoom && currentTab === 'home' ? 'h-full w-full overflow-y-auto overflow-x-hidden overscroll-contain pb-[calc(64px+env(safe-area-inset-bottom,0px))]' : 'hidden'}>
+        {/* Frozen Home Page Container (always mounted; hidden via CSS when inside a room, Ludo full-window, or another tab) */}
+        <div className={!activeRoom && !isLudoFullWindowOpen && currentTab === 'home' ? 'h-full w-full overflow-y-auto overflow-x-hidden overscroll-contain pb-[calc(64px+env(safe-area-inset-bottom,0px))]' : 'hidden'}>
           <RoomsView
             rooms={rooms}
             currentUser={currentUser}
@@ -3664,7 +3744,7 @@ export default function App() {
             onOpenLeaderboard={openLeaderboard}
             onOpenMissions={openMissions}
             totalActiveUsersCount={trulyOnlineUsers.length}
-            registeredUsersCount={Math.max(registeredUsersCount, allRegisteredUsers.length, trulyOnlineUsers.length)}
+            registeredUsersCount={allRegisteredUsers.length > 0 ? allRegisteredUsers.length : registeredUsersCount}
             cumulativeVisitorsCount={cumulativeVisitorsCount}
             onOpenOnlineUsers={openOnlineUsers}
             onClaimSharedRewardCoins={handleClaimSharedRewardCoins}
@@ -3675,6 +3755,9 @@ export default function App() {
             onOpenCreateTextRoom={handleOpenCreateTextRoom}
             onOpenCreateVoiceRoom={handleOpenCreateVoiceRoom}
             onRequestJoinRoom={handleRequestJoinRoomFromCard}
+            onCloseRoom={handleCloseRoom}
+            onOpenRadio={openRadio}
+            isRadioPlaying={isRadioPlaying}
           />
         </div>
 
@@ -3683,7 +3766,7 @@ export default function App() {
               room={{
                 ...activeRoom,
                 activeUsers: roomActiveCount,
-                visitorsCount: Math.max(registeredUsersCount, allRegisteredUsers.length, trulyOnlineUsers.length).toLocaleString()
+                visitorsCount: Math.max(cumulativeVisitorsCount, registeredUsersCount, allRegisteredUsers.length).toLocaleString()
               }}
               currentUser={currentUser}
               messages={activeRoomMessages}
@@ -3720,7 +3803,24 @@ export default function App() {
               onLoadOlderMessages={handleLoadOlderRoomMessages}
               hasMoreOlderMessages={hasMoreRoomMessages}
               isLoadingOlderMessages={isLoadingOlderRoomMsgs}
+              onCloseRoom={handleCloseRoom}
+              onlineUsersList={trulyOnlineUsers}
             />
+          ) : isLudoFullWindowOpen ? (
+            <div className="h-full w-full overflow-y-auto overflow-x-hidden overscroll-contain bg-slate-50/90 dark:bg-slate-950/95">
+              <LudoGamePanel
+                fullWindow
+                onCloseWindow={() => setIsLudoFullWindowOpen(false)}
+                currentUser={currentUser}
+                allOnlineUsers={trulyOnlineUsers}
+                onUpdateCoins={(coins) => handleUpdateUserBalance(coins, currentUser.earningsEgp)}
+                onOpenWallet={openWallet}
+                externalLudoMatchRef={acceptedLudoMatchRef}
+                onConsumeExternalLudoMatchRef={() => setAcceptedLudoMatchRef(null)}
+                externalQuickInviteUser={quickLudoInviteUser}
+                onConsumeExternalQuickInviteUser={() => setQuickLudoInviteUser(null)}
+              />
+            </div>
           ) : (
             <>
               {currentTab === 'chat' && (
@@ -3756,11 +3856,16 @@ export default function App() {
                 <div className="h-full w-full overflow-y-auto overflow-x-hidden overscroll-contain pb-[calc(64px+env(safe-area-inset-bottom,0px))]">
                   <GamesView
                     currentUser={currentUser}
-                    allOnlineUsers={globalOnlineUsers}
+                    allOnlineUsers={trulyOnlineUsers}
                     onUpdateCoins={(coins) => handleUpdateUserBalance(coins, currentUser.earningsEgp)}
                     onOpenWallet={openWallet}
                     externalAcceptedChallenge={acceptedGameChallenge}
                     onConsumeExternalChallenge={() => setAcceptedGameChallenge(null)}
+                    externalLudoMatchRef={acceptedLudoMatchRef}
+                    onConsumeExternalLudoMatchRef={() => setAcceptedLudoMatchRef(null)}
+                    externalQuickInviteUser={quickLudoInviteUser}
+                    onConsumeExternalQuickInviteUser={() => setQuickLudoInviteUser(null)}
+                    onOpenLudoFullWindow={() => setIsLudoFullWindowOpen(true)}
                   />
                 </div>
               )}
@@ -3787,8 +3892,8 @@ export default function App() {
           )}
       </main>
 
-      {/* 3. Bottom Navigation Bar - Hidden inside active room OR active 1-on-1 private chat */}
-      {!activeRoom && !isPrivateChatDrawerOpen && (!isInsidePrivateChat || currentTab !== 'chat') && (
+      {/* 3. Bottom Navigation Bar - Hidden inside active room, full-window Ludo, OR active 1-on-1 private chat */}
+      {!activeRoom && !isLudoFullWindowOpen && !isPrivateChatDrawerOpen && (!isInsidePrivateChat || currentTab !== 'chat') && (
         <BottomNav
           currentTab={isPrivateChatDrawerOpen ? 'chat' : currentTab}
           onTabChange={handleBottomTabChange}
@@ -3908,6 +4013,13 @@ export default function App() {
         }}
         onInviteToMic={handleInviteUserToMic}
         onOpenPrivateChatWith={handleOpenPrivateChatWith}
+        onInviteToLudo={(target) => {
+          closeAllModals();
+          setActiveRoom(null);
+          setQuickLudoInviteUser(target);
+          setCurrentTab('games');
+          setIsLudoFullWindowOpen(true);
+        }}
       />
 
       {/* Private Messages & Friends Side Drawer (Full Width on Mobile) */}
@@ -4003,20 +4115,25 @@ export default function App() {
         onOpenRadioModal={openRadio}
       />
 
-      {/* Admin Control Panel Modal */}
-      <AdminControlPanelModal
-        isOpen={isAdminOpen}
-        onClose={() => setIsAdminOpen(false)}
-        currentUser={currentUser}
-        allUsers={allRegisteredUsers.length > 0 ? allRegisteredUsers : globalOnlineUsers}
-        onUserModified={(updated) => {
-          realtimeSocket.sendAdminAction(updated.id, updated);
-          if (updated.id === currentUser.id) {
-            setCurrentUser(prev => ({ ...prev, ...updated }));
-          }
-          setGlobalOnlineUsers(prev => prev.map(u => u.id === updated.id ? { ...u, ...updated } : u));
-        }}
-      />
+      {/* Admin Control Panel Modal (Mounted lazily only when opened for fast Owner login) */}
+      {isAdminOpen && (
+        <AdminControlPanelModal
+          isOpen={isAdminOpen}
+          onClose={() => setIsAdminOpen(false)}
+          currentUser={currentUser}
+          allUsers={allRegisteredUsers.length > 0 ? allRegisteredUsers : globalOnlineUsers}
+          initialTab={adminInitialTab}
+          pendingPaymentsCountExternal={ownerPendingSummary.pendingPaymentsCount}
+          pendingReportsCountExternal={ownerPendingSummary.pendingReportsCount}
+          onUserModified={(updated) => {
+            realtimeSocket.sendAdminAction(updated.id, updated);
+            if (updated.id === currentUser.id) {
+              setCurrentUser(prev => ({ ...prev, ...updated }));
+            }
+            setGlobalOnlineUsers(prev => prev.map(u => u.id === updated.id ? { ...u, ...updated } : u));
+          }}
+        />
+      )}
 
       {/* Daily Missions Modal */}
       <DailyMissionsModal

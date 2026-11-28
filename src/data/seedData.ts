@@ -1,4 +1,35 @@
 import { Room, GiftItem, VipTier, TriviaQuestion, LeaderboardEntry, User } from '../types/chat';
+import avatarBoy1 from '../assets/images/avatar_boy_1_1795871978476.jpg';
+import avatarBoy2 from '../assets/images/avatar_boy_2_1795871979006.jpg';
+import avatarBoy3 from '../assets/images/avatar_boy_3_1795871979173.jpg';
+import avatarGirl1 from '../assets/images/avatar_girl_1_1795871979141.jpg';
+import avatarGirl2 from '../assets/images/avatar_girl_2_1795871979622.jpg';
+import avatarGirl3 from '../assets/images/avatar_girl_3_1795871980581.jpg';
+
+export const BOYS_AVATAR_PRESETS = [
+  { id: 'boy_1', url: avatarBoy1 },
+  { id: 'boy_2', url: avatarBoy2 },
+  { id: 'boy_3', url: avatarBoy3 },
+];
+
+export const GIRLS_AVATAR_PRESETS = [
+  { id: 'girl_1', url: avatarGirl1 },
+  { id: 'girl_2', url: avatarGirl2 },
+  { id: 'girl_3', url: avatarGirl3 },
+];
+
+export function getDefaultAvatarForGender(gender: 'male' | 'female' = 'male', seed: string = 'default'): string {
+  const pool = gender === 'female' ? GIRLS_AVATAR_PRESETS : BOYS_AVATAR_PRESETS;
+  let hash = 0;
+  for (let i = 0; i < seed.length; i++) {
+    hash = (hash * 31 + seed.charCodeAt(i)) >>> 0;
+  }
+  return pool[hash % pool.length].url;
+}
+
+export function isLegacyDicebearAvatar(url?: string): boolean {
+  return Boolean(url && url.includes('api.dicebear.com'));
+}
 
 export interface BadgeDefinition {
   id: string;
@@ -22,7 +53,7 @@ export const CURRENT_USER: User = {
   id: 'usr_me',
   name: '',
   username: '',
-  avatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=shat_masr_member',
+  avatar: avatarBoy1,
   bio: 'عضو في شات مصر والعرب 🇪🇬',
   country: 'مصر',
   countryFlag: '🇪🇬',
@@ -151,7 +182,7 @@ export function getOrCreateUser(): User {
       isGuest: false,
       vipBadge: '',
       badges: [],
-      avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${savedId}`,
+      avatar: getDefaultAvatarForGender('male', savedId),
       coins: 100,
     };
   } catch {
@@ -286,17 +317,15 @@ export const QUICK_PHRASES = [
 ];
 
 export const AVATAR_PRESETS = [
-  { id: 'av1', url: 'https://api.dicebear.com/7.x/avataaars/svg?seed=cleopatra_eg', label: 'كليوباترا الملكية' },
-  { id: 'av2', url: 'https://api.dicebear.com/7.x/avataaars/svg?seed=sheikh_eg', label: 'الشيخ الشهم' },
-  { id: 'av3', url: 'https://api.dicebear.com/7.x/avataaars/svg?seed=atlas_knight', label: 'فارس الأطلس' },
-  { id: 'av4', url: 'https://api.dicebear.com/7.x/avataaars/svg?seed=noor_yasmin', label: 'نور الياسمين' },
-  { id: 'av5', url: 'https://api.dicebear.com/7.x/avataaars/svg?seed=nile_son', label: 'ابن النيل الأنيق' },
-  { id: 'av6', url: 'https://api.dicebear.com/7.x/avataaars/svg?seed=amir_rafidain', label: 'أمير الرافدين' },
-  { id: 'av7', url: 'https://api.dicebear.com/7.x/avataaars/svg?seed=malika_east', label: 'ملكة الشرق' },
-  { id: 'av8', url: 'https://api.dicebear.com/7.x/avataaars/svg?seed=modern_arab', label: 'شاب عربي عصري' },
+  { id: 'av_boy_1', url: avatarBoy1, label: '' },
+  { id: 'av_girl_1', url: avatarGirl1, label: '' },
+  { id: 'av_boy_2', url: avatarBoy2, label: '' },
+  { id: 'av_girl_2', url: avatarGirl2, label: '' },
+  { id: 'av_boy_3', url: avatarBoy3, label: '' },
+  { id: 'av_girl_3', url: avatarGirl3, label: '' },
 ];
 
-// VIP Tiers with exact pricing requested:
+// VIP Tiers with exact pricing requested (30 days monthly cycle):
 // Bronze (50 EGP/mo), Silver (150 EGP/mo), Super VIP (300 EGP/mo)
 export const VIP_TIERS: VipTier[] = [
   {
@@ -307,6 +336,7 @@ export const VIP_TIERS: VipTier[] = [
     priceEgp: 50,
     priceUsd: 1.5,
     coinsBonus: 1000,
+    durationDays: 30,
     gradient: 'from-amber-700 to-amber-900',
     badgeBg: 'bg-amber-800 text-amber-200 border-amber-600',
     perks: [

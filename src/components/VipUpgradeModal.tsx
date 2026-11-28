@@ -5,6 +5,7 @@ import {
   Sparkles,
   Check,
   QrCode,
+  Wallet,
   Copy,
   ShieldCheck,
   AlertCircle,
@@ -17,6 +18,7 @@ import { VIP_TIERS, isUserAdminOrOwner } from '../data/seedData';
 import { sounds } from '../utils/soundEffects';
 import { submitPaymentRequest } from '../services/firebase';
 import { maskPhone } from '../utils/maskData';
+import { formatArabicDate, getVipDurationInfo } from '../utils/dateFormat';
 
 interface VipUpgradeModalProps {
   isOpen: boolean;
@@ -33,15 +35,20 @@ export const VipUpgradeModal: React.FC<VipUpgradeModalProps> = ({
 }) => {
   const [selectedTier, setSelectedTier] = useState<VipTier>(VIP_TIERS[2]);
   const [step, setStep] = useState<'select' | 'payment_form' | 'success'>('select');
+  const [paymentMethod, setPaymentMethod] = useState<'instapay' | 'vodafone_cash'>('instapay');
   const [senderPhone, setSenderPhone] = useState<string>('');
+  const [senderName, setSenderName] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [submittedOrderId, setSubmittedOrderId] = useState<string | null>(null);
   const [copiedInstapay, setCopiedInstapay] = useState(false);
+  const [copiedWallet, setCopiedWallet] = useState(false);
 
   if (!isOpen || isUserAdminOrOwner(currentUser)) return null;
 
   const INSTAPAY_ADDRESS = 'samyelsayed9@instapay';
+  const WALLET_NUMBER = '01098750740';
+  const vipInfo = getVipDurationInfo(currentUser);
 
   const handleStartPayment = (tier: VipTier) => {
     setSelectedTier(tier);
@@ -54,6 +61,7 @@ export const VipUpgradeModal: React.FC<VipUpgradeModalProps> = ({
     setFormError(null);
 
     const cleanedAccount = senderPhone.trim();
+    const cleanedName = senderName.trim();
     if (!cleanedAccount) {
       setFormError('يرجى إدخال رقم المحفظة أو الحساب المُحَوّل منه');
       return;
@@ -61,6 +69,7 @@ export const VipUpgradeModal: React.FC<VipUpgradeModalProps> = ({
 
     setIsSubmitting(true);
     try {
+      const methodLabel = paymentMethod === 'instapay' ? 'InstaPay' : 'محفظة إلكترونية';
       const res = await submitPaymentRequest({
         userId: currentUser.id,
         userName: currentUser.name || 'عضو شات مصر',
@@ -68,14 +77,14 @@ export const VipUpgradeModal: React.FC<VipUpgradeModalProps> = ({
         itemName: selectedTier.name,
         vipTierId: selectedTier.id,
         amountEgp: selectedTier.priceEgp,
-        paymentMethod: 'instapay',
+        paymentMethod,
         senderAccountOrPhone: cleanedAccount,
-        transactionRef: cleanedAccount,
-        note: `طلب ترقية عضوية إلى ${selectedTier.name} (${selectedTier.badge}) من ${cleanedAccount}`
+        ...(cleanedName ? { senderName: cleanedName } : {}),
+        note: `طلب ترقية عضوية (${selectedTier.durationDays || 30} يوم) إلى ${selectedTier.name} عبر ${methodLabel} من ${cleanedAccount}${cleanedName ? ` (${cleanedName})` : ''}`
       });
 
       if (res.duplicate) {
-        setFormError('رقم العملية / الحساب مستخدم بالفعل في طلب معلق.');
+        setFormError('تم تسجيل هذا الطلب للتو، يرجى الانتظار قليلاً.');
         return;
       }
 
@@ -100,7 +109,7 @@ export const VipUpgradeModal: React.FC<VipUpgradeModalProps> = ({
         onClick={(e) => e.stopPropagation()}
         className="w-full sm:max-w-2xl bg-white border border-slate-200 rounded-t-3xl sm:rounded-3xl overflow-hidden shadow-2xl flex flex-col max-h-[92vh] text-[#1E293B]"
       >
-        {/* Modal Header (Clean Modern Light Identity matching OnlineUsersModal) */}
+        {/* Modal Header */}
         <div className="p-4 bg-white border-b border-slate-200 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-2.5">
             <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-emerald-50 to-purple-50 border border-purple-200 flex items-center justify-center text-purple-700 shrink-0 shadow-2xs">
@@ -111,7 +120,7 @@ export const VipUpgradeModal: React.FC<VipUpgradeModalProps> = ({
                 <span>ترقية الرتب وعضويات VIP</span>
                 <Sparkles className="w-4 h-4 text-emerald-600" />
               </h3>
-              <p className="text-xs text-slate-500 font-medium">دفع فوري ومراجعة سريعة عبر InstaPay 🛡️</p>
+              <p className="text-xs text-slate-500 font-medium">دفع فوري عبر InstaPay أو المحفظة الإلكترونية 🛡️</p>
             </div>
           </div>
 
@@ -127,13 +136,23 @@ export const VipUpgradeModal: React.FC<VipUpgradeModalProps> = ({
 
         {/* Content Body */}
         <div className="p-4 overflow-y-auto space-y-4 flex-1 bg-[#F8FAFC]">
-          {/* User's current rank */}
-          <div className="flex items-center justify-between bg-white border border-slate-200 rounded-2xl p-3 text-xs shadow-2xs">
-            <span className="text-slate-600 font-bold">رتبتك الحالية:</span>
-            <span className="font-black text-purple-700 flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-purple-50 border border-purple-200">
-              <Crown className="w-3.5 h-3.5 text-purple-600" />
-              <span>{currentUser.vipBadge || 'عضو نشط'}</span>
-            </span>
+          {/* User's current rank & active VIP duration */}
+          <div className="bg-white border border-slate-200 rounded-2xl p-3 text-xs shadow-2xs space-y-1.5">
+            <div className="flex items-center justify-between">
+              <span className="text-slate-600 font-bold">رتبتك الحالية:</span>
+              <span className="font-black text-purple-700 flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-purple-50 border border-purple-200">
+                <Crown className="w-3.5 h-3.5 text-purple-600" />
+                <span>{currentUser.vipBadge || 'عضو نشط'}</span>
+              </span>
+            </div>
+            {vipInfo.isVipTier && !vipInfo.isPermanent && (
+              <div className="flex flex-wrap items-center justify-between gap-2 pt-1.5 border-t border-slate-100 text-[11px]">
+                <span className="text-emerald-700 font-black">{vipInfo.remainingLabel}</span>
+                {vipInfo.expiresAt && (
+                  <span className="text-slate-500 font-bold">تنتهي في: {formatArabicDate(vipInfo.expiresAt)}</span>
+                )}
+              </div>
+            )}
           </div>
 
           {/* STEP 1: SELECT TIER */}
@@ -142,9 +161,9 @@ export const VipUpgradeModal: React.FC<VipUpgradeModalProps> = ({
               <div className="p-3 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-950 text-xs flex items-start gap-2.5">
                 <ShieldCheck className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
                 <div className="space-y-0.5">
-                  <p className="font-black text-[#1E293B]">نظام الترقية السريع والآمن</p>
+                  <p className="font-black text-[#1E293B]">نظام الترقية السريع والآمن (لمدة 30 يوماً)</p>
                   <p className="text-[11px] text-slate-600 leading-relaxed">
-                    اختر الباقة المناسبة ثم حوّل عبر إنستاباي وأدخل رقم حسابك ليتم تفعيل الترقية فوراً بعد المراجعة.
+                    اختر الباقة المناسبة ثم حوّل عبر InstaPay أو المحفظة الإلكترونية ({WALLET_NUMBER}) وأدخل رقم حسابك ليتم تفعيل الترقية فوراً بعد المراجعة.
                   </p>
                 </div>
               </div>
@@ -172,8 +191,13 @@ export const VipUpgradeModal: React.FC<VipUpgradeModalProps> = ({
                         </span>
                       </div>
 
-                      <h4 className="text-sm font-black text-[#1E293B]">{tier.name}</h4>
-                      <p className="text-[11px] text-slate-500 mb-3">{tier.tagline}</p>
+                      <div className="flex items-center justify-between gap-2">
+                        <h4 className="text-sm font-black text-[#1E293B]">{tier.name}</h4>
+                        <span className="text-[10px] font-black text-indigo-700 bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded-full">
+                          مدة العضوية: {tier.durationDays || 30} يوماً
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-slate-500 mb-3 mt-0.5">{tier.tagline}</p>
 
                       <ul className="space-y-1.5 mb-4">
                         {tier.perks.map((perk, pIdx) => (
@@ -206,7 +230,7 @@ export const VipUpgradeModal: React.FC<VipUpgradeModalProps> = ({
             </div>
           )}
 
-          {/* STEP 2: SIMPLIFIED PAYMENT FORM (ONLY 2 ITEMS: Official InstaPay Copy + Single Account Input) */}
+          {/* STEP 2: SIMPLIFIED PAYMENT FORM (InstaPay + Wallet 01098750740) */}
           {step === 'payment_form' && (
             <div className="space-y-4">
               <button
@@ -223,6 +247,9 @@ export const VipUpgradeModal: React.FC<VipUpgradeModalProps> = ({
                 <div>
                   <span className="text-[10.5px] text-purple-600 font-bold block">الباقة المختارة:</span>
                   <span className="text-sm font-black text-[#1E293B]">{selectedTier.name} ({selectedTier.badge})</span>
+                  <span className="text-[10.5px] text-indigo-700 font-bold block mt-0.5">
+                    المدة: {selectedTier.durationDays || 30} يوماً من التفعيل
+                  </span>
                 </div>
                 <div className="text-left">
                   <span className="text-base font-black text-emerald-700">{selectedTier.priceEgp} ج.م</span>
@@ -230,16 +257,17 @@ export const VipUpgradeModal: React.FC<VipUpgradeModalProps> = ({
                 </div>
               </div>
 
-              {/* Field 1: Fixed Official Transfer Account with Copy Button */}
-              <div className="p-4 rounded-2xl bg-white border border-slate-200 space-y-2.5 shadow-2xs">
+              {/* Official Transfer Accounts (InstaPay & Wallet) */}
+              <div className="p-4 rounded-2xl bg-white border border-slate-200 space-y-3 shadow-2xs">
                 <div className="flex items-center gap-1.5 text-xs font-black text-[#1E293B]">
                   <QrCode className="w-4 h-4 text-purple-600" />
-                  <span>حساب التحويل الرسمي (InstaPay)</span>
+                  <span>حسابات التحويل الرسمية (اختر أي وسيلة)</span>
                 </div>
 
+                {/* InstaPay */}
                 <div className="flex items-center justify-between gap-2 bg-[#F8FAFC] p-3 rounded-xl border border-slate-200">
                   <div className="min-w-0">
-                    <span className="text-[10px] text-slate-500 block font-bold">عنوان الدفع اللحظي:</span>
+                    <span className="text-[10px] text-purple-700 block font-bold">إنستاباي (InstaPay):</span>
                     <span className="text-xs sm:text-sm font-mono font-black text-purple-700 select-all break-all" dir="ltr">
                       {INSTAPAY_ADDRESS}
                     </span>
@@ -251,15 +279,39 @@ export const VipUpgradeModal: React.FC<VipUpgradeModalProps> = ({
                       setCopiedInstapay(true);
                       setTimeout(() => setCopiedInstapay(false), 2000);
                     }}
-                    className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black flex items-center gap-1.5 shrink-0 shadow-xs active:scale-95 transition cursor-pointer"
+                    className="px-3 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-black flex items-center gap-1 shrink-0 shadow-xs active:scale-95 transition cursor-pointer"
                   >
                     {copiedInstapay ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
                     <span>{copiedInstapay ? 'تم النسخ' : 'نسخ'}</span>
                   </button>
                 </div>
+
+                {/* Wallet Number */}
+                <div className="flex items-center justify-between gap-2 bg-[#F8FAFC] p-3 rounded-xl border border-rose-200">
+                  <div className="min-w-0">
+                    <span className="text-[10px] text-rose-700 font-bold flex items-center gap-1">
+                      <Wallet className="w-3 h-3" /> محفظة إلكترونية (فودافون / اتصالات / أورنج كاش):
+                    </span>
+                    <span className="text-xs sm:text-sm font-mono font-black text-rose-700 select-all break-all" dir="ltr">
+                      {WALLET_NUMBER}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard.writeText(WALLET_NUMBER);
+                      setCopiedWallet(true);
+                      setTimeout(() => setCopiedWallet(false), 2000);
+                    }}
+                    className="px-3 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-black flex items-center gap-1 shrink-0 shadow-xs active:scale-95 transition cursor-pointer"
+                  >
+                    {copiedWallet ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                    <span>{copiedWallet ? 'تم النسخ' : 'نسخ'}</span>
+                  </button>
+                </div>
               </div>
 
-              {/* Field 2: Single Input Field ONLY */}
+              {/* Payment Confirmation Form */}
               <form onSubmit={handleSubmitVipRequest} className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3.5 shadow-2xs">
                 {formError && (
                   <div className="p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-center gap-2">
@@ -268,16 +320,54 @@ export const VipUpgradeModal: React.FC<VipUpgradeModalProps> = ({
                   </div>
                 )}
 
+                <div className="grid grid-cols-2 gap-2 text-xs font-black">
+                  <button
+                    type="button"
+                    onClick={() => setPaymentMethod('instapay')}
+                    className={`py-2 px-2 rounded-xl border transition cursor-pointer ${
+                      paymentMethod === 'instapay'
+                        ? 'bg-purple-600 text-white border-purple-600'
+                        : 'bg-purple-50 text-purple-900 border-purple-200'
+                    }`}
+                  >
+                    InstaPay
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPaymentMethod('vodafone_cash')}
+                    className={`py-2 px-2 rounded-xl border transition cursor-pointer ${
+                      paymentMethod === 'vodafone_cash'
+                        ? 'bg-rose-600 text-white border-rose-600'
+                        : 'bg-rose-50 text-rose-900 border-rose-200'
+                    }`}
+                  >
+                    محفظة إلكترونية
+                  </button>
+                </div>
+
                 <div>
                   <label className="text-xs font-black text-[#1E293B] block mb-1.5">
-                    رقم المحفظة / الحساب المُحَوّل منه <span className="text-rose-600">*</span>
+                    رقم الهاتف / الحساب المُحَوّل منه <span className="text-rose-600">*</span>
                   </label>
                   <input
                     type="text"
                     required
-                    placeholder="مثال: 01012345678 أو IPA"
+                    placeholder="مثال: 01012345678 أو معرف InstaPay"
                     value={senderPhone}
                     onChange={(e) => setSenderPhone(e.target.value)}
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-[#F8FAFC] border border-slate-200 text-[#1E293B] text-xs sm:text-sm font-medium placeholder:text-slate-400 focus:outline-none focus:border-purple-600 focus:bg-white transition-colors"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-xs font-bold text-slate-700 block mb-1.5">
+                    اسم المحوّل (اختياري)
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="اكتب اسمك إذا رغبت (اختياري)"
+                    value={senderName}
+                    onChange={(e) => setSenderName(e.target.value)}
                     className="w-full px-3.5 py-2.5 rounded-xl bg-[#F8FAFC] border border-slate-200 text-[#1E293B] text-xs sm:text-sm font-medium placeholder:text-slate-400 focus:outline-none focus:border-purple-600 focus:bg-white transition-colors"
                   />
                 </div>
@@ -318,7 +408,7 @@ export const VipUpgradeModal: React.FC<VipUpgradeModalProps> = ({
                   حالة الطلب: قيد المراجعة والتدقيق ⏳
                 </p>
                 <p className="text-xs text-slate-600 mt-2 leading-relaxed max-w-md mx-auto">
-                  رقم الطلب <span className="text-[#1E293B] font-mono font-bold">#{submittedOrderId}</span>. سيتم تفعيل رتبتك الملكية فور التحقق من التحويل.
+                  رقم الطلب <span className="text-[#1E293B] font-mono font-bold">#{submittedOrderId}</span>. سيتم تفعيل رتبتك لمدة {selectedTier.durationDays || 30} يوماً فور التحقق من التحويل.
                 </p>
               </div>
 
@@ -329,7 +419,9 @@ export const VipUpgradeModal: React.FC<VipUpgradeModalProps> = ({
                 </div>
                 <div className="flex justify-between text-slate-600">
                   <span>وسيلة الدفع:</span>
-                  <span className="text-purple-700 font-black">InstaPay</span>
+                  <span className="text-purple-700 font-black">
+                    {paymentMethod === 'instapay' ? 'InstaPay' : 'محفظة إلكترونية'}
+                  </span>
                 </div>
                 <div className="flex justify-between text-slate-600">
                   <span>الحساب المحوّل منه:</span>
@@ -351,3 +443,4 @@ export const VipUpgradeModal: React.FC<VipUpgradeModalProps> = ({
     </div>
   );
 };
+

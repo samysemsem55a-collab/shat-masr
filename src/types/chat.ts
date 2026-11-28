@@ -61,6 +61,9 @@ export interface User {
   muteJoinNotices?: boolean;
   notificationBgPreset?: string;
   xp?: number;
+  vipStartedAt?: number;
+  vipExpiresAt?: number;
+  vipDurationDays?: number;
   notificationPrefs?: {
     directMessages: boolean;
     gifts: boolean;
@@ -168,6 +171,9 @@ export interface Room {
   isPrivate?: boolean;
   isPublic?: boolean;
   isLocked?: boolean;
+  isClosed?: boolean;
+  closedAt?: number;
+  closedBy?: string;
   requiresApproval?: boolean;
   ownerId?: string;
   hostId?: string;
@@ -409,6 +415,7 @@ export interface VipTier {
   priceEgp: number;
   priceUsd: number;
   coinsBonus: number;
+  durationDays?: number;
   gradient: string;
   badgeBg: string;
   perks: string[];

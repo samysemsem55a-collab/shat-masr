@@ -32,6 +32,7 @@ import {
 import { realtimeSocket } from '../services/realtimeSocket';
 import { VerifiedBadge } from '../utils/verifiedBadge';
 import { formatLastSeenArabic, isUserTrulyOnline } from '../utils/presenceStatus';
+import { formatArabicDate, getVipDurationInfo } from '../utils/dateFormat';
 import { toast } from '../utils/appToast';
 
 interface UserProfileModalProps {
@@ -177,11 +178,9 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
     : 'متصل الآن';
 
   const joinedLabel = mergedUser.joinedAt
-    ? (() => {
-        const d = new Date(mergedUser.joinedAt);
-        return isNaN(d.getTime()) ? 'عضو حديث' : d.toLocaleDateString('ar-EG', { year: 'numeric', month: 'short', day: 'numeric' });
-      })()
+    ? formatArabicDate(mergedUser.joinedAt, 'عضو حديث')
     : 'عضو في شات مصر';
+  const vipInfo = getVipDurationInfo(mergedUser);
 
   const handleToggleFavoriteMusic = () => {
     if (!user.favoriteMusicUrl) return;
@@ -349,12 +348,10 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
             {/* Name + Privileged-only shimmer/badge + Status */}
             <div className="space-y-1.5">
               <div className="flex items-center justify-center gap-1.5 flex-wrap">
-                <h3
-                  className={`text-lg font-black inline-flex items-center gap-1 ${
-                    rankMeta.isPrivileged ? rankMeta.namePillClass : 'text-slate-900 dark:text-white'
-                  }`}
-                >
-                  <span>{mergedUser.name}</span>
+                <h3 className="text-lg font-black inline-flex items-center gap-1">
+                  <span className={rankMeta.isPrivileged ? rankMeta.nameColorClass : 'text-slate-900 dark:text-white'}>
+                    {mergedUser.name}
+                  </span>
                 </h3>
                 <VerifiedBadge verified={mergedUser.verified} role={mergedUser.role} size="sm" />
                 <span className="text-lg">{mergedUser.countryFlag || '🇪🇬'}</span>
@@ -366,7 +363,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                     {rankMeta.label}
                   </span>
                 ) : (
-                  <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-sky-50 border border-sky-200 text-sky-800">
+                  <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-sky-50 dark:bg-sky-950/60 border border-sky-200 dark:border-sky-800 text-sky-800 dark:text-sky-200">
                     {rankMeta.label}
                   </span>
                 )}
@@ -374,8 +371,8 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                 <span
                   className={`text-xs font-bold inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full border ${
                     isAvailable
-                      ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
-                      : 'bg-slate-100 border-slate-200 text-slate-600'
+                      ? 'bg-emerald-50 dark:bg-emerald-950/60 border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-300'
+                      : 'bg-slate-100 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'
                   }`}
                 >
                   {isAvailable && <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />}
@@ -478,15 +475,29 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
               </div>
 
               <div className="px-4 py-3 flex items-center justify-between gap-2 text-xs">
-                <span className="text-slate-500 font-bold flex items-center gap-1.5">
+                <span className="text-slate-500 dark:text-slate-400 font-bold flex items-center gap-1.5">
                   <Calendar className="w-3.5 h-3.5 text-[#1E96E8]" />
                   <span>تاريخ الانضمام</span>
                 </span>
                 <span className="font-black text-slate-900 dark:text-white">{joinedLabel}</span>
               </div>
 
+              {vipInfo.isVipTier && (
+                <div className="px-4 py-3 flex items-center justify-between gap-2 text-xs bg-amber-50/50 dark:bg-amber-950/25">
+                  <span className="text-amber-700 dark:text-amber-300 font-bold flex items-center gap-1.5">
+                    <span>👑</span>
+                    <span>صلاحية VIP</span>
+                  </span>
+                  <span className="font-black text-amber-800 dark:text-amber-200">
+                    {vipInfo.isExpired
+                      ? 'منتهية'
+                      : `${vipInfo.remainingLabel}${vipInfo.expiresAt ? ` (${formatArabicDate(vipInfo.expiresAt)})` : ''}`}
+                  </span>
+                </div>
+              )}
+
               <div className="px-4 py-3 flex items-center justify-between gap-2 text-xs">
-                <span className="text-slate-500 font-bold flex items-center gap-1.5">
+                <span className="text-slate-500 dark:text-slate-400 font-bold flex items-center gap-1.5">
                   <MapPin className="w-3.5 h-3.5 text-[#1E96E8]" />
                   <span>الحالة / الغرفة الحالية</span>
                 </span>
@@ -496,7 +507,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
               </div>
 
               <div className="px-4 py-3 space-y-1 text-xs">
-                <span className="text-slate-500 font-bold flex items-center gap-1.5">
+                <span className="text-slate-500 dark:text-slate-400 font-bold flex items-center gap-1.5">
                   <Info className="w-3.5 h-3.5 text-[#1E96E8]" />
                   <span>معلوماتي</span>
                 </span>

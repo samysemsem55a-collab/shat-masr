@@ -25,6 +25,7 @@ import {
   Trophy
 } from 'lucide-react';
 import { User } from '../types/chat';
+import { getDefaultAvatarForGender } from '../data/seedData';
 
 interface ActivityReportProps {
   allUsers?: User[];
@@ -55,10 +56,10 @@ export const ActivityReport: React.FC<ActivityReportProps> = ({ allUsers = [] })
 
   // Most active users with honors
   const topActiveMembers = [
-    { name: 'نور الشام 🌸', role: 'Super VIP', badge: 'أكثر الأعضاء نشاطاً 🔥', messagesCount: 1420, avatar: 'https://api.dicebear.com/9.x/avataaars/svg?seed=nour_sham' },
-    { name: 'الشيخ عبد الرحمن 🕌', role: 'مشرف أزهري', badge: 'أفضل مذيع 🎙️', messagesCount: 1180, avatar: 'https://api.dicebear.com/9.x/avataaars/svg?seed=abdulrahman_azhar' },
-    { name: 'فارس الحجاز 🐎', role: 'VIP ذهبي', badge: 'المحترف 🏆', messagesCount: 960, avatar: 'https://api.dicebear.com/9.x/avataaars/svg?seed=fares_hijaz' },
-    { name: 'أمير الرافدين 👑', role: 'عضو نشط', badge: 'أكثر الأعضاء نشاطاً 🔥', messagesCount: 840, avatar: 'https://api.dicebear.com/9.x/avataaars/svg?seed=amir_rafidain' }
+    { name: 'نور الشام 🌸', role: 'Super VIP', badge: 'أكثر الأعضاء نشاطاً 🔥', messagesCount: 1420, avatar: getDefaultAvatarForGender('female', 'nour_sham') },
+    { name: 'الشيخ عبد الرحمن 🕌', role: 'مشرف أزهري', badge: 'أفضل مذيع 🎙️', messagesCount: 1180, avatar: getDefaultAvatarForGender('male', 'abdulrahman_azhar') },
+    { name: 'فارس الحجاز 🐎', role: 'VIP ذهبي', badge: 'المحترف 🏆', messagesCount: 960, avatar: getDefaultAvatarForGender('male', 'fares_hijaz') },
+    { name: 'أمير الرافدين 👑', role: 'عضو نشط', badge: 'أكثر الأعضاء نشاطاً 🔥', messagesCount: 840, avatar: getDefaultAvatarForGender('male', 'amir_rafidain') }
   ];
 
   const totalWeeklyMessages = weeklyData.reduce((acc, curr) => acc + curr.messages, 0);

@@ -79,6 +79,10 @@ class RealtimeSocketManager {
   private latestAppUpdateNotice: { version: string; message: string; pushedBy: string; timestamp: number } | null = null;
   private ticTacToeSignalListeners: Set<(signal: any) => void> = new Set();
   private liveAudioStageListeners: Map<string, Set<(raisedHandUserIds: string[]) => void>> = new Map();
+  private liveAudioSpeakersListeners: Map<string, Set<(speakers: any[]) => void>> = new Map();
+  private liveAudioSpeakingListeners: Map<string, Set<(data: { userId: string; speaking: boolean }) => void>> = new Map();
+  private liveAudioSignalListeners: Map<string, Set<(signal: any) => void>> = new Map();
+  private roomClosedListeners: Set<(data: { roomId: string; closedBy?: string }) => void> = new Set();
   private isConnectedState = false;
   private connectionState: 'connected' | 'reconnecting' | 'disconnected' = 'disconnected';
   private reconnectAttempts = 0;
@@ -795,6 +799,36 @@ class RealtimeSocketManager {
         break;
       }
 
+      case 'LIVE_AUDIO_SPEAKERS_UPDATE': {
+        if (action.roomId && Array.isArray(action.speakers)) {
+          this.liveAudioSpeakersListeners.get(action.roomId)?.forEach((cb) => cb(action.speakers));
+        }
+        break;
+      }
+
+      case 'LIVE_AUDIO_SPEAKING': {
+        if (action.roomId && action.userId) {
+          this.liveAudioSpeakingListeners.get(action.roomId)?.forEach((cb) =>
+            cb({ userId: action.userId, speaking: Boolean(action.speaking) })
+          );
+        }
+        break;
+      }
+
+      case 'LIVE_AUDIO_SIGNAL': {
+        if (action.roomId && action.signal) {
+          this.liveAudioSignalListeners.get(action.roomId)?.forEach((cb) => cb(action.signal));
+        }
+        break;
+      }
+
+      case 'ROOM_CLOSED': {
+        if (action.roomId) {
+          this.roomClosedListeners.forEach((cb) => cb({ roomId: action.roomId, closedBy: action.closedBy }));
+        }
+        break;
+      }
+
       default:
         break;
     }
@@ -1395,6 +1429,62 @@ class RealtimeSocketManager {
     this.liveAudioStageListeners.get(roomId)!.add(callback);
     return () => {
       this.liveAudioStageListeners.get(roomId)?.delete(callback);
+    };
+  }
+
+  sendLiveAudioSpeakersUpdate(roomId: string, speakers: any[]) {
+    this.send('LIVE_AUDIO_SPEAKERS_UPDATE', { roomId, speakers });
+  }
+
+  subscribeToLiveAudioSpeakers(roomId: string, callback: (speakers: any[]) => void): () => void {
+    if (!this.liveAudioSpeakersListeners.has(roomId)) {
+      this.liveAudioSpeakersListeners.set(roomId, new Set());
+    }
+    this.liveAudioSpeakersListeners.get(roomId)!.add(callback);
+    return () => {
+      this.liveAudioSpeakersListeners.get(roomId)?.delete(callback);
+    };
+  }
+
+  sendLiveAudioSpeaking(roomId: string, userId: string, speaking: boolean) {
+    this.send('LIVE_AUDIO_SPEAKING', { roomId, userId, speaking });
+  }
+
+  subscribeToLiveAudioSpeaking(
+    roomId: string,
+    callback: (data: { userId: string; speaking: boolean }) => void
+  ): () => void {
+    if (!this.liveAudioSpeakingListeners.has(roomId)) {
+      this.liveAudioSpeakingListeners.set(roomId, new Set());
+    }
+    this.liveAudioSpeakingListeners.get(roomId)!.add(callback);
+    return () => {
+      this.liveAudioSpeakingListeners.get(roomId)?.delete(callback);
+    };
+  }
+
+  sendLiveAudioSignal(roomId: string, targetUserId: string | undefined, signal: any) {
+    this.send('LIVE_AUDIO_SIGNAL', { roomId, targetUserId, signal });
+  }
+
+  subscribeToLiveAudioSignal(roomId: string, callback: (signal: any) => void): () => void {
+    if (!this.liveAudioSignalListeners.has(roomId)) {
+      this.liveAudioSignalListeners.set(roomId, new Set());
+    }
+    this.liveAudioSignalListeners.get(roomId)!.add(callback);
+    return () => {
+      this.liveAudioSignalListeners.get(roomId)?.delete(callback);
+    };
+  }
+
+  sendRoomClosed(roomId: string, closedBy?: string) {
+    this.send('ROOM_CLOSED', { roomId, closedBy });
+  }
+
+  subscribeToRoomClosed(callback: (data: { roomId: string; closedBy?: string }) => void): () => void {
+    this.roomClosedListeners.add(callback);
+    return () => {
+      this.roomClosedListeners.delete(callback);
     };
   }
 

@@ -89,14 +89,17 @@ export const FloatingMiniRadioBar: React.FC<FloatingMiniRadioBarProps> = React.m
     globalRadioPlayer.selectSong(radioSnap.activeSong || ARABIC_100_SONGS[0]);
   };
 
-  const baseBottomPx = isInsideRoom ? 68 : 60;
-  const computedBottomPx = keyboardOffset > 0 ? keyboardOffset + 8 : baseBottomPx;
+  const baseBottomPx = isInsideRoom ? 76 : 68;
+  const computedBottomExpr =
+    keyboardOffset > 0
+      ? `${keyboardOffset + 8}px`
+      : `calc(${baseBottomPx}px + env(safe-area-inset-bottom, 0px))`;
 
   return (
     <div
       dir="rtl"
       lang="ar"
-      style={{ bottom: `${computedBottomPx}px` }}
+      style={{ bottom: computedBottomExpr }}
       className="radio-gentle-bob fixed z-[49] left-2 right-2 sm:left-4 sm:right-auto sm:w-[440px] max-w-full bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border border-slate-200 dark:border-slate-700 rounded-2xl px-2.5 py-2 shadow-lg flex flex-col gap-1.5 text-right transition-colors"
     >
       {/* Top Line: Full Unclipped Title + Close X */}

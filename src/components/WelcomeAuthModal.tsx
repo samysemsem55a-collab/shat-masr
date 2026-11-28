@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { User } from '../types/chat';
 import { signInWithGoogle, syncUserProfileToFirebase } from '../services/firebase';
+import { getDefaultAvatarForGender, isLegacyDicebearAvatar } from '../data/seedData';
 import { User as UserIcon, ShieldCheck, X, Smartphone, CheckCircle2, Lock } from 'lucide-react';
 import appBrandIcon from '../assets/images/shat_masr_official_icon.png';
 
@@ -101,10 +102,10 @@ export const WelcomeAuthModal: React.FC<WelcomeAuthModalProps> = ({
     localStorage.setItem('arab_chat_userId', memberId);
     localStorage.setItem('shat_masr_has_entered', 'true');
 
-    const defaultAvatar =
-      memberGender === 'female'
-        ? `https://api.dicebear.com/9.x/avataaars/svg?seed=fem_${encodeURIComponent(memberId)}`
-        : `https://api.dicebear.com/9.x/avataaars/svg?seed=male_${encodeURIComponent(memberId)}`;
+    const defaultAvatar = getDefaultAvatarForGender(
+      memberGender === 'female' ? 'female' : 'male',
+      memberId
+    );
 
     const nextUser: User = {
       ...currentUser,
@@ -114,7 +115,7 @@ export const WelcomeAuthModal: React.FC<WelcomeAuthModalProps> = ({
       age: parsedAge,
       gender: memberGender,
       avatar:
-        currentUser.avatar && !currentUser.avatar.includes('dicebear')
+        currentUser.avatar && !isLegacyDicebearAvatar(currentUser.avatar)
           ? currentUser.avatar
           : defaultAvatar,
       bio: `عضو في شات مصر • العمر ${parsedAge} سنة 🇪🇬`,

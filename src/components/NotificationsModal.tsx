@@ -8,6 +8,7 @@ import {
 
 import { RealtimeUserNotification } from '../services/firebase';
 import { getNotificationBgPresetById } from '../data/wallpapers';
+import { formatRelativeArabicTime } from '../utils/dateFormat';
 
 interface NotificationsModalProps {
   isOpen: boolean;
@@ -23,14 +24,45 @@ interface NotificationsModalProps {
   notificationBgPresetId?: string;
 }
 
-function formatNotifTime(ts: number): string {
-  const diffSec = Math.max(1, Math.floor((Date.now() - ts) / 1000));
-  if (diffSec < 60) return 'الآن';
-  const diffMin = Math.floor(diffSec / 60);
-  if (diffMin < 60) return `منذ ${diffMin} دقيقة`;
-  const diffHr = Math.floor(diffMin / 60);
-  if (diffHr < 24) return `منذ ${diffHr} ساعة`;
-  return `منذ ${Math.floor(diffHr / 24)} يوم`;
+function getCategoryMeta(kind: RealtimeUserNotification['kind']) {
+  if (kind === 'forum_like' || kind === 'forum_comment') {
+    return {
+      icon: kind === 'forum_like' ? '🌸' : '💬',
+      catLabel: 'المنتدى',
+      title: kind === 'forum_like' ? 'إعجاب في المنتدى' : 'تعليق في المنتدى',
+      badgeClass: 'bg-pink-100 text-pink-800 border-pink-300 dark:bg-pink-950/70 dark:text-pink-200 dark:border-pink-800',
+      accentBorderClass: 'border-r-4 border-r-pink-500',
+      iconBgClass: 'bg-pink-100/90 dark:bg-pink-950/60 border-pink-200 dark:border-pink-800',
+    };
+  }
+  if (kind === 'story_like' || kind === 'story_comment') {
+    return {
+      icon: kind === 'story_like' ? '📸' : '💜',
+      catLabel: 'القصص',
+      title: kind === 'story_like' ? 'إعجاب بقصتك' : 'تعليق على قصتك',
+      badgeClass: 'bg-violet-100 text-violet-800 border-violet-300 dark:bg-violet-950/70 dark:text-violet-200 dark:border-violet-800',
+      accentBorderClass: 'border-r-4 border-r-violet-500',
+      iconBgClass: 'bg-violet-100/90 dark:bg-violet-950/60 border-violet-200 dark:border-violet-800',
+    };
+  }
+  if (kind === 'app_update') {
+    return {
+      icon: '🚀',
+      catLabel: 'تحديث',
+      title: 'تحديث جديد للتطبيق',
+      badgeClass: 'bg-sky-100 text-sky-800 border-sky-300 dark:bg-sky-950/70 dark:text-sky-200 dark:border-sky-800',
+      accentBorderClass: 'border-r-4 border-r-sky-500',
+      iconBgClass: 'bg-sky-100/90 dark:bg-sky-950/60 border-sky-200 dark:border-sky-800',
+    };
+  }
+  return {
+    icon: '🔔',
+    catLabel: 'النظام',
+    title: 'إشعار عام',
+    badgeClass: 'bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-950/70 dark:text-amber-200 dark:border-amber-800',
+    accentBorderClass: 'border-r-4 border-r-amber-500',
+    iconBgClass: 'bg-amber-100/90 dark:bg-amber-950/60 border-amber-200 dark:border-amber-800',
+  };
 }
 
 export const NotificationsModal: React.FC<NotificationsModalProps> = ({
@@ -51,29 +83,22 @@ export const NotificationsModal: React.FC<NotificationsModalProps> = ({
 
   const notifications = realtimeNotifications
     .filter((n) => allowedKinds.has(n.kind))
-    .map((n) => ({
-      id: n.id,
-      icon:
-        n.kind === 'forum_like' || n.kind === 'story_like'
-          ? '❤️'
-          : n.kind === 'forum_comment' || n.kind === 'story_comment'
-          ? '💬'
-          : n.kind === 'app_update'
-          ? '🚀'
-          : '🔔',
-      title:
-        n.kind === 'app_update'
-          ? 'تحديث جديد للتطبيق'
-          : n.kind === 'story_like' || n.kind === 'story_comment'
-          ? 'تفاعل على قصتك'
-          : n.kind === 'forum_like' || n.kind === 'forum_comment'
-          ? 'تفاعل على منشورك'
-          : n.actorName || 'إشعار',
-      desc: n.message,
-      time: formatNotifTime(n.createdAt || Date.now()),
-      isNew: !n.isRead || highlightedSet.has(n.id),
-      isDbUnread: !n.isRead,
-    }));
+    .map((n) => {
+      const meta = getCategoryMeta(n.kind);
+      return {
+        id: n.id,
+        icon: meta.icon,
+        catLabel: meta.catLabel,
+        badgeClass: meta.badgeClass,
+        accentBorderClass: meta.accentBorderClass,
+        iconBgClass: meta.iconBgClass,
+        title: n.kind === 'info' && n.actorName ? n.actorName : meta.title,
+        desc: n.message,
+        time: formatRelativeArabicTime(n.createdAt),
+        isNew: !n.isRead || highlightedSet.has(n.id),
+        isDbUnread: !n.isRead,
+      };
+    });
   const hasUnread = notifications.some((n) => n.isDbUnread);
   const badgeCount = Math.max(
     unreadCount,
@@ -162,7 +187,7 @@ export const NotificationsModal: React.FC<NotificationsModalProps> = ({
                       } as React.CSSProperties)
                     : undefined
                 }
-                className={`p-3 rounded-2xl border flex items-start gap-3 transition-colors shadow-sm ${
+                className={`p-3 rounded-2xl border flex items-start gap-3 transition-colors shadow-sm ${n.accentBorderClass} ${
                   n.isNew
                     ? 'notif-bubble-shimmer cursor-pointer'
                     : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700'
@@ -171,7 +196,9 @@ export const NotificationsModal: React.FC<NotificationsModalProps> = ({
                 {n.isNew && (
                   <span aria-hidden="true" className="notif-bubble-shimmer-glaze" />
                 )}
-                <div className="relative z-10 text-2xl shrink-0 mt-0.5">{n.icon}</div>
+                <div className={`relative z-10 w-9 h-9 rounded-xl border flex items-center justify-center text-lg shrink-0 mt-0.5 ${n.iconBgClass}`}>
+                  <span>{n.icon}</span>
+                </div>
                 <div className="relative z-10 flex-1 space-y-1 min-w-0">
                   <div className="flex items-center justify-between gap-2">
                     <h4
@@ -179,6 +206,9 @@ export const NotificationsModal: React.FC<NotificationsModalProps> = ({
                         n.isNew ? '' : 'text-slate-900 dark:text-white'
                       }`}
                     >
+                      <span className={`px-1.5 py-0.5 rounded-md text-[9.5px] font-black border shrink-0 ${n.badgeClass}`}>
+                        {n.catLabel}
+                      </span>
                       <span className="truncate">{n.title}</span>
                       {n.isNew && (
                         <span
@@ -230,3 +260,4 @@ export const NotificationsModal: React.FC<NotificationsModalProps> = ({
     </AnimatePresence>
   );
 };
+

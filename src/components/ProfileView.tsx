@@ -27,7 +27,11 @@ import {
   Clock,
 } from 'lucide-react';
 import { User } from '../types/chat';
-import { isUserAdminOrOwner } from '../data/seedData';
+import {
+  isUserAdminOrOwner,
+  BOYS_AVATAR_PRESETS,
+  GIRLS_AVATAR_PRESETS,
+} from '../data/seedData';
 import {
   getRankDisplayMeta,
   hasPrivilegedRank,
@@ -43,6 +47,7 @@ import {
 } from '../services/firebase';
 import { compressImageFile, cropBannerToDataUrl } from '../utils/imageCompression';
 import { checkImpersonationAttempt, VerifiedBadge } from '../utils/verifiedBadge';
+import { formatArabicDate, formatRelativeArabicTime, getVipDurationInfo } from '../utils/dateFormat';
 import { toast } from '../utils/appToast';
 
 const ZODIAC_SIGNS = [
@@ -84,23 +89,6 @@ const FAVORITE_MUSIC_PRESETS = [
   },
 ];
 
-const BOYS_AVATARS = [
-  { id: 'boy_1', url: 'https://api.dicebear.com/9.x/adventurer/svg?seed=KareemMasr&backgroundColor=dbeafe', label: 'كريم' },
-  { id: 'boy_2', url: 'https://api.dicebear.com/9.x/adventurer/svg?seed=OmarNile&backgroundColor=e0e7ff', label: 'عمر' },
-  { id: 'boy_3', url: 'https://api.dicebear.com/9.x/avataaars/svg?seed=YoussefCairo&backgroundColor=fef3c7', label: 'يوسف' },
-  { id: 'boy_4', url: 'https://api.dicebear.com/9.x/adventurer/svg?seed=SeifKnight&backgroundColor=dcfce7', label: 'سيف' },
-  { id: 'boy_5', url: 'https://api.dicebear.com/9.x/micah/svg?seed=TarekCool&backgroundColor=cffafe', label: 'طارق' },
-  { id: 'boy_6', url: 'https://api.dicebear.com/9.x/adventurer/svg?seed=ShadowWarrior&backgroundColor=ede9fe', label: 'فارس' },
-];
-
-const GIRLS_AVATARS = [
-  { id: 'girl_1', url: 'https://api.dicebear.com/9.x/lorelei/svg?seed=NourElNile&backgroundColor=fce7f3', label: 'نور' },
-  { id: 'girl_2', url: 'https://api.dicebear.com/9.x/lorelei/svg?seed=LailaMoon&backgroundColor=f3e8ff', label: 'ليلى' },
-  { id: 'girl_3', url: 'https://api.dicebear.com/9.x/adventurer/svg?seed=SakuraPrincess&backgroundColor=ffe4e6', label: 'سارة' },
-  { id: 'girl_4', url: 'https://api.dicebear.com/9.x/lorelei/svg?seed=MaryamRose&backgroundColor=fef9c3', label: 'مريم' },
-  { id: 'girl_5', url: 'https://api.dicebear.com/9.x/adventurer/svg?seed=HanaSky&backgroundColor=e0f2fe', label: 'هنا' },
-  { id: 'girl_6', url: 'https://api.dicebear.com/9.x/lorelei/svg?seed=FaridaStar&backgroundColor=fae8ff', label: 'فريدة' },
-];
 
 const ACTIVITY_STATUS_OPTIONS: {
   value: User['status'];
@@ -140,15 +128,7 @@ const ACTIVITY_STATUS_OPTIONS: {
 ];
 
 function formatVisitorRelativeTime(ts: number): string {
-  const diff = Math.max(0, Date.now() - (ts || 0));
-  const mins = Math.floor(diff / 60000);
-  if (mins < 1) return 'الآن';
-  if (mins < 60) return `منذ ${mins} د`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `منذ ${hrs} س`;
-  const days = Math.floor(hrs / 24);
-  if (days < 7) return `منذ ${days} يوم`;
-  return new Date(ts).toLocaleDateString('ar-EG');
+  return formatRelativeArabicTime(ts);
 }
 
 interface ProfileViewProps {
@@ -644,6 +624,16 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                     {zodiacSign}
                   </span>
                 )}
+                {(() => {
+                  const vipInfo = getVipDurationInfo(currentUser);
+                  if (!vipInfo.isVipTier || vipInfo.isExpired) return null;
+                  return (
+                    <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-amber-50 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-800">
+                      ⏳ VIP: {vipInfo.remainingLabel}
+                      {vipInfo.expiresAt ? ` (حتى ${formatArabicDate(vipInfo.expiresAt)})` : ''}
+                    </span>
+                  );
+                })()}
               </div>
             </div>
           </div>
@@ -1493,17 +1483,14 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                       أولاد / شباب 👨
                     </p>
                     <div className="grid grid-cols-3 gap-2">
-                      {BOYS_AVATARS.map((av) => (
+                      {BOYS_AVATAR_PRESETS.map((av) => (
                         <button
                           key={av.id}
                           type="button"
                           onClick={() => handleSelectAvatarPreset(av.url)}
                           className="cursor-pointer group relative aspect-square rounded-2xl overflow-hidden border-2 border-slate-200 dark:border-slate-700 hover:border-sky-500 transition shadow-sm"
                         >
-                          <img src={av.url} alt={av.label} className="w-full h-full object-cover" />
-                          <div className="absolute inset-x-0 bottom-0 bg-slate-900/65 py-0.5 text-[9.5px] text-white font-bold text-center">
-                            {av.label}
-                          </div>
+                          <img src={av.url} alt="" className="w-full h-full object-cover" />
                         </button>
                       ))}
                     </div>
@@ -1514,17 +1501,14 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                       بنات 👩
                     </p>
                     <div className="grid grid-cols-3 gap-2">
-                      {GIRLS_AVATARS.map((av) => (
+                      {GIRLS_AVATAR_PRESETS.map((av) => (
                         <button
                           key={av.id}
                           type="button"
                           onClick={() => handleSelectAvatarPreset(av.url)}
                           className="cursor-pointer group relative aspect-square rounded-2xl overflow-hidden border-2 border-slate-200 dark:border-slate-700 hover:border-pink-500 transition shadow-sm"
                         >
-                          <img src={av.url} alt={av.label} className="w-full h-full object-cover" />
-                          <div className="absolute inset-x-0 bottom-0 bg-slate-900/65 py-0.5 text-[9.5px] text-white font-bold text-center">
-                            {av.label}
-                          </div>
+                          <img src={av.url} alt="" className="w-full h-full object-cover" />
                         </button>
                       ))}
                     </div>

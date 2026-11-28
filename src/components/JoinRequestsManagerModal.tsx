@@ -1,6 +1,7 @@
 import React from 'react';
 import { X, Users, Check, UserX, ShieldCheck } from 'lucide-react';
 import { sounds } from '../utils/soundEffects';
+import { getDefaultAvatarForGender, isLegacyDicebearAvatar } from '../data/seedData';
 
 interface JoinRequestItem {
   userId: string;
@@ -63,7 +64,11 @@ export const JoinRequestsManagerModal: React.FC<JoinRequestsManagerModalProps> =
               >
                 <div className="flex items-center gap-2.5">
                   <img
-                    src={req.userAvatar || `https://api.dicebear.com/9.x/avataaars/svg?seed=${encodeURIComponent(req.userId)}`}
+                    src={
+                      req.userAvatar && !isLegacyDicebearAvatar(req.userAvatar)
+                        ? req.userAvatar
+                        : getDefaultAvatarForGender('male', req.userId)
+                    }
                     alt={req.userName}
                     className="w-9 h-9 rounded-xl object-cover bg-slate-100 border border-slate-200"
                   />

@@ -298,6 +298,14 @@ export function subscribeSharedRtdbPresence(listener: RtdbPresenceListener): () 
         ref(rtdb, 'presence'),
         (snap) => {
           const val = snap.val();
+          if (
+            val === null &&
+            typeof navigator !== 'undefined' &&
+            navigator.onLine === false &&
+            Object.keys(sharedRtdbPresenceCache).length > 0
+          ) {
+            return;
+          }
           sharedRtdbPresenceCache = val && typeof val === 'object' ? val : {};
           sharedRtdbPresenceInitialized = true;
           sharedRtdbPresenceListeners.forEach((cb) => {
@@ -417,6 +425,13 @@ export function subscribeToRoomPresence(
       unsubFirestoreRoomPresence = onSnapshot(
         collection(db, 'rooms', roomId, 'presence'),
         (snap) => {
+          if (
+            ((snap.metadata?.fromCache && snap.empty) ||
+              (typeof navigator !== 'undefined' && navigator.onLine === false && snap.empty)) &&
+            fsRoomUsersMap.size > 0
+          ) {
+            return;
+          }
           const nowTs = getServerNowMs();
           fsRoomUsersMap.clear();
           snap.docs.forEach((d) => {
@@ -709,6 +724,13 @@ export function subscribeToGlobalPresence(
       unsubFirestorePresence = onSnapshot(
         collection(db, 'presence'),
         (snap) => {
+          if (
+            ((snap.metadata?.fromCache && snap.empty) ||
+              (typeof navigator !== 'undefined' && navigator.onLine === false && snap.empty)) &&
+            fsUsersMap.size > 0
+          ) {
+            return;
+          }
           const nowTs = getServerNowMs();
           const selfUser = getLatestSelf();
           fsUsersMap.clear();
@@ -1472,6 +1494,13 @@ function subscribeSharedFirestoreUsers(listener: UsersSnapshotListener): () => v
       sharedFsUsersUnsub = onSnapshot(
         collection(db, 'users'),
         (snap) => {
+          if (
+            ((snap.metadata?.fromCache && snap.empty) ||
+              (typeof navigator !== 'undefined' && navigator.onLine === false && snap.empty)) &&
+            sharedFsUsersCache.size > 0
+          ) {
+            return;
+          }
           sharedFsUsersHasInitial = true;
           sharedFsUsersCache.clear();
           snap.docs.forEach((docSnap) => {
@@ -1792,7 +1821,7 @@ export interface PendingPaymentOrder {
   senderName?: string;
   amount: number;
   amountEgp?: number;
-  note: string;
+  note?: string;
   type?: 'coins' | 'vip';
   itemName?: string;
   coins?: number;
@@ -1818,38 +1847,36 @@ export async function submitPaymentRequest(order: {
   transactionRef?: string;
   note?: string;
 }): Promise<{ success: boolean; orderId: string; duplicate?: boolean }> {
-  const normalizedRef = (order.transactionRef || order.senderAccountOrPhone || '').trim();
-  if (normalizedRef) {
-    // Idempotency guard: block duplicate transaction references
-    try {
-      const localSaved = localStorage.getItem('arab_chat_payment_orders');
-      if (localSaved) {
-        const list: PendingPaymentOrder[] = JSON.parse(localSaved);
-        if (list.some((o) => o.transactionRef === normalizedRef && o.status !== 'rejected')) {
-          return { success: false, orderId: '', duplicate: true };
-        }
-      }
-    } catch {}
-    if (db) {
-      try {
-        const dupSnap = await getDocs(
-          query(collection(db, 'payment_requests'), where('transactionRef', '==', normalizedRef), limit(5))
-        );
-        if (dupSnap.docs.some((d) => d.data()?.status !== 'rejected')) {
-          return { success: false, orderId: '', duplicate: true };
-        }
-      } catch {}
-    }
-  }
-
-  const orderId = `PAY_${Date.now()}_${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+  const cleanPhone = (order.senderAccountOrPhone || '').trim();
   const now = Date.now();
+
+  // Only prevent accidental rapid double-click (< 4s) for the exact same package & phone
+  try {
+    const localSaved = localStorage.getItem('arab_chat_payment_orders');
+    if (localSaved) {
+      const list: PendingPaymentOrder[] = JSON.parse(localSaved);
+      if (
+        list.some(
+          (o) =>
+            o.userId === order.userId &&
+            o.type === order.type &&
+            o.itemName === order.itemName &&
+            o.senderAccountOrPhone === cleanPhone &&
+            now - (Number(o.timestamp) || 0) < 4000
+        )
+      ) {
+        return { success: false, orderId: '', duplicate: true };
+      }
+    }
+  } catch {}
+
+  const orderId = `PAY_${now}_${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
 
   const payload: PendingPaymentOrder = {
     id: orderId,
     userId: order.userId,
     userName: order.userName,
-    senderName: order.senderName || order.userName,
+    senderName: (order.senderName || '').trim() || order.userName,
     amount: order.amountEgp,
     amountEgp: order.amountEgp,
     type: order.type,
@@ -1857,9 +1884,8 @@ export async function submitPaymentRequest(order: {
     ...(typeof order.coinsAmount === 'number' ? { coins: order.coinsAmount } : {}),
     ...(order.vipTierId ? { vipTierId: order.vipTierId } : {}),
     paymentMethod: order.paymentMethod as any,
-    senderAccountOrPhone: order.senderAccountOrPhone,
-    transactionRef: normalizedRef || orderId,
-    note: order.note || `${order.type === 'coins' ? 'شحن كوينز' : 'ترقية VIP'}: ${order.itemName} بمبلغ ${order.amountEgp} ج.م عبر ${order.paymentMethod}`,
+    senderAccountOrPhone: cleanPhone,
+    note: (order.note || `${order.itemName} - ${order.paymentMethod}`).trim(),
     status: 'pending',
     timestamp: now
   };
@@ -1957,7 +1983,7 @@ export function subscribeToPendingPayments(
   let unsubFirestore: (() => void) | null = null;
   if (db) {
     try {
-      const payCol = collection(db, 'payment_requests');
+      const payCol = query(collection(db, 'payment_requests'), orderBy('timestamp', 'desc'), limit(100));
       unsubFirestore = onSnapshot(
         payCol,
         (snap) => {
@@ -2056,6 +2082,8 @@ export async function approvePendingPayment(
   vipTierId?: string
 ): Promise<void> {
   const now = Date.now();
+  const vipDurationDays = 30;
+  const vipExpiresAt = now + vipDurationDays * 24 * 60 * 60 * 1000;
   const tierBadge = vipTierId ? getVipBadgeForTierId(vipTierId) : undefined;
   let updatedCoinsForSocket: number | undefined = undefined;
 
@@ -2083,6 +2111,9 @@ export async function approvePendingPayment(
         if (vipTierId && tierBadge) {
           updates.role = vipTierId;
           updates.vipBadge = tierBadge;
+          updates.vipStartedAt = now;
+          updates.vipExpiresAt = vipExpiresAt;
+          updates.vipDurationDays = vipDurationDays;
         }
         await update(userRef, updates);
       }
@@ -2116,6 +2147,9 @@ export async function approvePendingPayment(
       if (vipTierId && tierBadge) {
         userUpdates.role = vipTierId;
         userUpdates.vipBadge = tierBadge;
+        userUpdates.vipStartedAt = now;
+        userUpdates.vipExpiresAt = vipExpiresAt;
+        userUpdates.vipDurationDays = vipDurationDays;
       }
       await setDoc(userDocRef, userUpdates, { merge: true });
     } catch (e) {
@@ -5023,20 +5057,22 @@ export function subscribeToRegisteredUsersCount(
   let lastCount = 0;
   try {
     const saved = Number(localStorage.getItem(cacheKey) || '0');
-    if (saved > 0) {
+    if (Number.isFinite(saved) && saved > 0) {
       lastCount = saved;
       onUpdate(lastCount, []);
     }
   } catch {}
 
-  return subscribeToAllUsers((users) => {
-    const isApiConnected =
-      realtimeSocket.getConnectionState() === 'connected' &&
-      (typeof navigator === 'undefined' || navigator.onLine !== false);
-    if (!isApiConnected && users.length <= 1 && lastCount > 1) {
+  return subscribeSharedFirestoreUsers((usersMap) => {
+    const users = Array.from(usersMap.values());
+    const isBrowserOnline = typeof navigator === 'undefined' || navigator.onLine !== false;
+    if (!isBrowserOnline && users.length <= 1 && lastCount > 1) {
       return;
     }
-    const nextCount = Math.max(users.length, 1);
+    if (users.length === 0 && lastCount > 0) {
+      return;
+    }
+    const nextCount = users.length;
     lastCount = nextCount;
     try {
       localStorage.setItem(cacheKey, String(nextCount));
@@ -7055,6 +7091,8 @@ export async function resolveUserReportStatus(reportId: string, status: 'reviewe
     }
   } catch {}
 
+  liveChatBus?.postMessage({ type: 'USER_REPORT_RESOLVED', reportId, status });
+
   if (db) {
     try {
       await updateDoc(doc(db, 'user_reports', reportId), { status });
@@ -7062,6 +7100,220 @@ export async function resolveUserReportStatus(reportId: string, status: 'reviewe
       handleFirestoreError(err, OperationType.UPDATE, `user_reports/${reportId}`);
     }
   }
+}
+
+export interface OwnerPendingSummary {
+  pendingPaymentsCount: number;
+  pendingReportsCount: number;
+  totalPendingCount: number;
+  latestPendingPayment: PendingPaymentOrder | null;
+  latestPendingReport: UserReport | null;
+}
+
+export function subscribeToOwnerPendingItems(
+  onUpdate: (summary: OwnerPendingSummary) => void
+): () => void {
+  const pendingPaymentsMap = new Map<string, PendingPaymentOrder>();
+  const pendingReportsMap = new Map<string, UserReport>();
+  let emitTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const emitSummary = () => {
+    if (emitTimer) clearTimeout(emitTimer);
+    emitTimer = setTimeout(() => {
+      const payments = Array.from(pendingPaymentsMap.values()).sort(
+        (a, b) => (b.timestamp || 0) - (a.timestamp || 0)
+      );
+      const reports = Array.from(pendingReportsMap.values()).sort(
+        (a, b) => (b.timestamp || 0) - (a.timestamp || 0)
+      );
+      onUpdate({
+        pendingPaymentsCount: payments.length,
+        pendingReportsCount: reports.length,
+        totalPendingCount: payments.length + reports.length,
+        latestPendingPayment: payments[0] || null,
+        latestPendingReport: reports[0] || null,
+      });
+    }, 30);
+  };
+
+  let unsubFsPay: (() => void) | null = null;
+  if (db) {
+    try {
+      const payQ = query(
+        collection(db, 'payment_requests'),
+        where('status', '==', 'pending'),
+        limit(50)
+      );
+      unsubFsPay = onSnapshot(
+        payQ,
+        (snap) => {
+          if (
+            ((snap.metadata?.fromCache && snap.empty) ||
+              (typeof navigator !== 'undefined' && navigator.onLine === false && snap.empty)) &&
+            pendingPaymentsMap.size > 0
+          ) {
+            return;
+          }
+          const nextIds = new Set<string>();
+          snap.docs.forEach((d) => {
+            const data = d.data() as any;
+            if ((data.status || 'pending') !== 'pending') return;
+            nextIds.add(d.id);
+            pendingPaymentsMap.set(d.id, {
+              id: d.id,
+              userId: data.userId || '',
+              userName: data.userName || data.senderName || 'عضو شات مصر',
+              senderName: data.senderName || data.userName || '',
+              amount: Number(data.amount ?? data.amountEgp) || 0,
+              amountEgp: Number(data.amountEgp ?? data.amount) || 0,
+              note: data.note || '',
+              type: data.type,
+              itemName: data.itemName,
+              coins: typeof data.coins === 'number' ? data.coins : undefined,
+              vipTierId: data.vipTierId,
+              paymentMethod: data.paymentMethod,
+              senderAccountOrPhone: data.senderAccountOrPhone || '',
+              transactionRef: data.transactionRef || '',
+              status: 'pending',
+              timestamp:
+                Number(data.timestamp) ||
+                (data.createdAt?.toMillis ? data.createdAt.toMillis() : Date.now()),
+            });
+          });
+          Array.from(pendingPaymentsMap.keys()).forEach((k) => {
+            if (!nextIds.has(k) && k.startsWith('pay_')) {
+              pendingPaymentsMap.delete(k);
+            }
+          });
+          emitSummary();
+        },
+        (err) => {
+          handleFirestoreError(err, OperationType.LIST, 'payment_requests_pending');
+        }
+      );
+    } catch {}
+  }
+
+  let unsubRtdbPay: (() => void) | null = null;
+  if (rtdb) {
+    try {
+      unsubRtdbPay = onValue(
+        ref(rtdb, 'payments_pending'),
+        (snap) => {
+          const val = snap.val();
+          if (val && typeof val === 'object') {
+            Object.entries(val).forEach(([key, data]: [string, any]) => {
+              if (!data || typeof data !== 'object') return;
+              if ((data.status || 'pending') === 'pending') {
+                pendingPaymentsMap.set(key, {
+                  id: key,
+                  userId: data.userId || '',
+                  userName: data.userName || data.senderName || 'عضو شات مصر',
+                  senderName: data.senderName || data.userName || '',
+                  amount: Number(data.amount ?? data.amountEgp) || 0,
+                  amountEgp: Number(data.amountEgp ?? data.amount) || 0,
+                  note: data.note || '',
+                  type: data.type,
+                  itemName: data.itemName,
+                  coins: typeof data.coins === 'number' ? data.coins : undefined,
+                  vipTierId: data.vipTierId,
+                  paymentMethod: data.paymentMethod,
+                  senderAccountOrPhone: data.senderAccountOrPhone || '',
+                  transactionRef: data.transactionRef || '',
+                  status: 'pending',
+                  timestamp: Number(data.timestamp) || Date.now(),
+                });
+              } else {
+                pendingPaymentsMap.delete(key);
+              }
+            });
+            emitSummary();
+          }
+        },
+        (err) => {
+          console.warn('Owner pending RTDB listener notice:', err);
+        }
+      );
+    } catch {}
+  }
+
+  let unsubFsReports: (() => void) | null = null;
+  if (db) {
+    try {
+      const repQ = query(
+        collection(db, 'user_reports'),
+        where('status', '==', 'pending'),
+        limit(50)
+      );
+      unsubFsReports = onSnapshot(
+        repQ,
+        (snap) => {
+          if (
+            ((snap.metadata?.fromCache && snap.empty) ||
+              (typeof navigator !== 'undefined' && navigator.onLine === false && snap.empty)) &&
+            pendingReportsMap.size > 0
+          ) {
+            return;
+          }
+          const nextIds = new Set<string>();
+          snap.docs.forEach((d) => {
+            const data = d.data() as UserReport;
+            if ((data.status || 'pending') !== 'pending') return;
+            const id = data.id || d.id;
+            nextIds.add(id);
+            pendingReportsMap.set(id, { ...data, id });
+          });
+          Array.from(pendingReportsMap.keys()).forEach((k) => {
+            if (!nextIds.has(k)) {
+              pendingReportsMap.delete(k);
+            }
+          });
+          emitSummary();
+        },
+        (err) => {
+          handleFirestoreError(err, OperationType.LIST, 'user_reports_pending');
+        }
+      );
+    } catch {}
+  }
+
+  const unsubWsReports = realtimeSocket.subscribeToAdminReports((r: UserReport) => {
+    if (!r?.id) return;
+    if ((r.status || 'pending') === 'pending') {
+      pendingReportsMap.set(r.id, r);
+    } else {
+      pendingReportsMap.delete(r.id);
+    }
+    emitSummary();
+  });
+
+  const handleBus = (e: MessageEvent) => {
+    if (e.data?.type === 'NEW_PAYMENT_REQUEST' && e.data.order?.id) {
+      pendingPaymentsMap.set(e.data.order.id, { ...e.data.order, status: 'pending' });
+      emitSummary();
+    } else if (
+      (e.data?.type === 'PAYMENT_APPROVED' || e.data?.type === 'PAYMENT_REJECTED') &&
+      e.data.paymentId
+    ) {
+      pendingPaymentsMap.delete(e.data.paymentId);
+      emitSummary();
+    } else if (e.data?.type === 'USER_REPORT_RESOLVED' && e.data.reportId) {
+      pendingReportsMap.delete(e.data.reportId);
+      emitSummary();
+    }
+  };
+  liveChatBus?.addEventListener('message', handleBus);
+
+  emitSummary();
+
+  return () => {
+    if (emitTimer) clearTimeout(emitTimer);
+    if (unsubFsPay) unsubFsPay();
+    if (unsubRtdbPay) unsubRtdbPay();
+    if (unsubFsReports) unsubFsReports();
+    unsubWsReports();
+    liveChatBus?.removeEventListener('message', handleBus);
+  };
 }
 
 // ==========================================
@@ -7208,7 +7460,7 @@ export function subscribeAllDirectChatsForOwner(
   if (db) {
     try {
       unsubFirestore = onSnapshot(
-        collection(db, 'privateChats'),
+        query(collection(db, 'privateChats'), limit(100)),
         ingestOwnerThreads,
         (err) => {
           handleFirestoreError(err, OperationType.LIST, 'privateChats');
@@ -7223,34 +7475,122 @@ export function subscribeAllDirectChatsForOwner(
   };
 }
 
+export async function fetchFullDirectConversationForOwner(
+  chatId: string,
+  ownerEmail: string | boolean | undefined
+): Promise<Message[]> {
+  if (!isPrimaryOwnerAuthorized(ownerEmail) || !chatId) return [];
+  const merged = new Map<string, Message>();
+
+  if (typeof fetch === 'function') {
+    try {
+      const res = await fetch(`/api/admin/direct-chats/${encodeURIComponent(chatId)}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data?.messages)) {
+          data.messages.forEach((m: any) => {
+            if (m?.id) {
+              merged.set(String(m.id), {
+                ...m,
+                id: String(m.id),
+                content: m.content || m.text || '',
+                text: m.text || m.content || '',
+                timestamp: Number(m.timestamp || m.createdAt) || Date.now(),
+                createdAt: Number(m.createdAt || m.timestamp) || Date.now(),
+              } as Message);
+            }
+          });
+        }
+      }
+    } catch {}
+  }
+
+  if (db) {
+    try {
+      const snap = await getDocs(
+        query(collection(db, 'privateChats', chatId, 'messages'), orderBy('createdAt', 'desc'), limit(500))
+      );
+      snap.docs.forEach((d) => {
+        const mapped = mapFirestoreDirectMessage(d);
+        if (mapped?.id) {
+          merged.set(mapped.id, { ...merged.get(mapped.id), ...mapped });
+        }
+      });
+    } catch (err) {
+      handleFirestoreError(err, OperationType.LIST, `privateChats/${chatId}/messages`);
+    }
+  }
+
+  return Array.from(merged.values()).sort(
+    (a, b) => (a.createdAt || a.timestamp || 0) - (b.createdAt || b.timestamp || 0)
+  );
+}
+
 export function subscribeDirectMessagesSilentForOwner(
   chatId: string,
   ownerEmail: string | boolean | undefined,
   onMessages: (messages: Message[]) => void
 ): () => void {
-  if (!isPrimaryOwnerAuthorized(ownerEmail) || !chatId || !db) {
+  if (!isPrimaryOwnerAuthorized(ownerEmail) || !chatId) {
     onMessages([]);
     return () => {};
   }
 
-  let unsub: (() => void) | null = null;
-  try {
-    unsub = onSnapshot(
-      query(collection(db, 'privateChats', chatId, 'messages'), orderBy('createdAt', 'desc'), limit(50)),
-      (snap) => {
-        const list = [...snap.docs]
-          .reverse()
-          .map((d) => mapFirestoreDirectMessage(d))
-          .sort((a, b) => (a.createdAt || a.timestamp || 0) - (b.createdAt || b.timestamp || 0));
-        onMessages(list);
-      },
-      (err) => {
-        handleFirestoreError(err, OperationType.LIST, `privateChats/${chatId}/messages`);
-        onMessages([]);
-      }
+  const msgsMap = new Map<string, Message>();
+  const emit = () => {
+    const list = Array.from(msgsMap.values()).sort(
+      (a, b) => (a.createdAt || a.timestamp || 0) - (b.createdAt || b.timestamp || 0)
     );
-  } catch {
-    onMessages([]);
+    onMessages(list);
+  };
+
+  if (typeof fetch === 'function') {
+    fetch(`/api/admin/direct-chats/${encodeURIComponent(chatId)}`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (Array.isArray(data?.messages) && data.messages.length > 0) {
+          data.messages.forEach((m: any) => {
+            if (m?.id) {
+              msgsMap.set(String(m.id), {
+                ...m,
+                id: String(m.id),
+                content: m.content || m.text || '',
+                text: m.text || m.content || '',
+                timestamp: Number(m.timestamp || m.createdAt) || Date.now(),
+                createdAt: Number(m.createdAt || m.timestamp) || Date.now(),
+              } as Message);
+            }
+          });
+          emit();
+        }
+      })
+      .catch(() => {});
+  }
+
+  let unsub: (() => void) | null = null;
+  if (db) {
+    try {
+      unsub = onSnapshot(
+        query(collection(db, 'privateChats', chatId, 'messages'), orderBy('createdAt', 'desc'), limit(250)),
+        (snap) => {
+          snap.docs.forEach((d) => {
+            const mapped = mapFirestoreDirectMessage(d);
+            if (mapped?.id) {
+              msgsMap.set(mapped.id, { ...msgsMap.get(mapped.id), ...mapped });
+            }
+          });
+          emit();
+        },
+        (err) => {
+          handleFirestoreError(err, OperationType.LIST, `privateChats/${chatId}/messages`);
+          if (msgsMap.size === 0) onMessages([]);
+        }
+      );
+    } catch {
+      if (msgsMap.size === 0) onMessages([]);
+    }
+  } else {
+    emit();
   }
 
   return () => {
@@ -7681,7 +8021,7 @@ export function subscribeToLeaderboardUsers(
   if (db) {
     try {
       unsubUsers = onSnapshot(
-        collection(db, 'users'),
+        query(collection(db, 'users'), limit(50)),
         (snap) => {
           snap.docs.forEach((docSnap) => {
             const d = docSnap.data();
@@ -9227,6 +9567,312 @@ export async function updateGameMatchState(
     handleFirestoreError(err, OperationType.UPDATE, `tic_tac_toe_matches/${matchId}`);
   }
 }
+
+// ============================================================================
+// Dedicated Isolated Ludo Game Match, Invites & Emotions Service
+// ============================================================================
+
+export type LudoColor = 'red' | 'green' | 'yellow' | 'blue';
+
+export interface LudoSeat {
+  color: LudoColor;
+  playerType: 'human' | 'bot' | 'empty';
+  userId: string;
+  name: string;
+  avatar?: string;
+  joined: boolean;
+}
+
+export interface LudoReaction {
+  id: string;
+  senderId: string;
+  senderName: string;
+  color: LudoColor;
+  emoji: string;
+  label?: string;
+  createdAt: number;
+}
+
+export interface LudoMatchState {
+  id: string;
+  hostId: string;
+  hostName: string;
+  playerCount: 2 | 3 | 4;
+  wager: number;
+  status: 'lobby' | 'playing' | 'finished' | 'cancelled';
+  seats: LudoSeat[];
+  tokens: Record<LudoColor, number[]>;
+  turnIndex: number;
+  diceValue: number | null;
+  phase: 'roll' | 'move';
+  consecutiveSixes: number;
+  lastActionText?: string;
+  winnerColor?: LudoColor | null;
+  winnerName?: string;
+  latestReaction?: LudoReaction | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface LudoInvite {
+  id: string;
+  matchId: string;
+  hostId: string;
+  hostName: string;
+  hostAvatar?: string;
+  targetId: string;
+  seatColor?: LudoColor;
+  playerCount: 2 | 3 | 4;
+  wager: number;
+  status: 'pending' | 'accepted' | 'declined';
+  createdAt: number;
+}
+
+export async function createLudoMatch(match: LudoMatchState): Promise<void> {
+  if (!db || !match?.id || !match?.hostId) return;
+  try {
+    await setDoc(
+      doc(db, 'users', match.hostId, 'ludo_matches', match.id),
+      {
+        ...match,
+        createdAt: match.createdAt || getServerNowMs(),
+        updatedAt: getServerNowMs(),
+      }
+    );
+  } catch (err) {
+    handleFirestoreError(err, OperationType.CREATE, `users/${match.hostId}/ludo_matches/${match.id}`);
+  }
+}
+
+export async function updateLudoMatch(
+  hostId: string,
+  matchId: string,
+  patch: Partial<LudoMatchState>
+): Promise<void> {
+  if (!db || !hostId || !matchId) return;
+  try {
+    await setDoc(
+      doc(db, 'users', hostId, 'ludo_matches', matchId),
+      {
+        ...patch,
+        updatedAt: getServerNowMs(),
+      },
+      { merge: true }
+    );
+  } catch (err) {
+    handleFirestoreError(err, OperationType.UPDATE, `users/${hostId}/ludo_matches/${matchId}`);
+  }
+}
+
+export function subscribeToLudoMatch(
+  hostId: string,
+  matchId: string,
+  onMatch: (match: LudoMatchState | null) => void
+): () => void {
+  if (!db || !hostId || !matchId) return () => {};
+  let unsub: (() => void) | null = null;
+  try {
+    unsub = onSnapshot(
+      doc(db, 'users', hostId, 'ludo_matches', matchId),
+      (snap) => {
+        if (!snap.exists()) {
+          onMatch(null);
+          return;
+        }
+        const data = snap.data() as any;
+        onMatch({
+          id: snap.id,
+          hostId: String(data.hostId || hostId),
+          hostName: String(data.hostName || 'لاعب'),
+          playerCount: (data.playerCount === 2 || data.playerCount === 3 || data.playerCount === 4 ? data.playerCount : 2),
+          wager: Number(data.wager) || 0,
+          status: (data.status || 'lobby') as LudoMatchState['status'],
+          seats: Array.isArray(data.seats) ? data.seats : [],
+          tokens: data.tokens && typeof data.tokens === 'object'
+            ? data.tokens
+            : { red: [-1, -1, -1, -1], green: [-1, -1, -1, -1], yellow: [-1, -1, -1, -1], blue: [-1, -1, -1, -1] },
+          turnIndex: Number(data.turnIndex) || 0,
+          diceValue: typeof data.diceValue === 'number' ? data.diceValue : null,
+          phase: data.phase === 'move' ? 'move' : 'roll',
+          consecutiveSixes: Number(data.consecutiveSixes) || 0,
+          lastActionText: data.lastActionText || '',
+          winnerColor: data.winnerColor || null,
+          winnerName: data.winnerName || '',
+          latestReaction: data.latestReaction || null,
+          createdAt: resolveTimestampMs(data.createdAt) ?? Date.now(),
+          updatedAt: resolveTimestampMs(data.updatedAt) ?? Date.now(),
+        });
+      },
+      (err) => {
+        handleFirestoreError(err, OperationType.GET, `users/${hostId}/ludo_matches/${matchId}`);
+      }
+    );
+  } catch {}
+  return () => {
+    if (unsub) unsub();
+  };
+}
+
+export async function sendLudoInvite(params: {
+  matchId: string;
+  hostUser: User;
+  targetUserId: string;
+  seatColor?: LudoColor;
+  playerCount: 2 | 3 | 4;
+  wager: number;
+}): Promise<void> {
+  const { matchId, hostUser, targetUserId, seatColor, playerCount, wager } = params;
+  if (!db || !matchId || !hostUser?.id || !targetUserId) return;
+  const now = getServerNowMs();
+  try {
+    await setDoc(doc(db, 'users', targetUserId, 'ludo_invites', matchId), {
+      id: matchId,
+      matchId,
+      hostId: hostUser.id,
+      hostName: hostUser.name || 'عضو شات مصر',
+      hostAvatar: hostUser.avatar || '',
+      targetId: targetUserId,
+      seatColor: seatColor || 'yellow',
+      playerCount,
+      wager: Number(wager) || 0,
+      status: 'pending',
+      createdAtMs: now,
+      createdAt: serverTimestamp(),
+    });
+  } catch (err) {
+    handleFirestoreError(err, OperationType.CREATE, `users/${targetUserId}/ludo_invites/${matchId}`);
+  }
+}
+
+export function subscribeToIncomingLudoInvites(
+  userId: string,
+  onInvites: (invites: LudoInvite[]) => void
+): () => void {
+  if (!db || !userId) return () => {};
+  let unsub: (() => void) | null = null;
+  try {
+    const q = query(
+      collection(db, 'users', userId, 'ludo_invites'),
+      where('status', '==', 'pending')
+    );
+    unsub = onSnapshot(
+      q,
+      (snap) => {
+        const now = Date.now();
+        const list: LudoInvite[] = snap.docs
+          .map((d) => {
+            const data = d.data() as any;
+            return {
+              id: data.id || d.id,
+              matchId: String(data.matchId || d.id),
+              hostId: String(data.hostId || ''),
+              hostName: String(data.hostName || 'عضو شات مصر'),
+              hostAvatar: data.hostAvatar || '',
+              targetId: String(data.targetId || userId),
+              seatColor: (data.seatColor || 'yellow') as LudoColor,
+              playerCount: (data.playerCount === 3 || data.playerCount === 4 ? data.playerCount : 2) as 2 | 3 | 4,
+              wager: Number(data.wager) || 0,
+              status: (data.status || 'pending') as LudoInvite['status'],
+              createdAt: resolveTimestampMs(data.createdAt) ?? (Number(data.createdAtMs) || now),
+            };
+          })
+          .filter((inv) => now - (inv.createdAt || now) < 600000)
+          .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+        onInvites(list);
+      },
+      (err) => {
+        handleFirestoreError(err, OperationType.LIST, `users/${userId}/ludo_invites`);
+      }
+    );
+  } catch {}
+  return () => {
+    if (unsub) unsub();
+  };
+}
+
+export async function respondToLudoInvite(params: {
+  userId: string;
+  hostId: string;
+  matchId: string;
+  acceptorUser: User;
+  status: 'accepted' | 'declined';
+}): Promise<void> {
+  const { userId, hostId, matchId, acceptorUser, status } = params;
+  if (!db || !userId || !hostId || !matchId) return;
+  try {
+    await setDoc(
+      doc(db, 'users', userId, 'ludo_invites', matchId),
+      { status, updatedAt: getServerNowMs() },
+      { merge: true }
+    );
+    if (status === 'accepted') {
+      const matchRef = doc(db, 'users', hostId, 'ludo_matches', matchId);
+      const snap = await getDoc(matchRef);
+      if (snap.exists()) {
+        const data = snap.data() as LudoMatchState;
+        const seats = Array.isArray(data.seats) ? [...data.seats] : [];
+        let updated = false;
+        const nextSeats = seats.map((s) => {
+          if (s.userId === acceptorUser.id) {
+            updated = true;
+            return { ...s, playerType: 'human' as const, name: acceptorUser.name, avatar: acceptorUser.avatar || '', joined: true };
+          }
+          return s;
+        });
+        if (!updated) {
+          const openIdx = nextSeats.findIndex((s) => !s.joined || s.playerType === 'empty' || s.playerType === 'bot');
+          if (openIdx >= 0) {
+            nextSeats[openIdx] = {
+              ...nextSeats[openIdx],
+              playerType: 'human',
+              userId: acceptorUser.id,
+              name: acceptorUser.name || 'لاعب',
+              avatar: acceptorUser.avatar || '',
+              joined: true,
+            };
+            updated = true;
+          }
+        }
+        if (updated) {
+          const allHumansReady = nextSeats.every((s) => s.playerType === 'bot' || s.joined);
+          await setDoc(
+            matchRef,
+            {
+              seats: nextSeats,
+              status: data.status === 'lobby' && allHumansReady ? 'playing' : data.status,
+              lastActionText: `انضم ${acceptorUser.name} إلى طاولة اللودو 🎲`,
+              updatedAt: getServerNowMs(),
+            },
+            { merge: true }
+          );
+        }
+      }
+    }
+  } catch (err) {
+    handleFirestoreError(err, OperationType.UPDATE, `users/${hostId}/ludo_matches/${matchId}`);
+  }
+}
+
+export async function sendLudoReaction(
+  hostId: string,
+  matchId: string,
+  reaction: LudoReaction
+): Promise<void> {
+  if (!db || !hostId || !matchId) return;
+  try {
+    await setDoc(
+      doc(db, 'users', hostId, 'ludo_matches', matchId),
+      {
+        latestReaction: reaction,
+        updatedAt: getServerNowMs(),
+      },
+      { merge: true }
+    );
+  } catch (err) {
+    handleFirestoreError(err, OperationType.UPDATE, `users/${hostId}/ludo_matches/${matchId}`);
+  }
+}
+
 
 
 
